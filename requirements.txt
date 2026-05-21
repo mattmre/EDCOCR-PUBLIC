@@ -41,7 +41,7 @@ pytesseract==0.3.13
 # Imported as 'fitz' in the codebase
 # Version must match coordinator/requirements.txt.
 # Run scripts/check_deps_sync.py to verify sync.
-PyMuPDF==1.27.2.2
+PyMuPDF==1.27.2.3
 
 # PDF to image conversion via Poppler
 # Requires system package: poppler-utils

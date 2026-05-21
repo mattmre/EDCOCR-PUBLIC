@@ -2,7 +2,7 @@
 # All OCR models are baked into the image at build time for
 # deployment in air-gapped (no internet) environments.
 
-FROM python:3.11-slim-bookworm AS base
+FROM python:3.14-slim-bookworm AS base
 
 # System dependencies for OCR
 RUN apt-get update && apt-get install -y --no-install-recommends \

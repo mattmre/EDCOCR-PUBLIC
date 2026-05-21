@@ -9,7 +9,7 @@
 #   docker build -f coordinator/Dockerfile.worker.layoutlm -t ocr-local/worker-layoutlm .
 #   docker build -f coordinator/Dockerfile.worker.layoutlm --build-arg USE_GPU=1 -t ocr-local/worker-layoutlm:gpu .
 
-FROM python:3.11-slim-bookworm AS base
+FROM python:3.14-slim-bookworm AS base
 
 # System dependencies (minimal — no OCR libs needed for LayoutLMv3)
 RUN apt-get update && apt-get install -y --no-install-recommends \

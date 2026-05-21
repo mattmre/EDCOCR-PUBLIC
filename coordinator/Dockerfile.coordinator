@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Builder — compile Python packages with C extensions
 # ---------------------------------------------------------------------------
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir --upgrade "pip>=25.3,<26" "setuptools>=82,<83" "w
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime — production image without build tools
 # ---------------------------------------------------------------------------
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 # Runtime-only system dependency (no build-essential)
 RUN apt-get update && apt-get install -y --no-install-recommends \

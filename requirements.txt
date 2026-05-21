@@ -173,7 +173,7 @@ PyYAML>=6.0
 pydantic>=2.13.4
 
 # Paramiko - Optional SFTP transport for watcher remote ingest
-paramiko>=3.4
+paramiko>=5.0.0
 
 # ============================================================================
 # Optional: Extended Image Format Support

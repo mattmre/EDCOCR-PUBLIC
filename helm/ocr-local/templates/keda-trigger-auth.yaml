@@ -1,0 +1,13 @@
+{{- if or .Values.gpuWorker.autoscaling.enabled .Values.cpuWorker.autoscaling.enabled (and .Values.cpuOcrWorker.enabled .Values.cpuOcrWorker.autoscaling.enabled) (and .Values.layoutCpuWorker.enabled .Values.layoutCpuWorker.autoscaling.enabled) (and .Values.nlpGpuWorker.enabled .Values.nlpGpuWorker.autoscaling.enabled) (and .Values.layoutlmWorker.enabled .Values.layoutlmWorker.autoscaling.enabled) }}
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ .Release.Name }}-rabbitmq-auth
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: {{ .Release.Name }}-secret
+      key: CELERY_BROKER_URL
+{{- end }}

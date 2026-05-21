@@ -1,0 +1,207 @@
+# =============================================================================
+# High-Availability overlay for coordinator infrastructure
+# Usage: docker compose -f docker-compose.coordinator.yml -f docker-compose.ha.yml up
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # RabbitMQ Cluster (3 nodes)
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    environment:
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:?Set RABBITMQ_ERLANG_COOKIE in .env}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+    hostname: rabbitmq1
+
+  rabbitmq2:
+    image: rabbitmq:3.13-management-alpine
+    hostname: rabbitmq2
+    environment:
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:?Set RABBITMQ_ERLANG_COOKIE in .env}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+    volumes:
+      - rabbitmq2_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  rabbitmq3:
+    image: rabbitmq:3.13-management-alpine
+    hostname: rabbitmq3
+    environment:
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:?Set RABBITMQ_ERLANG_COOKIE in .env}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+    volumes:
+      - rabbitmq3_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  # After all nodes start, join them to rabbitmq1's cluster
+  rabbitmq-cluster-init:
+    image: rabbitmq:3.13-management-alpine
+    entrypoint: >
+      sh -c "
+        sleep 10 &&
+        rabbitmqctl --node rabbit@rabbitmq2 stop_app &&
+        rabbitmqctl --node rabbit@rabbitmq2 join_cluster rabbit@rabbitmq1 &&
+        rabbitmqctl --node rabbit@rabbitmq2 start_app &&
+        rabbitmqctl --node rabbit@rabbitmq3 stop_app &&
+        rabbitmqctl --node rabbit@rabbitmq3 join_cluster rabbit@rabbitmq1 &&
+        rabbitmqctl --node rabbit@rabbitmq3 start_app &&
+        echo 'RabbitMQ cluster formed successfully'
+      "
+    environment:
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:?Set RABBITMQ_ERLANG_COOKIE in .env}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      rabbitmq2:
+        condition: service_healthy
+      rabbitmq3:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Redis Sentinel (master + replica + 3 sentinels)
+  # ---------------------------------------------------------------------------
+  redis:
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      --appendonly yes
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+
+  redis-replica:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      --replicaof redis 6379
+      --masterauth ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      --appendonly yes
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_replica_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis-sentinel1:
+    image: redis:7-alpine
+    command: >
+      sh -c "
+        cat > /tmp/sentinel.conf <<CONF
+        port 26379
+        sentinel monitor ocr-master redis 6379 2
+        sentinel auth-pass ocr-master ${REDIS_PASSWORD}
+        sentinel down-after-milliseconds ocr-master 5000
+        sentinel failover-timeout ocr-master 10000
+        sentinel parallel-syncs ocr-master 1
+      CONF
+        redis-sentinel /tmp/sentinel.conf
+      "
+    ports:
+      - "127.0.0.1:26379:26379"
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+
+  redis-sentinel2:
+    image: redis:7-alpine
+    command: >
+      sh -c "
+        cat > /tmp/sentinel.conf <<CONF
+        port 26379
+        sentinel monitor ocr-master redis 6379 2
+        sentinel auth-pass ocr-master ${REDIS_PASSWORD}
+        sentinel down-after-milliseconds ocr-master 5000
+        sentinel failover-timeout ocr-master 10000
+        sentinel parallel-syncs ocr-master 1
+      CONF
+        redis-sentinel /tmp/sentinel.conf
+      "
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+
+  redis-sentinel3:
+    image: redis:7-alpine
+    command: >
+      sh -c "
+        cat > /tmp/sentinel.conf <<CONF
+        port 26379
+        sentinel monitor ocr-master redis 6379 2
+        sentinel auth-pass ocr-master ${REDIS_PASSWORD}
+        sentinel down-after-milliseconds ocr-master 5000
+        sentinel failover-timeout ocr-master 10000
+        sentinel parallel-syncs ocr-master 1
+      CONF
+        redis-sentinel /tmp/sentinel.conf
+      "
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Override coordinator env for HA services
+  # ---------------------------------------------------------------------------
+  django:
+    environment: &ha_coordinator_env
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-development}
+      PRODUCTION_READINESS_ACK: ${PRODUCTION_READINESS_ACK:-false}
+      DATABASE_URL: postgres://ocr:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/ocr_coordinator
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      CELERY_USE_QUORUM_QUEUES: "true"
+      NFS_ROOT: ${NFS_ROOT:-/shared}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-nfs}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      METRICS_API_KEY: ${METRICS_API_KEY:-}
+
+  celery-coordinator:
+    environment: *ha_coordinator_env
+
+  celery-beat:
+    environment: *ha_coordinator_env
+
+  flower:
+    environment: *ha_coordinator_env
+
+volumes:
+  rabbitmq2_data:
+  rabbitmq3_data:
+  redis_replica_data:

@@ -1,0 +1,171 @@
+# Dependabot configuration for automated dependency updates
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+version: 2
+
+updates:
+  # Python (pip) — root requirements
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "python"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "paddlepaddle*"
+        update-types: ["version-update:semver-major"]
+      # Blocked: production pin on PaddleOCR 2.9.1 (CTC-only OCR; PaddleOCR 3.x removes
+      # use_onnx and shifts to enable_hpi — qualification deferred).
+      - dependency-name: "paddleocr"
+        versions: [">=2.10.0"]
+      - dependency-name: "torch"
+        update-types: ["version-update:semver-major"]
+      # Blocked: PaddlePaddle ABI incompatibility with numpy 2.x
+      - dependency-name: "numpy"
+        versions: [">=2.0.0"]
+      # Blocked: opencv 4.12+ requires numpy 2.x on Python 3.9+, which conflicts
+      # with the current PaddleOCR 2.9.1 / PaddlePaddle 2.6.2 stack.
+      - dependency-name: "opencv-python-headless"
+        versions: [">=4.12.0"]
+      # Blocked: pandas 3.x requires numpy 2.x, which is blocked by the
+      # PaddlePaddle 2.6.2 ABI constraint (see adr-paddlepaddle-upgrade-path.md).
+      # Also only used in legacy/OCR_GPU_sync_legacy.py, not the production pipeline.
+      # Lift when the Q2 2026 PaddlePaddle 3.x qualification sprint completes.
+      - dependency-name: "pandas"
+        versions: [">=3.0.0"]
+    open-pull-requests-limit: 5
+    reviewers:
+      - "mattmre"
+
+  # Python (pip) — coordinator requirements
+  - package-ecosystem: "pip"
+    directory: "/coordinator"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "python"
+      - "coordinator"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Deferred: unique_together migration is complete (jobs/migrations/0008).
+      # Real blockers: Django 6.0 requires Python 3.12+ base image; plus
+      # django-celery-results, django-celery-beat, django-otp compat verification
+      # needed; Django 6.0 not yet GA. Revisit in Q3 2026.
+      - dependency-name: "Django"
+        versions: [">=6.0.0"]
+      # Deferred: redis-py 8.0 not yet released (pre-emptive block).
+      # When released, verify django-celery-results compat before lifting.
+      # Application code uses only from_url/xadd/xread/set/get/delete/sadd.
+      - dependency-name: "redis"
+        versions: [">=8.0.0"]
+    open-pull-requests-limit: 5
+    reviewers:
+      - "mattmre"
+
+  # npm — root (JS/TS dependencies)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "javascript"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "mattmre"
+
+  # npm — TypeScript SDK
+  - package-ecosystem: "npm"
+    directory: "/sdk/typescript"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "typescript"
+      - "sdk"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "mattmre"
+
+  # Docker — root Dockerfile
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "docker"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "mattmre"
+
+  # Docker — coordinator Dockerfile
+  - package-ecosystem: "docker"
+    directory: "/coordinator"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "coordinator"
+    reviewers:
+      - "mattmre"
+
+  # Terraform — infrastructure modules
+  - package-ecosystem: "terraform"
+    directory: "/terraform"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+      - "terraform"
+      - "infrastructure"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "mattmre"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "mattmre"

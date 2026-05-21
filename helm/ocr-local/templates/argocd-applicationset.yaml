@@ -1,0 +1,51 @@
+{{- if and .Values.federation.enabled .Values.federation.argocd.enabled }}
+# =============================================================================
+# ArgoCD ApplicationSet
+#
+# Fans the chart out to N target clusters via the list-generator pattern from
+#  Section 4.3. Each cluster pulls its own per-region and per-tenant
+# overlays from the same Git repo via ArgoCD list-generator placeholders.
+#
+# Requires: ArgoCD installed in the cluster running this chart, with cluster
+# secrets registered for each entry in `federation.argocd.targetClusters`.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{ .Values.federation.argocd.applicationSetName }}
+  namespace: {{ .Values.federation.argocd.namespace }}
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation
+spec:
+  generators:
+    - list:
+        elements:
+          {{- toYaml .Values.federation.argocd.targetClusters | nindent 10 }}
+  template:
+    metadata:
+      name: '{{ "{{cluster}}" }}-ocr-local'
+      labels:
+        app.kubernetes.io/managed-by: argocd
+    spec:
+      project: {{ .Values.federation.argocd.project }}
+      source:
+        repoURL: {{ .Values.federation.argocd.repoURL | quote }}
+        targetRevision: {{ .Values.federation.argocd.targetRevision }}
+        path: helm/ocr-local
+        helm:
+          valueFiles:
+            - values.yaml
+            - 'overlays/values-{{ "{{region}}" }}.yaml'
+            - 'overlays/values-{{ "{{tenantClass}}" }}.yaml'
+      destination:
+        name: '{{ "{{cluster}}" }}'
+        namespace: ocr-local
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+{{- end }}

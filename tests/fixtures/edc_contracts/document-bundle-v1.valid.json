@@ -1,0 +1,60 @@
+{
+  "schema_version": "document-bundle-v1",
+  "document_id": "doc-fixture-001",
+  "source_file_name": "fixture.pdf",
+  "source_file_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source_ocr_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "pages": [
+    {
+      "page_number": 1,
+      "text": "Hello world.\nThis is a contract fixture.",
+      "span_ids": ["p1-s1", "p1-s2"]
+    }
+  ],
+  "spans": [
+    {
+      "span_id": "p1-s1",
+      "page_number": 1,
+      "text": "Hello world.",
+      "bbox": [10.0, 20.0, 150.0, 40.0],
+      "bboxes": [[10.0, 20.0, 150.0, 40.0]],
+      "language": "en",
+      "confidence": 0.99
+    },
+    {
+      "span_id": "p1-s2",
+      "page_number": 1,
+      "text": "This is a contract fixture.",
+      "bbox": [10.0, 50.0, 220.0, 70.0],
+      "bboxes": [[10.0, 50.0, 220.0, 70.0]],
+      "language": "en",
+      "confidence": 0.98
+    }
+  ],
+  "language_metadata": {
+    "primary_language": "en",
+    "detected_languages": ["en"],
+    "source": "fixture"
+  },
+  "ocr_engine_metadata": {
+    "engine_id": "ocr_local.fixture",
+    "engine_version": "test"
+  },
+  "custody_chain_head": "custody-head-fixture-001",
+  "artifact_manifest": {
+    "artifacts": [
+      {
+        "artifact_id": "source_file",
+        "artifact_type": "source_file",
+        "path": "fixture.pdf",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "artifact_id": "ocr_text",
+        "artifact_type": "ocr_text",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "mime_type": "text/plain"
+      }
+    ]
+  }
+}

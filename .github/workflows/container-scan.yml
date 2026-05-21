@@ -1,0 +1,125 @@
+name: Container Security Scan
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/container-scan.yml'
+      - 'Dockerfile'
+      - 'coordinator/Dockerfile.*'
+      - 'requirements.txt'
+      - 'coordinator/requirements.txt'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/container-scan.yml'
+      - 'Dockerfile'
+      - 'coordinator/Dockerfile.*'
+      - 'requirements.txt'
+      - 'coordinator/requirements.txt'
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  scan-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dockerfile: Dockerfile
+            context: .
+            image: ocr-local
+            build_args: --build-arg SKIP_MODEL_PRELOAD=1
+          - dockerfile: coordinator/Dockerfile.coordinator
+            context: coordinator
+            image: ocr-coordinator
+            build_args: ""
+          - dockerfile: coordinator/Dockerfile.worker
+            context: coordinator
+            image: ocr-worker
+            build_args: --build-arg SKIP_MODEL_PRELOAD=1
+          - dockerfile: coordinator/Dockerfile.worker.ocr
+            context: coordinator
+            image: ocr-worker-ocr
+            build_args: --build-arg SKIP_MODEL_PRELOAD=1
+          - dockerfile: coordinator/Dockerfile.worker.nlp
+            context: coordinator
+            image: ocr-worker-nlp
+            build_args: --build-arg SKIP_MODEL_PRELOAD=1
+          - dockerfile: coordinator/Dockerfile.worker.layoutlm
+            context: coordinator
+            image: ocr-worker-layoutlm
+            build_args: --build-arg SKIP_MODEL_PRELOAD=1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v5
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ matrix.image }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-${{ matrix.image }}-
+            ${{ runner.os }}-buildx-
+
+      - name: Build image
+        run: |
+          docker buildx build ${{ matrix.build_args }} \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --load \
+            -t ${{ matrix.image }}:scan \
+            -f ${{ matrix.dockerfile }} \
+            ${{ matrix.context }}
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Export image tarball
+        run: docker save --output "${{ runner.temp }}/${{ matrix.image }}-scan.tar" ${{ matrix.image }}:scan
+
+      - name: Run Trivy vulnerability scanner (SARIF)
+        run: |
+          docker run --rm \
+            -v "${{ runner.temp }}:/work" \
+            aquasec/trivy:0.69.3 image \
+            --input "/work/${{ matrix.image }}-scan.tar" \
+            --scanners vuln \
+            --timeout 15m \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --format sarif \
+            --output "/work/trivy-results-${{ matrix.image }}.sarif"
+          cp "${{ runner.temp }}/trivy-results-${{ matrix.image }}.sarif" "./trivy-results-${{ matrix.image }}.sarif"
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always
+        with:
+          sarif_file: 'trivy-results-${{ matrix.image }}.sarif'
+
+      - name: Run Trivy (table output for PR comment)
+        if: always
+        run: |
+          docker run --rm \
+            -v "${{ runner.temp }}:/work" \
+            aquasec/trivy:0.69.3 image \
+            --input "/work/${{ matrix.image }}-scan.tar" \
+            --scanners vuln \
+            --timeout 15m \
+            --severity CRITICAL,HIGH,MEDIUM \
+            --ignore-unfixed \
+            --format table

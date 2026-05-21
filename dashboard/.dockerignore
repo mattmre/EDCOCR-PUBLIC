@@ -1,0 +1,35 @@
+# =============================================================================
+# .dockerignore - Dashboard build context
+# =============================================================================
+# Applies to: dashboard/Dockerfile
+# Build context is dashboard/ directory (docker-compose.dashboard.yml).
+# The Dockerfile uses COPY . . so exclusions here directly prevent bloat.
+# =============================================================================
+
+# -- Version control ----------------------------------------------------------
+.git/
+.gitignore
+
+# -- Build artifacts (rebuilt inside container) --------------------------------
+node_modules/
+build/
+dist/
+.next/
+
+# -- Tests / dev fixtures -----------------------------------------------------
+__pycache__/
+*.pyc
+.coverage
+
+# -- Docker build files (already consumed, not needed in image) ---------------
+Dockerfile
+docker-compose*.yml
+
+# -- Editor / IDE -------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# -- Documentation ------------------------------------------------------------
+*.md

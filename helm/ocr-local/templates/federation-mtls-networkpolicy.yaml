@@ -1,0 +1,51 @@
+{{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
+# =============================================================================
+# Federation mTLS NetworkPolicy (item C8)
+#
+# Restricts ingress on federation-internal ports to peer pods bearing the
+# `federation.mtls.peerLabel` label. Peer clusters present mTLS client
+# certs minted from the same CA as this cluster's leaf certs; the
+# NetworkPolicy is the L3/L4 gate, mTLS itself is the L7 gate (enforced
+# by RabbitMQ amqps + the coordinator custody endpoint).
+#
+# Ports protected:
+#   * 4369  -- erlang port mapper daemon (epmd)
+#   * 5671  -- AMQPS (federation upstream connections)
+#   * 25672 -- inter-node clustering / federation distribution
+#   * federation.mtls.custodyPort (default 8443) -- custody replication
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-federation-mtls-ingress
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-mtls
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          - rabbitmq
+          - coordinator
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{ .Values.federation.mtls.peerLabel | quote }}: "true"
+        - namespaceSelector:
+            matchLabels:
+              {{ .Values.federation.mtls.peerLabel | quote }}: "true"
+      ports:
+        - protocol: TCP
+          port: 4369
+        - protocol: TCP
+          port: 5671
+        - protocol: TCP
+          port: 25672
+        - protocol: TCP
+          port: {{ .Values.federation.mtls.custodyPort | default 8443 }}
+{{- end }}

@@ -1,0 +1,48 @@
+# Production environment overrides
+# Secrets MUST be provided via --set or values-secret.yaml at deploy time
+
+coordinator:
+  replicas: 2
+
+externalTranslation:
+  preferExternal: "false"
+  readinessPath: "/health"
+
+gpuWorker:
+  replicas: 3
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+    requests:
+      memory: "8Gi"
+      cpu: "2000m"
+
+cpuWorker:
+  replicas: 3
+
+postgresql:
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"
+    retentionDays: 30
+
+redis:
+  sentinel:
+    enabled: true
+    replicas: 3
+
+prometheus:
+  enabled: true
+  grafana:
+    enabled: true
+  alerts:
+    enabled: true
+
+tls:
+  enabled: false  # Disabled until cert-manager is available; enable once cluster issuers are provisioned.
+
+keda:
+  gpuScaler:
+    enabled: true
+  cpuScaler:
+    enabled: true

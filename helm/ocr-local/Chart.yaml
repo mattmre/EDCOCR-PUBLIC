@@ -1,0 +1,15 @@
+apiVersion: v2
+name: edcocr
+description: EDCOCR — Forensic-grade OCR platform for electronic discovery and document processing
+type: application
+version: 4.1.0
+appVersion: "4.1.0"
+home: https://github.com/mattmre/EDCOCR-PUBLIC
+sources:
+  - https://github.com/mattmre/EDCOCR-PUBLIC
+keywords:
+  - ocr
+  - paddleocr
+  - gpu
+  - celery
+  - document-processing

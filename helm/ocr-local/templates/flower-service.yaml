@@ -1,0 +1,19 @@
+{{- if .Values.flower.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-flower
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: flower
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5555
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "ocr-local.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: flower
+{{- end }}

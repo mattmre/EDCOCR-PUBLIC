@@ -1,0 +1,38 @@
+{{- if .Values.gpuWorker.autoscaling.enabled }}
+{{- $strategy := .Values.keda.scalingStrategy | default "balanced" }}
+{{- $pollingInterval := .Values.gpuWorker.autoscaling.pollingInterval }}
+{{- $cooldownPeriod := .Values.gpuWorker.autoscaling.cooldownPeriod }}
+{{- if eq $strategy "aggressive" }}
+{{- $pollingInterval = 10 }}
+{{- $cooldownPeriod = 60 }}
+{{- else if eq $strategy "conservative" }}
+{{- $pollingInterval = 30 }}
+{{- $cooldownPeriod = 600 }}
+{{- end }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Release.Name }}-gpu-worker-scaler
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gpu-worker
+  annotations:
+    ocr-local/scaling-strategy: {{ $strategy }}
+    ocr-local/cloud-provider: {{ .Values.cloudProvider | default "generic" }}
+spec:
+  scaleTargetRef:
+    name: {{ .Release.Name }}-gpu-worker
+  minReplicaCount: {{ .Values.gpuWorker.autoscaling.minReplicas }}
+  maxReplicaCount: {{ min .Values.gpuWorker.autoscaling.maxReplicas (.Values.keda.maxReplicaCount | default 50) }}
+  pollingInterval: {{ $pollingInterval }}
+  cooldownPeriod: {{ $cooldownPeriod }}
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: {{ .Values.keda.gpu.queueName | default "ocr_gpu" }}
+        mode: QueueLength
+        value: {{ .Values.gpuWorker.autoscaling.queueTarget | quote }}
+      authenticationRef:
+        name: {{ .Release.Name }}-rabbitmq-auth
+{{- end }}

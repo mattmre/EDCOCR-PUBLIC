@@ -1,0 +1,42 @@
+# ------------------------------------------------------------------------------
+# Worker Isolation (OCR vs NLP)
+# ------------------------------------------------------------------------------
+# This compose file demonstrates the decoupled worker architecture proposed in
+# docs/research-paddleocr-3x-upgrade-20260312.md.
+#
+# Usage:
+#   docker compose -f docker-compose.isolation-poc.yml build
+#   docker compose -f docker-compose.isolation-poc.yml up -d
+
+services:
+  worker-ocr:
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile.worker.ocr
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://ocr:password@rabbitmq:5672//}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://:${REDIS_PASSWORD}@redis:6379/0}
+      DATABASE_URL: ${DATABASE_URL:-postgres://ocr:password@postgres:5432/ocr_coordinator}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key}
+      DEPLOYMENT_ENV: development
+      WORKER_QUEUES: ocr_gpu
+      WORKER_CONCURRENCY: 2
+      # In future, this will use PaddleOCR 3.4
+    volumes:
+      - ./shared:/shared
+
+  worker-nlp:
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile.worker.nlp
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://ocr:password@rabbitmq:5672//}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://:${REDIS_PASSWORD}@redis:6379/0}
+      DATABASE_URL: ${DATABASE_URL:-postgres://ocr:password@postgres:5432/ocr_coordinator}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key}
+      DEPLOYMENT_ENV: development
+      WORKER_QUEUES: nlp_general,cpu_general
+      WORKER_CONCURRENCY: 2
+      # Retains PaddleNLP 2.8.1
+    volumes:
+      - ./shared:/shared

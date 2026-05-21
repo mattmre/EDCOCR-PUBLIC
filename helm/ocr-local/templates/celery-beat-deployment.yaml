@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-celery-beat
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: celery-beat
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: celery-beat
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.labels" . | nindent 8 }}
+        app.kubernetes.io/component: celery-beat
+    spec:
+      serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.workerTerminationGracePeriodSeconds | default 360 }}
+      {{- with .Values.celeryBeat.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: celery-beat
+          image: {{ include "ocr-local.coordinatorImage" . }}
+          imagePullPolicy: {{ .Values.image.coordinator.pullPolicy | default "IfNotPresent" }}
+          command:
+            - celery
+            - -A
+            - coordinator.coordinator
+            - beat
+            - --loglevel=info
+            - --schedule=/tmp/celerybeat-schedule
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secret
+          livenessProbe:
+            exec:
+              command:
+                - test
+                - -f
+                - /tmp/celerybeat-schedule
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.celeryBeat.resources | nindent 12 }}
+          {{- with .Values.celeryBeat.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

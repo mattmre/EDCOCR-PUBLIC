@@ -1,0 +1,54 @@
+# Docker Compose overlay for scale testing the distributed OCR pipeline.
+#
+# Usage:
+#   # Start coordinator stack + 3 workers:
+#   docker compose -f docker-compose.coordinator.yml \
+#                  -f docker-compose.scale-test.yml up -d
+#
+#   # Scale to N workers:
+#   docker compose -f docker-compose.coordinator.yml \
+#                  -f docker-compose.scale-test.yml up -d --scale ocr-worker=5
+#
+#   # Run scale test:
+#   docker compose -f docker-compose.coordinator.yml \
+#                  -f docker-compose.scale-test.yml \
+#                  exec django python /app/scale_test.py --mode live --jobs 50
+#
+# Note: Worker images are self-bootstrapping from Python slim base.
+# See coordinator/Dockerfile.worker for build instructions.
+
+services:
+  ocr-worker:
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile.worker
+    environment:
+      DJANGO_SETTINGS_MODULE: coordinator.coordinator.settings
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-staging}
+      PRODUCTION_READINESS_ACK: ${PRODUCTION_READINESS_ACK:-false}
+      DATABASE_URL: postgres://ocr:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/ocr_coordinator
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0
+      NFS_ROOT: ${NFS_ROOT:-/shared}
+    volumes:
+      - ${NFS_HOST_PATH:-./shared}:/shared
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: ${SCALE_TEST_WORKERS:-3}
+      resources:
+        limits:
+          cpus: "${WORKER_CPU_LIMIT:-4.0}"
+          memory: ${WORKER_MEMORY_LIMIT:-8G}
+    restart: unless-stopped
+
+  # Override django to mount scale_test.py
+  django:
+    volumes:
+      - ${NFS_HOST_PATH:-./shared}:/shared
+      - ../scale_test.py:/app/scale_test.py:ro

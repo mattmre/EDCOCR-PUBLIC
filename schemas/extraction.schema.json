@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/extraction.schema.json",
+  "title": "Structured Field Extraction Output",
+  "description": "Structured field extraction sidecar with PaddleNLP UIE and regex fallback results. Written to EXPORT/EXTRACTION/<subfolder>/<document_name>.extraction.json.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for this output format."
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Unique document identifier."
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Source document filename."
+    },
+    "processing": {
+      "type": "object",
+      "description": "Extraction processing metadata.",
+      "properties": {
+        "extraction_engine": {
+          "type": "string",
+          "description": "Engine label: uie, regex, semantic, or hybrid."
+        },
+        "uie_model": {
+          "type": "string",
+          "description": "PaddleNLP UIE model name or n/a."
+        },
+        "pipeline_version": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["extraction_engine", "uie_model", "pipeline_version", "timestamp"]
+    },
+    "extraction_summary": {
+      "type": "object",
+      "description": "Aggregate extraction statistics.",
+      "properties": {
+        "total_fields": { "type": "integer" },
+        "field_type_counts": {
+          "type": "object",
+          "description": "Counts per field type (date, amount, person_name, organization, address, reference_number, phone_number, email_address)."
+        },
+        "extraction_engine": { "type": "string" }
+      },
+      "required": ["total_fields", "field_type_counts", "extraction_engine"]
+    },
+    "pages": {
+      "type": "array",
+      "description": "Per-page extraction results.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page_num": { "type": "integer" },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field_type": {
+                  "type": "string",
+                  "description": "Field type: date, amount, person_name, organization, address, reference_number, phone_number, email_address."
+                },
+                "text": { "type": "string", "description": "Raw extracted value." },
+                "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+                "page_num": { "type": "integer" },
+                "start": { "type": "integer", "description": "Start character offset." },
+                "end": { "type": "integer", "description": "End character offset." },
+                "extraction_method": {
+                  "type": "string",
+                  "description": "Method used: uie, regex, or semantic."
+                },
+                "normalized_value": {
+                  "type": "string",
+                  "description": "Normalized form (e.g. ISO date). Empty string if not applicable."
+                }
+              },
+              "required": ["field_type", "text", "confidence", "page_num", "start", "end", "extraction_method"]
+            }
+          }
+        },
+        "required": ["page_num", "fields"]
+      }
+    }
+  },
+  "required": ["schema_version", "document_id", "source_file", "processing", "extraction_summary", "pages"]
+}

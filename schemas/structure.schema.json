@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/structure.schema.json",
+  "title": "Document Intelligence Structure Output",
+  "description": "PP-StructureV3 layout and table analysis sidecar. Written to EXPORT/STRUCTURE/<subfolder>/<document_name>.structure.json when --enable-docintel is active.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for this output format."
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Unique document identifier (typically SHA-256 hash prefix)."
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Relative path to the source file."
+    },
+    "processing": {
+      "type": "object",
+      "description": "Pipeline processing metadata.",
+      "properties": {
+        "pipeline_version": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "docintel_mode": {
+          "type": "string",
+          "enum": ["full", "layout_only", "tables_only"],
+          "description": "Document intelligence analysis mode."
+        }
+      },
+      "required": ["pipeline_version", "timestamp", "docintel_mode"]
+    },
+    "pages": {
+      "type": "array",
+      "description": "Per-page structure analysis results.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page_num": { "type": "integer" },
+          "layout_regions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Region type: text, table, figure, title, header, footer, etc."
+                },
+                "bbox": {
+                  "type": "array",
+                  "items": { "type": "number" },
+                  "description": "Bounding box coordinates."
+                },
+                "confidence": { "type": "number" },
+                "text": { "type": "string" },
+                "table_index": { "type": "integer" }
+              },
+              "required": ["type", "bbox", "confidence"]
+            }
+          },
+          "tables": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "html": { "type": "string", "description": "HTML table markup." },
+                "cell_bbox": { "type": "array", "description": "Bounding boxes for table cells." }
+              }
+            }
+          },
+          "form_fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field_type": { "type": "string" },
+                "label": { "type": "string" },
+                "value": { "type": "string" },
+                "bbox": { "type": "array", "items": { "type": "number" } },
+                "confidence": { "type": "number" },
+                "is_filled": { "type": "boolean" }
+              }
+            }
+          },
+          "key_value_pairs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": { "type": "string" },
+                "value": { "type": "string" },
+                "confidence": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "document_summary": {
+      "type": "object",
+      "description": "Aggregate statistics across all pages.",
+      "properties": {
+        "total_tables": { "type": "integer" },
+        "total_figures": { "type": "integer" },
+        "total_form_fields": { "type": "integer" },
+        "total_key_value_pairs": { "type": "integer" },
+        "layout_types_found": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "has_signatures": { "type": "boolean" },
+        "has_filled_forms": { "type": "boolean" }
+      },
+      "required": [
+        "total_tables", "total_figures", "total_form_fields",
+        "total_key_value_pairs", "layout_types_found",
+        "has_signatures", "has_filled_forms"
+      ]
+    }
+  },
+  "required": ["schema_version", "document_id", "source_file", "processing", "pages", "document_summary"]
+}

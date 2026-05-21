@@ -1,0 +1,69 @@
+# =============================================================================
+# Staging Environment -- terraform.tfvars Example
+# EDCOCR -- Cloud-Native Deployment
+#
+# Usage:
+#   1. Copy this file to terraform.tfvars
+#   2. Replace all values marked with "# REPLACE:" comments
+#   3. Uncomment the section for your target cloud provider
+#   4. Run: terraform init && terraform plan
+#
+# NEVER commit terraform.tfvars to version control.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# General
+# ---------------------------------------------------------------------------
+
+# Cloud provider: "aws", "gcp", or "oracle"
+cloud_provider = "aws"
+cluster_name   = "ocr-local-staging"
+environment    = "staging"
+
+# ---------------------------------------------------------------------------
+# AWS Configuration (used when cloud_provider = "aws")
+# ---------------------------------------------------------------------------
+
+aws_region = "us-east-1"
+
+# Node pool sizes -- staging uses smaller pools to reduce cost
+# cpu_node_min_size     = 1
+# cpu_node_max_size     = 5
+# cpu_node_desired_size = 1
+# gpu_node_min_size     = 0
+# gpu_node_max_size     = 4
+# gpu_node_desired_size = 0
+
+# ---------------------------------------------------------------------------
+# GCP Configuration (uncomment if cloud_provider = "gcp")
+# ---------------------------------------------------------------------------
+
+# REPLACE: Set your GCP project ID (required for GCP deployments)
+# gcp_project_id = "my-gcp-project-id"
+# gcp_region     = "us-central1"
+
+# GPU settings
+# gpu_type  = "nvidia-tesla-t4"
+# gpu_count = 1
+
+# ---------------------------------------------------------------------------
+# Oracle Configuration (uncomment if cloud_provider = "oracle")
+# ---------------------------------------------------------------------------
+
+# REPLACE: Set your OCI compartment OCID (required for Oracle deployments)
+# Find it: OCI Console > Identity > Compartments > Copy OCID
+# oci_compartment_id = "ocid1.compartment.oc1..aaaaaaaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# oci_region         = "us-ashburn-1"
+
+# REPLACE: Set the OKE node image OCID for your region
+# Find it: OCI Console > Compute > Images > filter "Oracle-Linux-8" > copy OCID
+# See also: docs/operations/terraform-deployment-guide.md
+# oci_node_image_id     = "ocid1.image.oc1.iad.aaaaaaaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# oci_gpu_node_image_id = "ocid1.image.oc1.iad.aaaaaaaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# ---------------------------------------------------------------------------
+# Monitoring
+# ---------------------------------------------------------------------------
+
+# REPLACE: Set a strong password for the Grafana admin dashboard
+# grafana_admin_password = "change-me-to-a-strong-password"

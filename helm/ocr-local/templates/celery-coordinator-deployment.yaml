@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-celery-coordinator
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: celery-coordinator
+spec:
+  replicas: {{ .Values.celeryCoordinator.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: celery-coordinator
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.labels" . | nindent 8 }}
+        app.kubernetes.io/component: celery-coordinator
+    spec:
+      serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.workerTerminationGracePeriodSeconds | default 360 }}
+      {{- with .Values.celeryCoordinator.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: celery-coordinator
+          image: {{ include "ocr-local.coordinatorImage" . }}
+          imagePullPolicy: {{ .Values.image.coordinator.pullPolicy | default "IfNotPresent" }}
+          command:
+            - celery
+            - -A
+            - coordinator.coordinator
+            - worker
+            - --loglevel=info
+            - --queues=coordinator
+            - --concurrency={{ .Values.celeryCoordinator.concurrency }}
+            - --hostname=coordinator@%h
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secret
+          livenessProbe:
+            exec:
+              command:
+                - celery
+                - -A
+                - coordinator.coordinator
+                - inspect
+                - ping
+                - --timeout=10
+            periodSeconds: 60
+          resources:
+            {{- toYaml .Values.celeryCoordinator.resources | nindent 12 }}
+          {{- with .Values.celeryCoordinator.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

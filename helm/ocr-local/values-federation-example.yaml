@@ -1,0 +1,127 @@
+# =============================================================================
+#  -- Federation overlay example (C2 expanded)
+#
+# Three-cluster federation example demonstrating the C2 dynamic peer registry
+# alongside the C1 static `upstreamClusters` block (kept for backward
+# compatibility with the RabbitMQ Operator's Federation CR rendering).
+#
+# Copy this file, adjust cluster names, AMQPS URIs, presigned endpoints, peer
+# CIDRs, and the ArgoCD repo URL, then install with:
+#
+#   helm install ocr-local helm/ocr-local \
+#     --values helm/ocr-local/values.yaml \
+#     --values helm/ocr-local/values-federation-example.yaml \
+#     --set secrets.postgresPassword=... \
+#     --set secrets.rabbitmqPassword=... \
+#     --set secrets.redisPassword=...
+#
+# Prerequisites:
+#   * RabbitMQ Cluster Operator must be installed in the target cluster.
+#   * Each peer's RabbitMQ Management API must be reachable from the
+#     reconciler pod (HTTPS, port 15671 by default).
+#   * ArgoCD must be installed if `federation.argocd.enabled=true`.
+# =============================================================================
+
+federation:
+  enabled: true
+  clusterName: "prod-us-east-1"
+  presignedEndpoint: "https://api.prod-us-east-1.ocr-local.example.com"
+  # ---------------------------------------------------------------------------
+  # C2 dynamic peer registry consumed by the federation reconciler.
+  # ---------------------------------------------------------------------------
+  clusters:
+    - name: prod-us-west-1
+      region: us-west-1
+      rabbitmq_uri: "amqps://federation-user@rabbit.prod-us-west-1.example.com:5671/%2F"
+      management_uri: "https://rabbit.prod-us-west-1.example.com:15671"
+      priority: 20
+      tags:
+        - commercial
+        - hot-standby
+      tls:
+        enabled: false
+    - name: prod-eu-central-1
+      region: eu-central-1
+      rabbitmq_uri: "amqps://federation-user@rabbit.prod-eu-central-1.example.com:5671/%2F"
+      management_uri: "https://rabbit.prod-eu-central-1.example.com:15671"
+      priority: 10
+      tags:
+        - eu-residency
+      tls:
+        enabled: true
+        ca_secret_ref: rabbitmq-fed-eu-ca
+    - name: airgap-gov-1
+      region: on-prem-gov
+      rabbitmq_uri: "amqps://federation-user@rabbit.airgap-gov-1.example.com:5671/%2F"
+      management_uri: "https://rabbit.airgap-gov-1.example.com:15671"
+      priority: 5
+      tags:
+        - privileged
+        - airgap
+      tls:
+        enabled: true
+        ca_secret_ref: rabbitmq-fed-gov-ca
+  queue_classes:
+    - ocr_gpu
+    - ocr_cpu
+    - nlp
+    - translation_batch
+  reconciler:
+    enabled: true
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+  healthcheck_interval_seconds: 30
+  unhealthy_threshold_seconds: 120
+  prometheus:
+    enabled: true
+    port: 9100
+  # ---------------------------------------------------------------------------
+  # C1 legacy static upstream list -- mirrors a subset of `clusters` until
+  # operators are ready to retire it. Keep entries in sync with `clusters[*]`
+  # for the same names.
+  # ---------------------------------------------------------------------------
+  upstreamClusters:
+    - name: prod-us-west-1
+      amqpUri: "amqps://federation-user@rabbit.prod-us-west-1.example.com:5671/%2F"
+      presignedEndpoint: "https://api.prod-us-west-1.ocr-local.example.com"
+    - name: prod-eu-central-1
+      amqpUri: "amqps://federation-user@rabbit.prod-eu-central-1.example.com:5671/%2F"
+      presignedEndpoint: "https://api.prod-eu-central-1.ocr-local.example.com"
+    - name: airgap-gov-1
+      amqpUri: "amqps://federation-user@rabbit.airgap-gov-1.example.com:5671/%2F"
+      presignedEndpoint: "https://api.airgap-gov-1.ocr-local.example.com"
+  queues:
+    overflowOnly:
+      - ocr_gpu
+      - ocr_cpu
+    maxOverflowMessages: 10000
+  argocd:
+    enabled: true
+    applicationSetName: ocr-local-fleet
+    namespace: argocd
+    project: ocr-local
+    repoURL: "git@github.com:ORG/ocr-local.git"
+    targetRevision: HEAD
+    targetClusters:
+      - cluster: prod-us-east-1
+        region: us-east-1
+        tenantClass: commercial
+      - cluster: prod-eu-west-1
+        region: eu-west-1
+        tenantClass: eu-residency
+      - cluster: airgap-gov-1
+        region: on-prem-gov
+        tenantClass: privileged
+  networkPolicy:
+    enabled: true
+    peerCidrs:
+      - "10.20.0.0/16"
+      - "10.30.0.0/16"
+      - "10.40.0.0/16"
+    amqpsPort: 5671

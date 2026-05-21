@@ -1,0 +1,25 @@
+{{- if and .Values.cpuOcrWorker.enabled .Values.cpuOcrWorker.autoscaling.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Release.Name }}-cpu-ocr-worker-scaler
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cpu-ocr-worker
+spec:
+  scaleTargetRef:
+    name: {{ .Release.Name }}-cpu-ocr-worker
+  minReplicaCount: {{ .Values.cpuOcrWorker.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.cpuOcrWorker.autoscaling.maxReplicas }}
+  pollingInterval: {{ .Values.cpuOcrWorker.autoscaling.pollingInterval }}
+  cooldownPeriod: {{ .Values.cpuOcrWorker.autoscaling.cooldownPeriod }}
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: {{ .Values.keda.cpuOcr.queueName | default "ocr_cpu" }}
+        mode: QueueLength
+        value: {{ .Values.cpuOcrWorker.autoscaling.queueTarget | quote }}
+      authenticationRef:
+        name: {{ .Release.Name }}-rabbitmq-auth
+{{- end }}

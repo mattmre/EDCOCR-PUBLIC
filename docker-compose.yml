@@ -1,0 +1,56 @@
+services:
+  ocr-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ocr-gpu-local
+    container_name: ocr_gpu_processor
+    volumes:
+      - ./ocr_source:/app/ocr_source
+      - ./ocr_output:/app/ocr_output
+      - ./ocr_gpu_async.py:/app/ocr_gpu_async.py:ro
+      - ./optimize_pdfs.py:/app/optimize_pdfs.py:ro
+      - ./custody.py:/app/custody.py:ro
+      - ./version.py:/app/version.py:ro
+      - ./api:/app/api:ro
+      - ./reprocess:/app/reprocess:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      # Pipeline tuning for RTX 3090 (24GB VRAM) but limited by host RAM:
+      - NUM_WORKERS=8
+      - NUM_EXTRACTORS=8
+      - NUM_COMPRESSORS=4
+      - IMAGE_QUEUE_SIZE=50
+      - EXTRACTOR_MODE=thread
+      - EXTERNAL_TRANSLATION_PREFER=${EXTERNAL_TRANSLATION_PREFER:-false}
+      - EXTERNAL_TRANSLATION_URL=${EXTERNAL_TRANSLATION_URL:-http://external-translation:8080}
+      - EXTERNAL_TRANSLATION_PROVIDER_ID=${EXTERNAL_TRANSLATION_PROVIDER_ID:-passthrough}
+      - EXTERNAL_TRANSLATION_TIMEOUT_SECONDS=${EXTERNAL_TRANSLATION_TIMEOUT_SECONDS:-30}
+      - EXTERNAL_TRANSLATION_READINESS_PATH=${EXTERNAL_TRANSLATION_READINESS_PATH:-/health}
+      # - DPI=300
+    shm_size: '8gb'
+    command: python3 -u /app/ocr_gpu_async.py
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    stdin_open: true # docker run -i
+    tty: true # docker run -t
+
+  external-translation:
+    profiles:
+      - external-translation
+    build:
+      context: ${EXTERNAL_TRANSLATION_REPO:-../EXTERNAL_TRANSLATION}
+      dockerfile: Dockerfile
+    image: ${EXTERNAL_TRANSLATION_IMAGE:-external-translation:0.1.0}
+    ports:
+      - "127.0.0.1:${EXTERNAL_TRANSLATION_HOST_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6

@@ -1,0 +1,56 @@
+{
+  "name": "@edcocr/sdk",
+  "version": "4.1.0",
+  "description": "TypeScript SDK for EDCOCR forensic-grade OCR pipeline",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build && npm run test"
+  },
+  "keywords": [
+    "ocr",
+    "document-processing",
+    "forensic",
+    "paddleocr",
+    "typescript",
+    "sdk"
+  ],
+  "author": "EDCOCR Contributors",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mattmre/EDCOCR-PUBLIC.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://github.com/mattmre/EDCOCR-PUBLIC/tree/main/sdk/typescript#readme",
+  "bugs": {
+    "url": "https://github.com/mattmre/EDCOCR-PUBLIC/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  },
+  "sideEffects": false
+}

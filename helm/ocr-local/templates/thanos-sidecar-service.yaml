@@ -1,0 +1,34 @@
+{{- if and .Values.observability .Values.observability.federation .Values.observability.federation.enabled }}
+{{- if eq .Values.observability.federation.mode "thanos_sidecar" }}
+{{- if .Values.observability.federation.thanos_sidecar.enabled }}
+# =============================================================================
+#  -- C3 Federated Observability
+#
+# ClusterIP service exposing the Thanos sidecar's gRPC StoreAPI (10901) and
+# HTTP probe endpoint (10902). A remote Thanos Querier consumes the gRPC
+# port to fan out queries across all federated clusters.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-thanos-sidecar
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: thanos-sidecar
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "ocr-local.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: thanos-sidecar
+  ports:
+    - name: grpc
+      port: 10901
+      targetPort: grpc
+      protocol: TCP
+    - name: http
+      port: 10902
+      targetPort: http
+      protocol: TCP
+{{- end }}
+{{- end }}
+{{- end }}

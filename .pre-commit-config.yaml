@@ -1,0 +1,45 @@
+# Pre-commit hooks for EDCOCR
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+# Skip hooks: git commit --no-verify (use sparingly)
+
+repos:
+  # Ruff linter + formatter (uses project ruff.toml automatically)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # Standard pre-commit hooks
+  # NOTE: trailing-whitespace and end-of-file-fixer intentionally omitted
+  # to stay consistent with ruff.toml which ignores W291/W292
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: no-commit-to-branch
+        args: [--branch=main]
+      - id: detect-private-key
+
+  # Security checks
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: >
+          (?x)^(
+            tests/.*|
+            docs/.*|
+            .*\.lock$|
+            coordinator/\.env\.example$|
+            coordinator/docker-compose\..*\.yml$|
+            helm/ocr-local/values\.yaml$
+          )$

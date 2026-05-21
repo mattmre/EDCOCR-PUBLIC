@@ -1,0 +1,123 @@
+# =============================================================================
+#  -- C3 Federated Observability overlay
+#
+# Cross-cluster Prometheus / Grafana federation for EDCOCR deployments.
+#
+# This overlay does NOT modify the main `values.yaml`. Compose with helm:
+#
+#   helm upgrade ocr-local helm/ocr-local \
+#     --values helm/ocr-local/values.yaml \
+#     --values helm/ocr-local/values-observability.yaml \
+#     --set observability.federation.enabled=true \
+#     --set observability.federation.mode=remote_write
+#
+# Two federation patterns are supported:
+#
+#   * remote_write -- each peer cluster's Prometheus pushes samples to a central
+#     Prometheus or compatible TSDB (Mimir / Thanos Receiver / VictoriaMetrics
+#     vmagent). Lower-latency dashboards, but central store must absorb
+#     fan-in from N clusters.
+#
+#   * thanos_sidecar -- each peer cluster runs a Thanos sidecar next to its
+#     Prometheus that uploads blocks to object storage (S3/GCS). A Thanos
+#     Querier deployed elsewhere reads the bucket plus live sidecars to
+#     answer queries across clusters. Higher query latency, but stateless
+#     central reads and longer retention via object store.
+#
+# See docs/operations/plan-c-phase1-c3-federated-observability.md for the
+# full deployment runbook including Prometheus operator wiring.
+# =============================================================================
+
+observability:
+  # ---------------------------------------------------------------------------
+  # Federation root toggle. When `enabled: false`, NO new manifests render --
+  # this overlay file is safe to apply unconditionally.
+  # ---------------------------------------------------------------------------
+  federation:
+    enabled: false                              # Master switch for C3 federation
+    mode: "remote_write"                        # "remote_write" | "thanos_sidecar"
+    cluster_label: "ocr-local"                  # Value of external_labels.cluster
+    region_label: ""                            # Value of external_labels.region (optional)
+
+    # -------------------------------------------------------------------------
+    # remote_write fan-in mode
+    # Each endpoint becomes one entry in the rendered Prometheus
+    # additionalScrapeConfigs / remote_write block.
+    # -------------------------------------------------------------------------
+    remote_write:
+      endpoints: []
+        # - name: central-prom
+        #   url: https://prom-central.example.com/api/v1/write
+        #   headers:
+        #     X-Scope-OrgID: ocr-local
+        #   basic_auth_secret_ref:
+        #     name: prom-remote-write-auth
+        #     username_key: username
+        #     password_key: password
+        #   tls:
+        #     ca_secret_ref:
+        #       name: prom-remote-write-ca
+        #       key: ca.crt
+        #     insecure_skip_verify: false
+
+      # Tunables passed straight into Prometheus remote_write `queue_config`.
+      queue_config:
+        max_samples_per_send: 1000              # Per-batch sample cap
+        batch_send_deadline_seconds: 5          # Flush even if batch not full
+        max_shards: 30                          # Parallel shards to remote endpoint
+
+    # -------------------------------------------------------------------------
+    # Thanos sidecar mode
+    # When enabled (and mode=="thanos_sidecar"), a StatefulSet runs the Thanos
+    # sidecar that reads Prometheus blocks via the local TSDB and uploads them
+    # to the object store referenced below. The sidecar also exposes a gRPC
+    # StoreAPI on port 10901 for a remote Thanos Querier to consume.
+    # -------------------------------------------------------------------------
+    thanos_sidecar:
+      enabled: false                            # Render the sidecar StatefulSet
+      image: quay.io/thanos/thanos:v0.36.0      # Pinned Thanos release
+      replicas: 1                               # Sidecars per cluster (typically 1)
+
+      # Reference a Secret already present in the namespace that contains the
+      # Thanos object-storage YAML config. The chart NEVER creates this Secret
+      # automatically -- operators must populate it before applying.
+      object_storage_secret_ref:
+        name: thanos-objstore                   # Secret name in this namespace
+        key: objstore.yaml                      # Key inside the Secret
+
+      # Resource requests/limits for the sidecar container.
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 1
+          memory: 1Gi
+
+  # ---------------------------------------------------------------------------
+  # Multi-cluster Grafana dashboard
+  # Renders a ConfigMap labeled for sidecar auto-discovery
+  # (`grafana_dashboard: "1"`). Dashboard reads from a Prometheus datasource
+  # whose Grafana UID is `datasource_uid` -- this should point at the
+  # federated/central store (Mimir / Thanos Querier / aggregator Prometheus).
+  # ---------------------------------------------------------------------------
+  grafana:
+    multi_cluster_dashboard:
+      enabled: false                            # Render the multi-cluster dashboard
+      datasource_uid: "prometheus-federated"    # Grafana datasource UID
+
+  # ---------------------------------------------------------------------------
+  # Optional NetworkPolicy for the Thanos sidecar / remote_write egress.
+  # When enabled, restricts ingress to the sidecar gRPC port and allows egress
+  # to object-storage and remote_write Prometheus endpoints.
+  # ---------------------------------------------------------------------------
+  networkPolicy:
+    enabled: false
+    # Namespace selector that names the Prometheus operator's namespace --
+    # only pods in this namespace may reach the Thanos sidecar's gRPC port.
+    prometheusNamespaceLabel: "kubernetes.io/metadata.name"
+    prometheusNamespace: "monitoring"
+    # CIDR allow-list for object-storage + remote_write endpoints (egress).
+    egressCidrs: []
+      # - "10.50.0.0/16"      # central-prom CIDR
+      # - "10.60.0.0/16"      # object-storage CIDR

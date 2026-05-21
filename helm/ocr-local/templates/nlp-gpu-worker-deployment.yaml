@@ -1,0 +1,120 @@
+{{- if .Values.nlpGpuWorker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-nlp-gpu-worker
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nlp-gpu-worker
+spec:
+  {{- if not .Values.nlpGpuWorker.autoscaling.enabled }}
+  replicas: {{ .Values.nlpGpuWorker.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nlp-gpu-worker
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.labels" . | nindent 8 }}
+        app.kubernetes.io/component: nlp-gpu-worker
+      {{- if .Values.workerSecurity.mTLS.enabled }}
+      annotations:
+        {{ .Values.workerSecurity.mTLS.annotation }}: {{ .Values.workerSecurity.mTLS.annotationValue | quote }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.workerTerminationGracePeriodSeconds | default 360 }}
+      {{- with .Values.nlpGpuWorker.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nlpGpuWorker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nlpGpuWorker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.nlpGpuWorker.shmSize }}
+        - name: staging-volume
+          {{- if eq .Values.workerSecurity.stagingVolume.type "emptyDir" }}
+          emptyDir:
+            medium: {{ .Values.workerSecurity.stagingVolume.emptyDir.medium }}
+            sizeLimit: {{ .Values.workerSecurity.stagingVolume.emptyDir.sizeLimit }}
+          {{- else }}
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ "ReadWriteOnce" ]
+                storageClassName: {{ .Values.workerSecurity.stagingVolume.pvc.storageClass | quote }}
+                resources:
+                  requests:
+                    storage: {{ .Values.workerSecurity.stagingVolume.pvc.size }}
+          {{- end }}
+      containers:
+        - name: nlp-gpu-worker
+          image: {{ include "ocr-local.nlpWorkerImage" . }}
+          imagePullPolicy: {{ .Values.image.nlpWorker.pullPolicy | default "IfNotPresent" }}
+          command:
+            - celery
+            - -A
+            - coordinator.coordinator
+            - worker
+            - --loglevel=info
+            - --queues={{ .Values.nlpGpuWorker.queues }}
+            - --concurrency={{ .Values.nlpGpuWorker.concurrency }}
+            - --max-tasks-per-child={{ .Values.nlpGpuWorker.maxTasksPerChild }}
+            - --hostname=nlp-gpu-worker@%h
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+            - name: staging-volume
+              mountPath: {{ .Values.workerSecurity.stagingVolume.mountPath }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secret
+          env:
+            - name: WORKER_QUEUES
+              value: {{ .Values.nlpGpuWorker.queues | quote }}
+            - name: WORKER_CONCURRENCY
+              value: {{ .Values.nlpGpuWorker.concurrency | quote }}
+            - name: WORKER_CAPABILITIES
+              value: {{ .Values.nlpGpuWorker.capabilities | quote }}
+            {{- range $key, $val := .Values.nlpGpuWorker.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          startupProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import torch"
+            failureThreshold: 30
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - celery
+                - -A
+                - coordinator.coordinator
+                - inspect
+                - ping
+                - --timeout=10
+            periodSeconds: 60
+          resources:
+            {{- toYaml .Values.nlpGpuWorker.resources | nindent 12 }}
+          {{- with .Values.nlpGpuWorker.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

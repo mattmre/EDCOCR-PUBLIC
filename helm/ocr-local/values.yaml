@@ -1,0 +1,960 @@
+# =============================================================================
+# EDCOCR Helm Chart — values.yaml
+# EDCOCR — Forensic-Grade OCR Platform for Electronic Discovery & Document Processing
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Graceful shutdown — must exceed SHUTDOWN_DRAIN_TIMEOUT_SECONDS (default 300)
+# ---------------------------------------------------------------------------
+workerTerminationGracePeriodSeconds: 360   # 300s drain + 60s buffer
+coordinatorTerminationGracePeriodSeconds: 60
+
+# ---------------------------------------------------------------------------
+# RBAC — ServiceAccount for pod identity separation
+# ---------------------------------------------------------------------------
+rbac:
+  create: true
+
+# ---------------------------------------------------------------------------
+# Container images
+# ---------------------------------------------------------------------------
+image:
+  coordinator:
+    repository: ocr-local/coordinator
+    tag: ""          # defaults to Chart.appVersion
+    pullPolicy: IfNotPresent
+  worker:
+    repository: ocr-local/worker
+    tag: ""          # defaults to Chart.appVersion
+    pullPolicy: IfNotPresent
+  nlpWorker:
+    repository: ocr-local/worker-nlp
+    tag: ""          # defaults to Chart.appVersion
+    pullPolicy: IfNotPresent
+  layoutlmWorker:
+    repository: ocr-local/worker-layoutlm
+    tag: ""          # defaults to Chart.appVersion
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: ocr-local/frontend
+    tag: ""          # defaults to Chart.appVersion
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+# ---------------------------------------------------------------------------
+# Worker Security (mTLS & Encrypted Staging for PII)
+# ---------------------------------------------------------------------------
+workerSecurity:
+  # Configure a Service Mesh annotation for mTLS on the worker pods
+  # (Since workers process plaintext PII, mTLS is mandated)
+  mTLS:
+    enabled: true
+    annotation: "sidecar.istio.io/inject"
+    annotationValue: "true"
+
+  # Configure encrypted volumes for the worker temp staging
+  # Mandates encrypted storage classes or in-memory emptyDir for staging.
+  stagingVolume:
+    # "emptyDir" (medium: Memory) or "pvc" (must use encrypted storageClass)
+    type: "emptyDir"
+    emptyDir:
+      medium: Memory
+      sizeLimit: "2Gi"
+    pvc:
+      storageClass: "encrypted-sc" # Ensure this storage class encrypts data at rest
+      size: "10Gi"
+    mountPath: "/tmp/staging"
+
+# ---------------------------------------------------------------------------
+# Coordinator (Django + Gunicorn)
+# ---------------------------------------------------------------------------
+coordinator:
+  replicas: 2
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  gunicorn:
+    workers: 4
+    timeout: 120
+  env:
+    DJANGO_DEBUG: "False"
+    # Operators MUST set this to actual hostname(s); empty string rejects all requests by default.
+    DJANGO_ALLOWED_HOSTS: ""
+    DEPLOYMENT_ENV: production
+    PRODUCTION_READINESS_ACK: "true"
+
+# ---------------------------------------------------------------------------
+# External EXTERNAL_TRANSLATION seam (default OFF)
+# ---------------------------------------------------------------------------
+externalTranslation:
+  preferExternal: "false"
+  url: ""
+  providerId: "passthrough"
+  timeoutSeconds: "30"
+  readinessPath: "/health"
+
+# ---------------------------------------------------------------------------
+# Frontend operator console (Next.js)
+# ---------------------------------------------------------------------------
+frontend:
+  enabled: true
+  replicas: 1
+  apiBaseUrl: "/"                 # same-origin ingress/service path by default
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Celery coordinator worker (job lifecycle queue)
+# ---------------------------------------------------------------------------
+celeryCoordinator:
+  replicas: 1
+  concurrency: 2
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+# ---------------------------------------------------------------------------
+# Celery Beat (periodic tasks)
+# ---------------------------------------------------------------------------
+celeryBeat:
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Flower (Celery monitoring dashboard)
+#
+# SECURITY NOTE:
+#   Flower exposes Celery task queue internals (job IDs, file paths, timings,
+#   worker hostnames, argument payloads). Basic HTTP auth is the ONLY
+#   authentication layer Flower ships with and is NOT sufficient for exposure
+#   on untrusted networks.
+#
+#   In production:
+#     1. Do NOT expose Flower through a public Ingress. Keep it ClusterIP-only
+#        (the default) and access it through `kubectl port-forward`, a VPN, or
+#        an authenticated ingress that enforces SSO/OIDC and IP allow-listing.
+#     2. Leave `flower.networkPolicy.enabled=true` so only pods in the release
+#        namespace can reach Flower on port 5555.
+#     3. Rotate `secrets.flowerPassword` regularly and use a long random value.
+#     4. `FLOWER_UNAUTHENTICATED_API=false` is enforced below so the Flower
+#        REST API cannot be called without credentials even if the UI is
+#        proxied.
+# ---------------------------------------------------------------------------
+flower:
+  enabled: true
+  # NetworkPolicy restricting Flower ingress to pods within the release namespace.
+  # Leave enabled in production unless a dedicated, authenticated ingress path
+  # is being provisioned. See SECURITY NOTE above.
+  networkPolicy:
+    enabled: true
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# GPU OCR workers
+# ---------------------------------------------------------------------------
+gpuWorker:
+  replicas: 2
+  concurrency: 4
+  queues: "ocr_gpu,cpu_general"
+  maxTasksPerChild: 50
+  shmSize: 8Gi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+      add:
+        - SYS_PTRACE
+    seccompProfile:
+      type: RuntimeDefault
+  autoscaling:
+    enabled: false
+    minReplicas: 2              #  tuning -- min replicas for ocr_gpu queue
+    maxReplicas: 8              #  tuning -- max replicas for ocr_gpu queue
+    pollingInterval: 15         #  tuning -- queue poll interval (seconds)
+    cooldownPeriod: 120         #  tuning -- scale-down cooldown (seconds)
+    queueTarget: 5
+  resources:
+    requests:
+      cpu: "4"
+      memory: 8Gi
+      nvidia.com/gpu: 1
+    limits:
+      cpu: "8"
+      memory: 16Gi
+      nvidia.com/gpu: 1
+  startupProbe:
+    modelDir: /app/models       # Directory containing PaddleOCR model files
+    failureThreshold: 30        # 30 * 10s = 5 min max startup time
+    periodSeconds: 10
+  nodeSelector: {}
+  tolerations: []
+
+# ---------------------------------------------------------------------------
+# CPU OCR workers (PaddleOCR on CPU with ONNX Runtime optimization)
+# For deployments without GPU hardware or to supplement GPU workers
+# ---------------------------------------------------------------------------
+cpuOcrWorker:
+  enabled: false            # Disabled by default; enable for CPU-only deployments
+  replicas: 2
+  concurrency: 4
+  queues: "ocr_cpu,cpu_general"
+  maxTasksPerChild: 100     # Higher than GPU (less memory pressure without VRAM)
+  env:
+    OCR_INFERENCE_BACKEND: "onnx"   # ONNX Runtime for CPU optimization
+    OCR_TASK_ROUTING: "cpu"         # Route OCR tasks to ocr_cpu queue
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  autoscaling:
+    enabled: false
+    minReplicas: 1              #  tuning -- min replicas for ocr_cpu queue
+    maxReplicas: 8              #  tuning -- max replicas for ocr_cpu queue
+    pollingInterval: 15         #  tuning -- queue poll interval (seconds)
+    cooldownPeriod: 120         #  tuning -- scale-down cooldown (seconds)
+    queueTarget: 3          # Lower target (CPU is slower, keep queue shallow)
+  resources:
+    requests:
+      cpu: "4"
+      memory: 4Gi
+    limits:
+      cpu: "8"
+      memory: 8Gi
+  nodeSelector: {}
+  tolerations: []
+
+# ---------------------------------------------------------------------------
+# Layout CPU workers (barcode/QR extraction, OMR checkbox detection)
+# CPU-bound tasks using pyzbar; no GPU required.
+# ---------------------------------------------------------------------------
+layoutCpuWorker:
+  enabled: false            # Disabled by default; enable when layout extraction is needed
+  replicas: 1
+  concurrency: 4
+  queues: "ocr_layout_cpu"
+  maxTasksPerChild: 200     # Lightweight CPU tasks — higher recycling threshold
+  capabilities: "barcode,omr,layout"
+  env:
+    ENABLE_BARCODE_EXTRACTION: "true"
+    ENABLE_OMR_DETECTION: "true"
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  autoscaling:
+    enabled: false
+    minReplicas: 0
+    maxReplicas: 10
+    pollingInterval: 15
+    cooldownPeriod: 120
+    queueTarget: 5
+  resources:
+    requests:
+      cpu: "2"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  nodeSelector: {}
+  tolerations: []
+
+# ---------------------------------------------------------------------------
+# NLP GPU workers (VLM inference gateway, semantic search)
+# GPU-bound tasks for vision-language model inference.
+# Uses Dockerfile.worker.nlp image with VLM dependencies.
+# ---------------------------------------------------------------------------
+nlpGpuWorker:
+  enabled: false            # Disabled by default; enable when VLM inference is needed
+  replicas: 1
+  concurrency: 2            # VLM inference is memory-heavy; keep concurrency low
+  queues: "ocr_nlp_gpu"
+  maxTasksPerChild: 25      # Aggressive recycling to reclaim GPU memory
+  shmSize: 8Gi
+  capabilities: "vlm,semantic_search"
+  env:
+    VLM_GATEWAY_ENABLED: "true"
+    VLM_PROVIDER: "local"          # "local", "openai", "anthropic"
+    VLM_MAX_TOKENS: "4096"
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+      add:
+        - SYS_PTRACE
+    seccompProfile:
+      type: RuntimeDefault
+  autoscaling:
+    enabled: false
+    minReplicas: 2              #  tuning -- min replicas for nlp_general queue
+    maxReplicas: 6              #  tuning -- max replicas for nlp_general queue
+    pollingInterval: 30         #  tuning -- queue poll interval (seconds)
+    cooldownPeriod: 180         #  tuning -- scale-down cooldown (seconds)
+    queueTarget: 3           # Keep queue shallow for expensive GPU tasks
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      nvidia.com/gpu: 1
+    limits:
+      cpu: "8"
+      memory: 32Gi
+      nvidia.com/gpu: 1
+  nodeSelector: {}
+  tolerations: []
+
+# ---------------------------------------------------------------------------
+# LayoutLMv3 workers (document understanding, semantic entity extraction)
+# GPU-accelerated transformer inference using microsoft/layoutlmv3-base.
+# Uses Dockerfile.worker.layoutlm with pre-baked model weights.
+# ---------------------------------------------------------------------------
+layoutlmWorker:
+  enabled: false            # Disabled by default; enable for LayoutLMv3 inference
+  replicas: 1
+  concurrency: 2            # Transformer inference is memory-heavy; keep concurrency low
+  queues: "ocr_layoutlm"
+  maxTasksPerChild: 25      # Aggressive recycling to reclaim GPU/CPU memory
+  shmSize: 4Gi
+  capabilities: "layoutlm,document_understanding"
+  env:
+    LAYOUTLM_DEVICE: "auto"           # "auto", "cuda", "cpu"
+    LAYOUTLM_BATCH_SIZE: "1"
+    LAYOUTLM_CONFIDENCE_THRESHOLD: "0.5"
+  gpu:
+    enabled: true             # Set to false for CPU-only LayoutLMv3 inference
+    count: 1
+  model:
+    name: "microsoft/layoutlmv3-base"
+    cacheDir: "/models"
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+      add:
+        - SYS_PTRACE
+    seccompProfile:
+      type: RuntimeDefault
+  autoscaling:
+    enabled: false
+    minReplicas: 0              #  tuning -- min replicas for ocr_layoutlm queue (scale-to-zero)
+    maxReplicas: 3              #  tuning -- max replicas for ocr_layoutlm queue
+    pollingInterval: 30         #  tuning -- queue poll interval (seconds)
+    cooldownPeriod: 300         #  tuning -- scale-down cooldown (seconds)
+    queueTarget: 2
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1"
+    limits:
+      memory: "4Gi"
+  nodeSelector: {}
+  tolerations: []
+
+# ---------------------------------------------------------------------------
+# CPU-only workers (compression, NER, postprocessing)
+# ---------------------------------------------------------------------------
+cpuWorker:
+  replicas: 1
+  concurrency: 8
+  queues: "cpu_general"
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  autoscaling:
+    enabled: false
+    minReplicas: 2              #  tuning -- min replicas for cpu_general (compression) queue
+    maxReplicas: 8              #  tuning -- max replicas for cpu_general queue
+    pollingInterval: 30         #  tuning -- queue poll interval (seconds)
+    cooldownPeriod: 180         #  tuning -- scale-down cooldown (seconds)
+    queueTarget: 10
+  resources:
+    requests:
+      cpu: "2"
+      memory: 4Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+
+# ---------------------------------------------------------------------------
+# Shared storage
+# ---------------------------------------------------------------------------
+storage:
+  backend: nfs                   # "nfs" or "s3"
+  nfs:
+    server: ""                   # NFS server hostname / IP
+    path: /shared                # NFS export path
+  s3:
+    cacheDir: /tmp/ocr-cache
+    cacheMaxSizeGB: 10
+    # endpoint, bucket, accessKey, secretKey, region set via secret
+
+# ---------------------------------------------------------------------------
+# PostgreSQL
+# ---------------------------------------------------------------------------
+# SECURITY: Infrastructure images should be pinned to specific digests in production.
+# Update with: docker pull <image>:<tag> && docker inspect --format='{{.RepoDigests}}' <image>:<tag>
+postgresql:
+  enabled: true
+  storage: 50Gi
+  storageClass: ""
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    # digest: sha256:<hash>  # Update with: docker pull postgres:16-alpine && docker inspect --format='{{.RepoDigests}}' postgres:16-alpine
+  podSecurityContext:
+    runAsUser: 999
+    fsGroup: 999
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: "1"
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  config:
+    maxConnections: 200
+    sharedBuffers: 256MB
+    effectiveCacheSize: 768MB
+    workMem: 4MB
+  backup:
+    enabled: true               #  tuning -- HA overlay default
+    schedule: "0 2 * * *"       # Daily at 2 AM UTC
+    retentionCount: 7            # Keep last 7 backups
+    storage: 20Gi
+    storageClass: ""
+    historyLimit: 3
+    timeoutSeconds: 3600         # 1 hour max
+
+# ---------------------------------------------------------------------------
+# RabbitMQ
+# ---------------------------------------------------------------------------
+rabbitmq:
+  enabled: true
+  replicas: 1
+  storage: 10Gi
+  storageClass: ""
+  image:
+    repository: rabbitmq
+    tag: "3.13-management-alpine"
+    # digest: sha256:<hash>  # Update with: docker pull rabbitmq:3.13-management-alpine && docker inspect --format='{{.RepoDigests}}' rabbitmq:3.13-management-alpine
+  quorumQueues: true            #  tuning -- HA queue replication
+  #  tuning -- broker-level default queue type for new queues
+  extraConfiguration:
+    RABBITMQ_DEFAULT_QUEUE_TYPE: quorum
+  erlangCookieSecret: ""
+  podSecurityContext:
+    runAsUser: 999
+    fsGroup: 999
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  memoryHighWatermark: 0.6
+
+# ---------------------------------------------------------------------------
+# Redis
+# ---------------------------------------------------------------------------
+redis:
+  enabled: true
+  storage: 5Gi
+  storageClass: ""
+  image:
+    repository: redis
+    tag: "7-alpine"
+    # digest: sha256:<hash>  # Update with: docker pull redis:7-alpine && docker inspect --format='{{.RepoDigests}}' redis:7-alpine
+  podSecurityContext:
+    runAsUser: 999
+    fsGroup: 999
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  maxmemory: "256mb"
+  maxmemoryPolicy: allkeys-lru
+  sentinel:
+    enabled: true               #  tuning -- HA overlay default
+    masterName: ocr-master
+    replicas: 1                  # Number of read replicas
+    sentinelReplicas: 3          # Number of sentinel instances (odd number)
+    quorum: 2                    # Majority of sentinelReplicas needed for failover
+    downAfterMs: 5000
+    failoverTimeoutMs: 10000
+
+# ---------------------------------------------------------------------------
+# Ingress
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: nginx
+  host: ocr.example.com
+  tls: true
+  clusterIssuer: letsencrypt-prod
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+
+# ---------------------------------------------------------------------------
+# Network policy
+# ---------------------------------------------------------------------------
+networkPolicy:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Assembly tuning
+# ---------------------------------------------------------------------------
+assembly:
+  streamingThresholdPages: 1000
+  checkpointIntervalPages: 250
+
+# ---------------------------------------------------------------------------
+# Cleanup
+# ---------------------------------------------------------------------------
+cleanup:
+  retentionDays: 30             # JOB_RETENTION_DAYS — Job metadata
+  piiRetentionDays: 90          # PII_ENTITY_RETENTION_DAYS — PII/PHI entity records
+  auditLogRetentionDays: 2555   # AUDIT_LOG_RETENTION_DAYS — CustodyEvent records (~7 years)
+  outputRetentionDays: 90       # OUTPUT_RETENTION_DAYS — Output files on disk
+
+# ---------------------------------------------------------------------------
+# Secrets (MUST be overridden at install time via --set or values-secret.yaml)
+# ---------------------------------------------------------------------------
+secrets:
+  djangoSecretKey: ""
+  postgresPassword: ""
+  databaseUrl: ""          # auto-generated from release name if empty
+  rabbitmqUser: "ocr"
+  rabbitmqPassword: ""
+  celeryBrokerUrl: ""      # auto-generated from release name if empty
+  redisPassword: ""
+  redisUrl: ""             # auto-generated from release name if empty
+  celeryResultBackend: ""  # auto-generated from release name if empty
+  flowerPassword: ""
+  metricsApiKey: ""
+  # S3 secrets (only used when storage.backend == "s3")
+  s3Endpoint: ""
+  s3Bucket: ""
+  s3AccessKey: ""
+  s3SecretKey: ""
+  s3Region: ""
+
+# ---------------------------------------------------------------------------
+# Inter-service TLS (cert-manager)
+# Requires cert-manager CRDs pre-installed in the cluster.
+# When enabled, creates a two-tier CA chain and per-service certificates
+# for PostgreSQL, RabbitMQ, and Redis.
+# ---------------------------------------------------------------------------
+tls:
+  enabled: false
+  certManager:
+    issuerKind: Issuer  # or ClusterIssuer
+
+# ---------------------------------------------------------------------------
+# Cloud provider configuration (optional)
+# Used for provider-specific optimizations (node selectors, tolerations, etc.)
+# ---------------------------------------------------------------------------
+cloudProvider: "generic"   # "aws", "gcp", "oracle", or "generic"
+
+# ---------------------------------------------------------------------------
+# KEDA scaling strategy (applies when any autoscaling.enabled is true)
+# ---------------------------------------------------------------------------
+keda:
+  # Scaling strategy affects cooldown, polling, and queue targets:
+  #   aggressive  — fast scale-up (10s poll, 60s cooldown, low queue target)
+  #   balanced    — default behavior (15s poll, 120-300s cooldown)
+  #   conservative — slow scale-up (30s poll, 600s cooldown, high queue target)
+  scalingStrategy: "balanced"
+  # Global maximum replica count override (per-worker maxReplicas still apply)
+  maxReplicaCount: 50
+  # Per-scaler queue name overrides (match Celery queue routing configuration)
+  gpu:
+    queueName: "ocr_gpu"
+  cpu:
+    queueName: "cpu_general"
+  cpuOcr:
+    queueName: "ocr_cpu"
+
+# ---------------------------------------------------------------------------
+# Webhook configuration
+# ---------------------------------------------------------------------------
+webhooks:
+  # Include PII entity bounding boxes in webhook completion payloads.
+  # When enabled, completed job webhooks include an "entities" array
+  # with entity_type, confidence_score, page_index, and bounding_box.
+  enrichWithEntities: false
+
+# ---------------------------------------------------------------------------
+# Prometheus monitoring
+# ---------------------------------------------------------------------------
+prometheus:
+  enabled: true                 #  tuning -- enable Prometheus stack by default
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    additionalLabels: {}
+  rules:
+    enabled: false
+    additionalLabels: {}
+  grafana:
+    enabled: true               #  tuning -- enable Grafana dashboards by default
+    dashboardLabel: grafana_dashboard
+    dashboardLabelValue: "1"
+
+# ---------------------------------------------------------------------------
+# Monitoring ( alias / consolidated toggles)
+# These mirror the per-tool flags above and serve as the documented public
+# surface for "is monitoring on" in . The chart still consumes
+# `prometheus.enabled` and `prometheus.grafana.enabled` directly.
+# ---------------------------------------------------------------------------
+monitoring:
+  prometheus:
+    enabled: true               #  tuning -- monitoring on by default
+  grafana:
+    enabled: true               #  tuning -- monitoring on by default
+
+# ---------------------------------------------------------------------------
+# Coordinator KEDA autoscaling
+# Controls autoscaling for the coordinator deployment when KEDA is wired up.
+# Default `enabled: false` preserves existing behavior; flipping to true
+# scales between minReplicas..maxReplicas based on broker queue depth.
+# ---------------------------------------------------------------------------
+coordinatorAutoscaling:
+  enabled: false
+  minReplicas: 1                #  tuning -- coordinator min replicas
+  maxReplicas: 2                #  tuning -- coordinator max replicas
+  pollingInterval: 30           #  tuning -- queue poll interval (seconds)
+  cooldownPeriod: 300           #  tuning -- scale-down cooldown (seconds)
+
+# ---------------------------------------------------------------------------
+# Pod Disruption Budgets
+# Documented PDB targets for production. The shipped templates currently use
+# fixed `maxUnavailable: 1` per component; these values are the canonical
+#  targets and can be wired into templates in a follow-up PR
+# without further values.yaml changes.
+# ---------------------------------------------------------------------------
+pdb:
+  coordinator:
+    minAvailable: 1             #  tuning -- coordinator PDB target
+  gpuWorker:
+    maxUnavailable: "25%"       #  tuning -- GPU worker PDB target
+  cpuWorker:
+    maxUnavailable: "50%"       #  tuning -- CPU worker PDB target
+  rabbitmq:
+    minAvailable: 2             #  tuning -- RabbitMQ PDB target (HA quorum)
+  postgres:
+    minAvailable: 1             #  tuning -- Postgres PDB target
+  redis:
+    minAvailable: 2             #  tuning -- Redis PDB target (Sentinel quorum)
+
+# ---------------------------------------------------------------------------
+# Federation  -- multi-cluster overlay
+#
+# Opt-in primitives for federated, multi-cluster deployments:
+#   * RabbitMQ federation (overflow-only on `ocr_gpu*` and `ocr_cpu` queues)
+#   * ArgoCD ApplicationSets for fan-out across clusters
+#   * Cluster-identity ConfigMap (cluster name + presigned-URL endpoint +
+#     peer-cluster list) consumed by coordinator and workers
+#   * NetworkPolicy egress for AMQPS to peer clusters
+#
+# Defaults: federation.enabled=false. With federation disabled the chart
+# renders byte-identically to a non-federated install (all federation
+# templates are gated behind `if .Values.federation.enabled`).
+#
+# Prerequisite (when enabled): RabbitMQ Cluster Operator must already be
+# installed in the target cluster. The chart does NOT bundle the operator
+# CRDs; it only renders FederationUpstream + Policy custom resources.
+#
+# Reference: docs/operations/plan-c-phase1-federation.md
+# Reference: docs/planning/2026-04-24-translation-swarm/03-plan-C-swarm-kubernetes.md (Section 4)
+# ---------------------------------------------------------------------------
+federation:
+  enabled: false                   # master toggle -- default OFF
+  clusterName: ""                  # required when enabled (e.g., "prod-us-east-1")
+  presignedEndpoint: ""            # this cluster's presigned-URL endpoint exposed to peers
+  # ---------------------------------------------------------------------------
+  # , item C2 -- expanded peer-cluster registry.
+  #
+  # `clusters` is the new dynamic peer registry consumed by the federation
+  # reconciler (federation-cluster-registry-configmap.yaml). Each entry
+  # describes a peer RabbitMQ cluster, its priority/tags, and TLS settings.
+  #
+  # `upstreamClusters` (legacy, from C1) is preserved for backwards
+  # compatibility. When `clusters` is non-empty, it is the authoritative source
+  # for the federation control plane; `upstreamClusters` then mirrors a subset
+  # of the same data for the static `Federation` CRs the RabbitMQ Operator
+  # reconciles. Operators upgrading from C1 should populate both lists with
+  # matching entries until C2 reconciler health is proven.
+  # ---------------------------------------------------------------------------
+  clusters: []                     # list of peer-cluster registrations (C2)
+    # - name: prod-eu-west-1
+    #   region: eu-west-1
+    #   rabbitmq_uri: amqps://federation-user@rabbit.prod-eu-west-1.example.com:5671/%2F
+    #   management_uri: https://rabbit.prod-eu-west-1.example.com:15671
+    #   priority: 10
+    #   tags:
+    #     - commercial
+    #   tls:
+    #     enabled: true
+    #     ca_secret_ref: rabbitmq-fed-ca
+  queue_classes:                   # queues subject to federation reconciliation (C2)
+    - ocr_gpu
+    - ocr_cpu
+    - nlp
+    - translation_batch
+  reconciler:
+    enabled: true                  # render reconciler Deployment + Service + RBAC
+    replicas: 1
+    image:
+      # Defaults to the coordinator image; override only for custom builds.
+      repository: ""
+      tag: ""
+      pullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+  healthcheck_interval_seconds: 30
+  unhealthy_threshold_seconds: 120
+  prometheus:
+    enabled: true                  # expose /metrics on `port` for Prometheus scrape
+    port: 9100
+  upstreamClusters: []             # list of {name, amqpUri, presignedEndpoint} (C1, legacy)
+    # - name: prod-eu-west-1
+    #   amqpUri: amqps://federation-user@rabbit.prod-eu-west-1.example.com:5671/%2F
+    #   presignedEndpoint: https://api.prod-eu-west-1.example.com
+  queues:
+    overflowOnly:                  # federate ONLY these queues; never coordinator
+      - ocr_gpu
+      - ocr_cpu
+    maxOverflowMessages: 10000     # bounded backlog before federation policy kicks in
+  argocd:
+    enabled: false                 # render ArgoCD ApplicationSet for fleet sync
+    applicationSetName: ocr-local-fleet
+    namespace: argocd
+    project: ocr-local
+    repoURL: ""                    # set when enabling ArgoCD
+    targetRevision: HEAD
+    targetClusters: []             # list of cluster generator entries
+      # - cluster: prod-us-east-1
+      #   region: us-east-1
+      #   tenantClass: commercial
+  networkPolicy:
+    enabled: true                  # egress AMQPS allowance to peer clusters
+    peerCidrs: []                  # list of CIDRs for peer-cluster RabbitMQ endpoints
+    amqpsPort: 5671
+  # ---------------------------------------------------------------------------
+  # , item C4 -- cross-cluster job routing.
+  #
+  # Multi-strategy router consulted by the Celery callable router at
+  # task-dispatch time. With `routing.enabled=false` (default), behaviour is
+  # identical to a single-cluster install -- no env vars are injected and the
+  # router code path stays cold.
+  #
+  # Strategies:
+  #   local             - always route to local cluster (default)
+  #   priority          - highest-priority healthy peer
+  #   round_robin       - rotate across healthy peers
+  #   load_aware        - prefer peer with lowest messages_unacknowledged
+  #   region_affinity   - prefer peer matching kwargs["origin_region"]
+  #   custom            - delegate to OCR_FEDERATION_ROUTER_CALLABLE (dotted path)
+  # ---------------------------------------------------------------------------
+  routing:
+    enabled: false                 # master toggle for cross-cluster routing
+    strategy: "local"              # local | priority | round_robin | load_aware | region_affinity | custom
+    registry_poll_seconds: 30
+    load_aware_cache_seconds: 5
+    custom_callable: ""            # dotted import path "module.path:attr"
+  # ---------------------------------------------------------------------------
+  # , item C7 -- DNS-SD federation cluster auto-discovery.
+  #
+  # When enabled, a Kubernetes CronJob periodically queries DNS-SD (RFC 6763)
+  # for peer clusters advertising the `_ocr-federation._tcp` service type and
+  # reconciles the result into the federation cluster-registry ConfigMap.
+  # The discovery sidecar only touches that one ConfigMap; it does NOT
+  # participate in the Celery routing path. Default-OFF.
+  # ---------------------------------------------------------------------------
+  discovery:
+    enabled: false                 # master toggle for DNS-SD discovery
+    schedule: "*/5 * * * *"        # CronJob schedule (every 5 minutes by default)
+    domain: ""                     # DNS suffix to query (e.g. "clusters.ocr.example.com")
+    serviceType: "_ocr-federation._tcp"
+    configmapName: "federation-clusters"
+    dryRun: false                  # when true, log diffs instead of patching the ConfigMap
+  # ---------------------------------------------------------------------------
+  # , item C8 -- federation mTLS hardening.
+  #
+  # When `federation.enabled=true` and `federation.mtls.enabled=true`, the
+  # chart renders cert-manager Issuer + Certificate resources that mint a
+  # self-signed root CA, a coordinator server cert, a RabbitMQ server cert,
+  # and a peer-cluster client cert. The coordinator-deployment and
+  # rabbitmq-statefulset additively mount the resulting Secret(s) at
+  # /etc/federation-mtls/ and the federation-overlay ConfigMap exposes
+  # OCR_FEDERATION_MTLS_* env vars pointing at those mount paths.
+  #
+  # Production deployments should override `caRef` with the name of an
+  # existing CA Secret (managed externally) instead of using the self-signed
+  # bootstrap Issuer that the chart provisions by default.
+  #
+  # All flags are subordinate to `federation.enabled`: when federation is
+  # off, no mTLS resources are rendered regardless of `mtls.enabled`.
+  # ---------------------------------------------------------------------------
+  mtls:
+    enabled: false                 # master toggle for federation-internal mTLS
+    clusterIssuer: false           # render ClusterIssuer instead of namespaced Issuer
+    caRef: ""                      # name of existing CA Secret (skips bootstrap Issuer/CA cert)
+    certDuration: 8760h            # leaf cert lifetime (1 year)
+    certRenewBefore: 720h          # renew window (30 days)
+    coordinatorSan: ""             # additional DNS SAN for coordinator server cert
+    rabbitmqSan: ""                # additional DNS SAN for rabbitmq server cert
+    peerLabel: "ocr.local/federation-peer"   # NetworkPolicy podSelector label
+    custodyPort: 8443              # custody-replication HTTP(S) port (NetworkPolicy ingress)

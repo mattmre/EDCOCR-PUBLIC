@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/glossary.schema.json",
+  "title": "Translation Glossary Bundle",
+  "description": "Tenant-scoped translation glossary bundle.  Used by  endpoints (9-12) to import / export per-tenant term overrides and to pin a frozen `glossary_hash` into TRANSLATION_APPLIED custody events.  All entries within a single bundle share a (source_lang, target_lang) pair.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tenant_id",
+    "source_lang",
+    "target_lang",
+    "entries"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"],
+      "description": "Schema version for this glossary format."
+    },
+    "glossary_id": {
+      "type": "string",
+      "description": "Stable identifier for this glossary bundle.  When omitted the API computes a UUIDv4 on save.  Used for audit-trail attribution.",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "tenant_id": {
+      "type": "string",
+      "description": "Tenant scope for these entries.  Glossaries are never shared across tenants.",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "source_lang": {
+      "type": "string",
+      "description": "BCP-47 source language tag.  All entries match this tag.",
+      "minLength": 2,
+      "maxLength": 32
+    },
+    "target_lang": {
+      "type": "string",
+      "description": "BCP-47 target language tag.  All entries match this tag.",
+      "minLength": 2,
+      "maxLength": 32
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional human-readable description of the glossary's purpose.",
+      "maxLength": 1024
+    },
+    "glossary_hash": {
+      "type": "string",
+      "description": "SHA-256 hex digest computed over the canonical sorted entries.  Pinned into TRANSLATION_APPLIED custody events so the audit trail can prove which glossary was applied.  Lower-case hex, 64 chars.",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "entries": {
+      "type": "array",
+      "description": "Term-override entries.  Order is preserved on save; runtime applies in priority order then by entry id.",
+      "items": { "$ref": "#/definitions/glossary_entry" },
+      "maxItems": 100000
+    }
+  },
+  "definitions": {
+    "glossary_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_term", "target_term"],
+      "properties": {
+        "term_id": {
+          "type": "string",
+          "description": "Stable identifier for this entry.  Server-assigned on POST.",
+          "maxLength": 128
+        },
+        "source_term": {
+          "type": "string",
+          "description": "Source-side substring (literal) or regex pattern (when is_regex=true).",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "target_term": {
+          "type": "string",
+          "description": "Replacement string in the target language.  For regex entries this may contain back-references (\\1 .. \\9) that re.sub will expand.",
+          "minLength": 0,
+          "maxLength": 4096
+        },
+        "case_sensitive": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true the literal/regex match is case-sensitive."
+        },
+        "is_regex": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true source_term is interpreted as a Python regex (per ocr_local.translation.glossary)."
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000,
+          "default": 100,
+          "description": "Lower priority numbers apply first.  Ties broken by stable entry id."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1024,
+          "description": "Optional reviewer-facing note (not used by the runtime)."
+        }
+      }
+    }
+  }
+}

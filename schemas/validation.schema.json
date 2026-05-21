@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/validation.schema.json",
+  "title": "Processing Integrity Validation Output",
+  "description": "Per-document validation report with page-level OCR confidence, method tracking, and quality classification. Written to EXPORT/VALIDATION/<subfolder>/<document_name>.validation.json.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for this output format."
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Unique document identifier."
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Source document filename."
+    },
+    "processing": {
+      "type": "object",
+      "description": "Pipeline processing metadata.",
+      "properties": {
+        "pipeline_version": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["pipeline_version", "timestamp"]
+    },
+    "page_count": {
+      "type": "object",
+      "description": "Source vs output page count comparison.",
+      "properties": {
+        "source": { "type": "integer", "description": "Number of pages in the source document." },
+        "output": { "type": "integer", "description": "Number of pages in the output PDF." },
+        "match": { "type": "boolean", "description": "Whether source and output page counts match." }
+      },
+      "required": ["source", "output", "match"]
+    },
+    "quality": {
+      "type": "object",
+      "description": "Document quality assessment.",
+      "properties": {
+        "classification": {
+          "type": "string",
+          "enum": ["high_quality", "acceptable", "degraded", "review_required"],
+          "description": "Overall quality classification."
+        },
+        "overall_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Mean OCR confidence across all pages."
+        },
+        "text_extraction_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of pages with extracted text."
+        },
+        "total_text_length": { "type": "integer", "description": "Total characters of extracted text." },
+        "pages_with_text": { "type": "integer" },
+        "pages_image_only": { "type": "integer" },
+        "pages_failed": { "type": "integer" },
+        "ocr_methods_used": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "OCR methods used across pages (PaddleOCR, Tesseract, ImageOnly)."
+        }
+      },
+      "required": [
+        "classification", "overall_confidence", "text_extraction_rate",
+        "total_text_length", "pages_with_text", "pages_image_only",
+        "pages_failed", "ocr_methods_used"
+      ]
+    },
+    "pages": {
+      "type": "array",
+      "description": "Per-page validation data.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page_num": { "type": "integer" },
+          "ocr_method": {
+            "type": "string",
+            "description": "OCR method: PaddleOCR, Tesseract, ImageOnly, EXTRACT_FAILED."
+          },
+          "ocr_language": { "type": "string" },
+          "ocr_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "text_length": { "type": "integer" },
+          "has_text": { "type": "boolean" },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "ok", "fallback", "image_only", "failed", "unknown"]
+          }
+        },
+        "required": ["page_num", "ocr_method", "ocr_confidence", "has_text", "status"]
+      }
+    },
+    "output_hash": {
+      "type": "string",
+      "description": "SHA-256 hash of the output PDF for integrity verification."
+    }
+  },
+  "required": ["schema_version", "document_id", "source_file", "processing", "page_count", "quality", "pages", "output_hash"]
+}

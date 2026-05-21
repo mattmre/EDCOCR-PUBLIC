@@ -1,0 +1,106 @@
+{{- if and .Values.federation.enabled .Values.federation.reconciler.enabled }}
+# =============================================================================
+# Federation Reconciler Deployment (item C2)
+#
+# Lightweight control-plane deployment that:
+#   * Watches the federation cluster registry ConfigMap.
+#   * Probes each peer's RabbitMQ Management API for liveness.
+#   * Adds/removes federation Policy CRs based on peer health.
+#   * Exports Prometheus metrics on port 9100.
+#
+# The reconciler shares the coordinator container image; only the entrypoint
+# differs. Override `federation.reconciler.image.repository` only for custom
+# builds that bundle the kubernetes Python client.
+# =============================================================================
+{{- $repo := default .Values.image.coordinator.repository .Values.federation.reconciler.image.repository -}}
+{{- $tag := default (default .Chart.AppVersion .Values.image.coordinator.tag) .Values.federation.reconciler.image.tag -}}
+{{- $pullPolicy := default (default "IfNotPresent" .Values.image.coordinator.pullPolicy) .Values.federation.reconciler.image.pullPolicy -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-federation-reconciler
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-reconciler
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: {{ .Values.federation.reconciler.replicas | int }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: federation-reconciler
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.labels" . | nindent 8 }}
+        app.kubernetes.io/component: federation-reconciler
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      serviceAccountName: {{ .Release.Name }}-federation-reconciler
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: reconciler
+          image: "{{ $repo }}:{{ $tag }}"
+          imagePullPolicy: {{ $pullPolicy }}
+          command:
+            - python
+            - -m
+            - federation.reconciler
+          env:
+            - name: FEDERATION_REGISTRY_PATH
+              value: /etc/federation/clusters.json
+            - name: FEDERATION_METRICS_PORT
+              value: {{ .Values.federation.prometheus.port | quote }}
+            - name: FEDERATION_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FEDERATION_RELEASE
+              value: {{ .Release.Name | quote }}
+            - name: FEDERATION_HEALTHCHECK_INTERVAL_SECONDS
+              value: {{ .Values.federation.healthcheck_interval_seconds | quote }}
+            - name: FEDERATION_UNHEALTHY_THRESHOLD_SECONDS
+              value: {{ .Values.federation.unhealthy_threshold_seconds | quote }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.federation.prometheus.port | int }}
+              protocol: TCP
+          volumeMounts:
+            - name: registry
+              mountPath: /etc/federation
+              readOnly: true
+          resources:
+            {{- toYaml .Values.federation.reconciler.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 15
+      volumes:
+        - name: registry
+          configMap:
+            name: {{ .Release.Name }}-federation-cluster-registry
+            items:
+              - key: clusters.json
+                path: clusters.json
+{{- end }}

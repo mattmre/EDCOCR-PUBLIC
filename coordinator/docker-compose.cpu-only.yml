@@ -1,0 +1,73 @@
+# CPU-only deployment overlay
+#
+# Use this override for environments without GPU hardware.  OCR tasks are
+# routed to the ocr_cpu queue and processed using ONNX Runtime / Tesseract
+# fallback instead of PaddleOCR GPU inference.
+#
+# Usage:
+#   docker-compose -f docker-compose.coordinator.yml \
+#                  -f docker-compose.cpu-only.yml up -d
+#
+# Or combine with the worker template:
+#   docker-compose -f docker-compose.coordinator.yml \
+#                  -f docker-compose.worker.yml \
+#                  -f docker-compose.cpu-only.yml up -d
+
+services:
+  ocr-cpu-worker:
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile.worker
+    environment:
+      # Docker-internal hostnames (same network as coordinator compose)
+      DATABASE_URL: postgres://ocr:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/ocr_coordinator
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
+      DJANGO_SETTINGS_MODULE: coordinator.settings
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-development}
+      PRODUCTION_READINESS_ACK: ${PRODUCTION_READINESS_ACK:-false}
+      NFS_ROOT: ${NFS_ROOT:-/shared}
+      METRICS_API_KEY: ${METRICS_API_KEY:-}
+      PYTHONPATH: /app:/app/coordinator
+      # S3/MinIO storage configuration (for S3 canary overlay)
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-nfs}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      # CPU OCR routing configuration
+      WORKER_QUEUES: ocr_cpu,cpu_general
+      WORKER_CONCURRENCY: ${CPU_OCR_CONCURRENCY:-4}
+      OCR_TASK_ROUTING: cpu
+      OCR_INFERENCE_BACKEND: onnx
+      # OCR settings (models pre-baked in Docker image for air-gapped deployment)
+      FASTTEXT_MODEL_PATH: ${FASTTEXT_MODEL_PATH:-/app/models/lid.176.bin}
+    command: >
+      celery -A coordinator worker
+      -Q ocr_cpu,cpu_general
+      -c ${CPU_OCR_CONCURRENCY:-4}
+      --hostname cpu-ocr-worker@%h
+      -l info
+      --max-tasks-per-child 100
+    volumes:
+      - ${NFS_HOST_PATH:-./shared}:/shared
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # No GPU reservation -- this is the key difference from the GPU worker
+    restart: unless-stopped
+
+  # Override the coordinator to route OCR tasks to ocr_cpu
+  django:
+    environment:
+      OCR_TASK_ROUTING: cpu
+
+  celery-coordinator:
+    environment:
+      OCR_TASK_ROUTING: cpu

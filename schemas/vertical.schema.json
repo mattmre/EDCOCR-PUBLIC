@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/vertical.schema.json",
+  "title": "CJK Vertical Text Analysis Output",
+  "description": "Vertical text detection and reading order analysis sidecar for CJK documents. Written to EXPORT/VERTICAL/<subfolder>/<document_name>.vertical.json when ENABLE_VERTICAL_TEXT is active.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for this output format."
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Unique document identifier."
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Source document filename."
+    },
+    "processing": {
+      "type": "object",
+      "description": "Analysis engine metadata.",
+      "properties": {
+        "analysis_engine": {
+          "type": "string",
+          "description": "Analysis method (geometry_aspect_ratio)."
+        },
+        "aspect_ratio_threshold": {
+          "type": "number",
+          "description": "Height/width ratio threshold for vertical classification."
+        },
+        "column_grouping_tolerance": {
+          "type": "number",
+          "description": "Fraction of page width used for column grouping."
+        },
+        "pipeline_version": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["analysis_engine", "aspect_ratio_threshold", "column_grouping_tolerance", "pipeline_version", "timestamp"]
+    },
+    "document_summary": {
+      "type": "object",
+      "description": "Document-level vertical text summary.",
+      "properties": {
+        "total_vertical_pages": { "type": "integer", "description": "Pages with predominantly vertical text." },
+        "total_mixed_pages": { "type": "integer", "description": "Pages with both horizontal and vertical text." },
+        "has_vertical_content": { "type": "boolean", "description": "True if any page has vertical or mixed content." }
+      },
+      "required": ["total_vertical_pages", "total_mixed_pages", "has_vertical_content"]
+    },
+    "pages": {
+      "type": "array",
+      "description": "Per-page vertical text analysis.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page_number": { "type": "integer" },
+          "direction": {
+            "type": "string",
+            "enum": ["horizontal", "vertical", "mixed"],
+            "description": "Predominant text direction."
+          },
+          "vertical_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+          "vertical_line_count": { "type": "integer" },
+          "horizontal_line_count": { "type": "integer" },
+          "column_count": { "type": "integer", "description": "Number of vertical text columns detected." },
+          "lang_detected": { "type": "string" },
+          "reading_order_applied": { "type": "boolean" }
+        },
+        "required": ["page_number", "direction", "vertical_ratio"]
+      }
+    }
+  },
+  "required": ["schema_version", "document_id", "source_file", "processing", "document_summary", "pages"]
+}

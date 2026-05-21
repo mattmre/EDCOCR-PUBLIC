@@ -1,0 +1,119 @@
+# =============================================================================
+# .dockerignore - Root build context
+# =============================================================================
+# Applies to: Dockerfile (root), coordinator/Dockerfile.worker*,
+# coordinator/Dockerfile.worker.ocr, coordinator/Dockerfile.worker.nlp,
+# coordinator/Dockerfile.worker.layoutlm
+#
+# The root Dockerfile uses explicit COPY per file, so exclusions here mainly
+# reduce build-context transfer size.  The worker Dockerfiles use COPY . /app/
+# so exclusions here directly prevent bloat and sensitive data from entering
+# production images.
+# =============================================================================
+
+# -- Version control ----------------------------------------------------------
+.git/
+.gitignore
+.gitattributes
+
+# -- CI / GitHub --------------------------------------------------------------
+.github/
+
+# -- Tests --------------------------------------------------------------------
+tests/
+pytest.ini
+.coverage
+coverage.xml
+htmlcov/
+conftest.py
+
+# -- Documentation ------------------------------------------------------------
+docs/
+*.md
+!README.md
+
+# -- AI assistant config ------------------------------------------------------
+.ai-assistant/
+
+# -- Windows launchers --------------------------------------------------------
+*.bat
+
+# -- Local runtime artifacts --------------------------------------------------
+ocr_output/
+ocr_temp/
+ocr_source/
+*.log
+*.pyc
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+tmp/
+
+# -- Deployment & infrastructure (not needed inside containers) ---------------
+helm/
+terraform/
+playwright/
+playwright-artifacts/
+playwright.config.js
+legacy/
+
+# -- Development tooling ------------------------------------------------------
+scripts/
+sdk/
+benchmark_results/
+
+# -- Node / dashboard (separate build context) --------------------------------
+node_modules/
+package.json
+package-lock.json
+dashboard/
+
+# -- Editor / IDE -------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# -- Secrets / environment ----------------------------------------------------
+.env
+coordinator/.env
+
+# -- Stale implementation-note text files (not production code) ----------------
+EXACT_FILES_CHANGED.txt
+EXECUTE_ME_MINIO.txt
+IMPLEMENTATION_COMPLETE.txt
+IMPLEMENTATION_COMPLETE_README.txt
+IMPLEMENTATION_VERIFICATION_CHECKLIST.txt
+IMPLEMENTER_COMPLETE.txt
+IMPLEMENTER_JSON_OUTPUT_SUMMARY.txt
+IMPLEMENTER_REVIEWER_HANDOFF.txt
+IMPLEMENTER_STATUS.txt
+LINE_BY_LINE_CHANGES.txt
+PHASE7B_DOCS_IMPLEMENTATION_SUMMARY.txt
+PHASE7B_IMPLEMENTATION_SUMMARY.txt
+QUICK_SUMMARY.txt
+UNIFIED_DIFFS_JSON_OUTPUT.txt
+VALIDATION_REPORT.txt
+VERIFICATION_CHECKLIST.txt
+WAVE_A_BOOTSTRAP_DIFFS.txt
+WAVE_A_IMPLEMENTATION_SUMMARY.txt
+WAVE_A_QUICK_REF.txt
+WAVE_A_SUMMARY.txt
+WAVE_C_COMPLETE.txt
+WAVE_C_FILES.txt
+WAVE_C_FINAL_SUMMARY.txt
+WAVE_D_F_SUMMARY.txt
+findings.md
+progress.md
+task_plan.md
+pr_list.txt
+pr_merge.log
+docs_architect_orchestrator.log
+docs_architect_orchestrator_v2.log
+docs_architect_orchestrator_v3.log
+docs_architect_orchestrator.py
+
+# -- CODEOWNERS / LICENSE (informational, not runtime) ------------------------
+CODEOWNERS
+LICENSE
+SECURITY.md

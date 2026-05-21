@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/ner.schema.json",
+  "title": "Named Entity Recognition Output",
+  "description": "NER sidecar with spaCy and custom regex entity extraction results. Written to EXPORT/NER/<subfolder>/<document_name>.ner.json.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for this output format."
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Unique document identifier."
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Source document filename."
+    },
+    "processing": {
+      "type": "object",
+      "description": "NER processing metadata.",
+      "properties": {
+        "ner_engine": {
+          "type": "string",
+          "description": "Engine used: spacy or regex_only."
+        },
+        "ner_model": {
+          "type": "string",
+          "description": "spaCy model name or n/a."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pipeline_version": {
+          "type": "string"
+        }
+      },
+      "required": ["ner_engine", "ner_model", "timestamp", "pipeline_version"]
+    },
+    "entities_summary": {
+      "type": "object",
+      "description": "Aggregate NER statistics.",
+      "properties": {
+        "total_entities": { "type": "integer" },
+        "entity_types": {
+          "type": "object",
+          "description": "Counts per entity type (PERSON, ORG, GPE, DATE, MONEY, CASE_NUMBER, BATES_NUMBER, EXHIBIT_REF)."
+        },
+        "unique_entities": {
+          "type": "integer",
+          "description": "Count of deduplicated unique entities."
+        }
+      },
+      "required": ["total_entities", "entity_types", "unique_entities"]
+    },
+    "pages": {
+      "type": "array",
+      "description": "Per-page NER results.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page_num": { "type": "integer" },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Entity type: PERSON, ORG, GPE, DATE, MONEY, CASE_NUMBER, BATES_NUMBER, EXHIBIT_REF."
+                },
+                "text": { "type": "string" },
+                "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+                "page_num": { "type": "integer" },
+                "start": { "type": "integer", "description": "Start character offset in page text." },
+                "end": { "type": "integer", "description": "End character offset in page text." }
+              },
+              "required": ["type", "text", "confidence", "page_num", "start", "end"]
+            }
+          }
+        },
+        "required": ["page_num", "entities"]
+      }
+    }
+  },
+  "required": ["schema_version", "document_id", "source_file", "processing", "entities_summary", "pages"]
+}

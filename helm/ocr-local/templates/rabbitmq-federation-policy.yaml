@@ -1,0 +1,70 @@
+{{- if .Values.federation.enabled }}
+# =============================================================================
+# RabbitMQ Federation Policy
+#
+# , item C2: when the dynamic peer registry
+# (`.Values.federation.clusters`) is populated, this template emits one Policy
+# per (cluster x queue-class) combo. Each Policy targets a single peer's
+# upstream and a single queue class (`ocr_gpu`, `ocr_cpu`, `nlp`,
+# `translation_batch`), enabling fine-grained federation_upstream_set targeting
+# and per-class priority routing.
+#
+# When `.Values.federation.clusters` is empty, the template falls back to the
+# C1 single-policy form scoped to `.Values.federation.queues.overflowOnly`.
+# The coordinator queue is excluded by construction in both modes.
+#
+# Requires: RabbitMQ Cluster Operator (Policy CRD).
+# =============================================================================
+{{- $useDynamic := gt (len .Values.federation.clusters) 0 -}}
+{{- if $useDynamic }}
+{{- $queueClasses := .Values.federation.queue_classes }}
+{{- range $cidx, $c := .Values.federation.clusters }}
+{{- range $qidx, $q := $queueClasses }}
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Policy
+metadata:
+  name: {{ $.Release.Name }}-fed-policy-{{ $c.name }}-{{ $q | replace "_" "-" }}
+  labels:
+    {{- include "ocr-local.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: federation
+    app.kubernetes.io/managed-by: Helm
+    federation.ocr-local.io/peer: {{ $c.name | quote }}
+    federation.ocr-local.io/queue-class: {{ $q | quote }}
+spec:
+  name: {{ $.Release.Name }}-fed-policy-{{ $c.name }}-{{ $q | replace "_" "-" }}
+  vhost: "/"
+  pattern: "^{{ $q }}.*$"
+  applyTo: queues
+  priority: {{ default 10 $c.priority | int }}
+  definition:
+    federation-upstream: {{ $c.name }}-upstream
+    max-length: {{ $.Values.federation.queues.maxOverflowMessages | int }}
+    overflow: reject-publish
+  rabbitmqClusterReference:
+    name: {{ $.Release.Name }}-rabbitmq
+{{- end }}
+{{- end }}
+{{- else }}
+apiVersion: rabbitmq.com/v1beta1
+kind: Policy
+metadata:
+  name: {{ .Release.Name }}-fed-policy
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation
+    app.kubernetes.io/managed-by: Helm
+spec:
+  name: {{ .Release.Name }}-fed-policy
+  vhost: "/"
+  pattern: "^({{ join "|" .Values.federation.queues.overflowOnly }})$"
+  applyTo: queues
+  priority: 10
+  definition:
+    federation-upstream-set: all
+    max-length: {{ .Values.federation.queues.maxOverflowMessages }}
+    overflow: reject-publish
+  rabbitmqClusterReference:
+    name: {{ .Release.Name }}-rabbitmq
+{{- end }}
+{{- end }}

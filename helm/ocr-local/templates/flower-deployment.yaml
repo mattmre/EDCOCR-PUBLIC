@@ -1,0 +1,65 @@
+{{- if .Values.flower.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-flower
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: flower
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: flower
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.labels" . | nindent 8 }}
+        app.kubernetes.io/component: flower
+    spec:
+      serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      {{- with .Values.flower.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: flower
+          image: {{ include "ocr-local.coordinatorImage" . }}
+          imagePullPolicy: {{ .Values.image.coordinator.pullPolicy | default "IfNotPresent" }}
+          command:
+            - celery
+            - -A
+            - coordinator.coordinator
+            - flower
+            - --port=5555
+            # require basic auth for the Flower REST API, not just the UI
+            - --unauthenticated_api=false
+          ports:
+            - name: http
+              containerPort: 5555
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secret
+          env:
+            - name: FLOWER_BASIC_AUTH
+              value: "admin:$(FLOWER_PASSWORD)"
+            # ensure REST API refuses unauthenticated calls even if a
+            # reverse proxy later strips the UI basic-auth layer.
+            - name: FLOWER_UNAUTHENTICATED_API
+              value: "false"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5555
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.flower.resources | nindent 12 }}
+          {{- with .Values.flower.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

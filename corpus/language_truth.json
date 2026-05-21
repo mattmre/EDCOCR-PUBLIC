@@ -1,0 +1,876 @@
+{
+  "schema_version": "1.0",
+  "gate": " E-A-010 frozen language corpus",
+  "status": "full_gate_curated_fixture_set",
+  "license_attribution": {
+    "flores200": "FLORES-200: Goyal et al., 2022, Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0). Seed TSVs are documented in tests/fixtures/translation-corpus/README.md.",
+    "repo_ocr_fixtures": "Repo-local OCR ground-truth fixtures."
+  },
+  "notes": [
+    "Operator approved building the 50-doc corpus from FLORES-200 or generated curated fixtures.",
+    "FLORES-derived documents are single-page text fixtures with explicit language truth and source attribution.",
+    "This is local release-gate corpus evidence, not a production customer corpus."
+  ],
+  "coverage": {
+    "document_count": 50,
+    "languages": [
+      "en",
+      "fr",
+      "es",
+      "mixed-cjk"
+    ],
+    "scripts": [
+      "Latin",
+      "mixed CJK"
+    ]
+  },
+  "documents": [
+    {
+      "doc_id": "sample-cjk",
+      "source_fixture": "tests/fixtures/corpus/ground-truth/sample-cjk.gt.txt",
+      "source_sha256": "51943f0c-b818646f-6a25d984-fe04aeac-cd2c83f5-7aa088d8-601b9c71-01cfcdb4",
+      "expected_document_language": "mixed-cjk",
+      "document_class": "existing OCR CJK mixed-script fixture",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "mixed-cjk",
+          "languages_present": [
+            "zh",
+            "ja",
+            "ko"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "sample-clean",
+      "source_fixture": "tests/fixtures/corpus/ground-truth/sample-clean.gt.txt",
+      "source_sha256": "9cafbb1f-d4fce9f9-f40dd8f6-4e3a5e63-56d4b8d7-95127f34-c10ed335-1212535e",
+      "expected_document_language": "en",
+      "document_class": "existing OCR clean English fixture",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "sample-degraded",
+      "source_fixture": "tests/fixtures/corpus/ground-truth/sample-degraded.gt.txt",
+      "source_sha256": "9cafbb1f-d4fce9f9-f40dd8f6-4e3a5e63-56d4b8d7-95127f34-c10ed335-1212535e",
+      "expected_document_language": "en",
+      "document_class": "existing OCR degraded English fixture",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "sample-lowres",
+      "source_fixture": "tests/fixtures/corpus/ground-truth/sample-lowres.gt.txt",
+      "source_sha256": "7fc7eb91-05af37b0-3558a77a-a215e467-c8cf815b-49e74f48-e9d2543e-e9c3c2b4",
+      "expected_document_language": "en",
+      "document_class": "existing OCR low-resolution English fixture",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "sample-signature",
+      "source_fixture": "tests/fixtures/corpus/ground-truth/sample-signature.gt.txt",
+      "source_sha256": "dba85b76-f8c8f361-88f552bc-1c0348dd-d48ea4a3-c4a5e0df-f3c19492-c33f1ab3",
+      "expected_document_language": "en",
+      "document_class": "existing OCR signature English fixture",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-001",
+      "source_fixture": "corpus/language_fixtures/flores-en-001.txt",
+      "source_sha256": "ac38a87c-5d0bad29-d96d1e59-965d8fd9-875a88da-a3061d63-b573ec0c-39f1584e",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-002",
+      "source_fixture": "corpus/language_fixtures/flores-fr-002.txt",
+      "source_sha256": "9600a742-c2de4494-416517b3-ef9c2c7c-68089492-89df2a93-78b87d47-09caa00e",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-003",
+      "source_fixture": "corpus/language_fixtures/flores-en-003.txt",
+      "source_sha256": "ee9b1385-5912b6e5-28bb7494-82ec90ac-67416cbb-4b1dc882-4dfc9065-09666215",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-004",
+      "source_fixture": "corpus/language_fixtures/flores-fr-004.txt",
+      "source_sha256": "7de9e497-df483f44-f5169caa-6c402705-9d96d9d0-d0b2732b-2cd88954-1ec4bb23",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-005",
+      "source_fixture": "corpus/language_fixtures/flores-en-005.txt",
+      "source_sha256": "15eba292-8e0355d2-4bf4c496-69197f92-779df043-66bce427-fa375d4e-2311c85e",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-006",
+      "source_fixture": "corpus/language_fixtures/flores-fr-006.txt",
+      "source_sha256": "efd3927e-ec3b70a4-09cb0955-e4d47922-d7fdecaf-8e48db5f-7b896e3b-49d5f32b",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-007",
+      "source_fixture": "corpus/language_fixtures/flores-en-007.txt",
+      "source_sha256": "4fcfeb45-a2a7ce1b-e30dfcfb-3e6ce1d7-fb35c231-12fdb89a-39ef5b62-cb3bc5ce",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-008",
+      "source_fixture": "corpus/language_fixtures/flores-fr-008.txt",
+      "source_sha256": "0cdb15e4-6f0c7083-b3280be3-36eeddc9-f5f5b498-270513f1-1801546e-da70b88e",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-009",
+      "source_fixture": "corpus/language_fixtures/flores-en-009.txt",
+      "source_sha256": "95fadf03-22390191-6c817420-74a798be-ef954615-7d746299-9f0429c2-2ec4143d",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-010",
+      "source_fixture": "corpus/language_fixtures/flores-fr-010.txt",
+      "source_sha256": "92c1a988-006cf57f-0b7fc8ba-ac41aca5-381d5d6e-0753ad96-5b418bb7-cc31ebfb",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-011",
+      "source_fixture": "corpus/language_fixtures/flores-en-011.txt",
+      "source_sha256": "3c3f179f-e023716f-e98a9334-7b501bd0-dd20053f-0e8ff3d9-1ec6b475-851a7f71",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-012",
+      "source_fixture": "corpus/language_fixtures/flores-fr-012.txt",
+      "source_sha256": "e27866ce-75bd469d-f3f4c120-ddbe1fb2-947708b5-ef59011b-848352b8-b16af87e",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-013",
+      "source_fixture": "corpus/language_fixtures/flores-en-013.txt",
+      "source_sha256": "9ba88e20-e6059d0b-1f3ba0dc-8e895179-a91fd9a8-653887a6-41b5cc57-32e5af1d",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-014",
+      "source_fixture": "corpus/language_fixtures/flores-fr-014.txt",
+      "source_sha256": "d1eae6f1-17cc97ef-9b425000-7cd0bcbd-189b82ac-31c12040-5408e91f-dc64a38d",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-015",
+      "source_fixture": "corpus/language_fixtures/flores-en-015.txt",
+      "source_sha256": "c6840ad3-9f1b5506-c56f056b-efc3ce3b-a4948ff1-8812005b-53775887-d600996e",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-016",
+      "source_fixture": "corpus/language_fixtures/flores-fr-016.txt",
+      "source_sha256": "4c1efd54-d665e1b6-6c4fcfe2-e62faefc-05115e93-44c1aec1-247a4492-ecac1f7a",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-017",
+      "source_fixture": "corpus/language_fixtures/flores-en-017.txt",
+      "source_sha256": "8464318b-62bb5493-7d527826-659e0148-f2dc4170-469c001d-a00f6571-553703f1",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-018",
+      "source_fixture": "corpus/language_fixtures/flores-fr-018.txt",
+      "source_sha256": "e51ba313-9bf468ba-857198f8-25a11884-e0538e2c-e1025e65-8f343f9c-e562d145",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-019",
+      "source_fixture": "corpus/language_fixtures/flores-en-019.txt",
+      "source_sha256": "31c0bf00-5d3b55e3-e1a4d893-06cd7f76-3048a6f6-df12265f-2098f314-21d32486",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-020",
+      "source_fixture": "corpus/language_fixtures/flores-fr-020.txt",
+      "source_sha256": "387d2a04-682fe34a-a848ed1e-e983ab7d-6c9ca7d0-4a79cc1d-8007609b-36e8883e",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-021",
+      "source_fixture": "corpus/language_fixtures/flores-en-021.txt",
+      "source_sha256": "99f3a61e-4ed82b0a-191c8be2-683ebfda-7a26addb-5af7dbbf-2f9d24c1-553262fc",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-022",
+      "source_fixture": "corpus/language_fixtures/flores-fr-022.txt",
+      "source_sha256": "8de12970-ef481326-1718cbcb-dd53d1e8-4111d51b-82f2ed9b-1f3cb5a6-cc505796",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-023",
+      "source_fixture": "corpus/language_fixtures/flores-en-023.txt",
+      "source_sha256": "2cdb663a-6b850514-5a77a8ca-ad11aafc-3d95c0e2-3723103a-24801d41-7b6bc7e6",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-024",
+      "source_fixture": "corpus/language_fixtures/flores-fr-024.txt",
+      "source_sha256": "9d2aebe4-27f16a10-c5df6e59-de459f3f-de4cef65-7725ff6b-077aeb75-1f14822e",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-025",
+      "source_fixture": "corpus/language_fixtures/flores-en-025.txt",
+      "source_sha256": "b1ad16d4-c34fab55-14e9214a-6eeaede5-15834f4a-c002f978-a6c5f0cc-f44f24c6",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-026",
+      "source_fixture": "corpus/language_fixtures/flores-fr-026.txt",
+      "source_sha256": "3a17c4d0-e32f3698-90a30218-4f385c1e-fdabf63b-a1b3f5ee-5c511b2b-9f3c3017",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-027",
+      "source_fixture": "corpus/language_fixtures/flores-en-027.txt",
+      "source_sha256": "0a541f10-99fb7049-cf97f71b-819b843e-f84cdd7a-2d4abba5-c3f43339-9a85a08a",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-028",
+      "source_fixture": "corpus/language_fixtures/flores-fr-028.txt",
+      "source_sha256": "c63060f9-b56ad02c-6e0f8f58-fdf2a150-be0ec1f4-589f1edd-c5c126ab-f0fe2500",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-029",
+      "source_fixture": "corpus/language_fixtures/flores-en-029.txt",
+      "source_sha256": "54a9eabf-0a899194-0c28d41c-acabe6c3-fcc4d2ec-dcdea650-2c49c6a0-b27f54e6",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-fr-030",
+      "source_fixture": "corpus/language_fixtures/flores-fr-030.txt",
+      "source_sha256": "a53a9167-0845342d-8f82c7eb-15277242-dd0b9d35-eac4ad9b-be5c23fd-aa3236b0",
+      "expected_document_language": "fr",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "fr",
+          "languages_present": [
+            "fr"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-031",
+      "source_fixture": "corpus/language_fixtures/flores-en-031.txt",
+      "source_sha256": "4cd1b97f-a2258501-dfca3c9d-c03dbd5c-7bdcee73-7f665c46-b6695db1-326d4ffd",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-es-032",
+      "source_fixture": "corpus/language_fixtures/flores-es-032.txt",
+      "source_sha256": "48ea1780-de756ac2-c28b7fcb-e69f0c98-bff74b73-66b67927-86a438be-e7d3d290",
+      "expected_document_language": "es",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "es",
+          "languages_present": [
+            "es"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-033",
+      "source_fixture": "corpus/language_fixtures/flores-en-033.txt",
+      "source_sha256": "95155085-e0d6a5b4-20b3b68c-4eea25a3-e0f001a1-db186532-36c2ca25-50ba8f5f",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-es-034",
+      "source_fixture": "corpus/language_fixtures/flores-es-034.txt",
+      "source_sha256": "07d5fffb-3dc39127-e19b0b24-d4c525d2-b1a8de5e-0539dd68-355f6dee-f6375ed6",
+      "expected_document_language": "es",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "es",
+          "languages_present": [
+            "es"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-035",
+      "source_fixture": "corpus/language_fixtures/flores-en-035.txt",
+      "source_sha256": "41f17252-977c0e12-85c923e7-170ec62e-3764bfe1-87d16df7-de30c267-39280f82",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-es-036",
+      "source_fixture": "corpus/language_fixtures/flores-es-036.txt",
+      "source_sha256": "9ac260ec-f0f87e1b-1c765313-635ff0f2-d95b929c-f933c087-7d754595-8d51d900",
+      "expected_document_language": "es",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "es",
+          "languages_present": [
+            "es"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-037",
+      "source_fixture": "corpus/language_fixtures/flores-en-037.txt",
+      "source_sha256": "2f05feed-2127a904-792f5675-7d10db5b-d8f86e64-fa7a9ce1-775405be-91d9e570",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-es-038",
+      "source_fixture": "corpus/language_fixtures/flores-es-038.txt",
+      "source_sha256": "54ed5447-950bf70c-c4ea325d-286b06c3-23f9874d-287d47d4-2ce3575c-36df21e7",
+      "expected_document_language": "es",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "es",
+          "languages_present": [
+            "es"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-039",
+      "source_fixture": "corpus/language_fixtures/flores-en-039.txt",
+      "source_sha256": "2882e27a-e9d1f06e-e0ca3ceb-9957f394-fb02961d-4f0e05c0-68a8f649-57dc8e1e",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-es-040",
+      "source_fixture": "corpus/language_fixtures/flores-es-040.txt",
+      "source_sha256": "7cdc09c1-4e31069d-8e94ec9c-8497372d-152d099f-79513594-e5adcd1b-cf53cf97",
+      "expected_document_language": "es",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "es",
+          "languages_present": [
+            "es"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-041",
+      "source_fixture": "corpus/language_fixtures/flores-en-041.txt",
+      "source_sha256": "25ca2737-a6772815-aea83c9b-aa254640-0c7aa99b-458eb392-88824516-cce855ae",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-es-042",
+      "source_fixture": "corpus/language_fixtures/flores-es-042.txt",
+      "source_sha256": "ed296edf-37d75746-bbee5642-d5c4e8fc-6cf7b078-91de1a2f-6293f11f-1bb1e1f4",
+      "expected_document_language": "es",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "es",
+          "languages_present": [
+            "es"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-043",
+      "source_fixture": "corpus/language_fixtures/flores-en-043.txt",
+      "source_sha256": "25ec169b-3e70f07e-93ea34fc-5921e796-184ed262-0938fc8f-0f590792-a671b47b",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-es-044",
+      "source_fixture": "corpus/language_fixtures/flores-es-044.txt",
+      "source_sha256": "bfe785fa-cf330e05-2980d39f-90b980bc-635cfda8-2088a8b0-85295825-861cfa6b",
+      "expected_document_language": "es",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "es",
+          "languages_present": [
+            "es"
+          ]
+        }
+      ]
+    },
+    {
+      "doc_id": "flores-en-045",
+      "source_fixture": "corpus/language_fixtures/flores-en-045.txt",
+      "source_sha256": "519cf661-4b4822b9-60ca2fa5-3caaca15-e94e6220-07c12a38-3e44860b-eb54a418",
+      "expected_document_language": "en",
+      "document_class": "flores200-derived single-page sentence fixture",
+      "attribution": "FLORES-200: Goyal et al., 2022; CC-BY-SA-4.0; https://github.com/facebookresearch/flores",
+      "expected_page_languages": [
+        {
+          "page": 1,
+          "primary_language": "en",
+          "languages_present": [
+            "en"
+          ]
+        }
+      ]
+    }
+  ]
+}

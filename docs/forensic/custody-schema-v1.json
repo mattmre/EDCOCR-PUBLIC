@@ -1,0 +1,713 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.forensic/schemas/custody-schema-v1.json",
+  "title": "Custody Event Schema v1",
+  "description": "Authoritative JSON Schema (draft-07) for the 10 custody event types emitted by the forensic-grade OCR + translation pipeline. Derived from Panel 3 (PANEL-2026-04-24-03) and gated by E-X-003 (cross-plan invariant). Every event is appended to a hash-chained JSONL custody log via CustodyChain.append_event (fsync-before-advance, SHA-256, MAX_CUSTODY_RETRIES=3, CUSTODY_RETRY_DELAYS=[0.1, 0.5, 2.0]). The schema is strict: additionalProperties is false at every level, required fields are explicit per event type, and oneOf is discriminated by event_type.",
+  "type": "object",
+  "required": [
+    "event_type",
+    "event_id",
+    "timestamp",
+    "job_id",
+    "tenant_id",
+    "chain_hash",
+    "clock_source"
+  ],
+  "oneOf": [
+    { "$ref": "#/definitions/JobStarted" },
+    { "$ref": "#/definitions/LanguageDetected" },
+    { "$ref": "#/definitions/EnginePolicyEnforced" },
+    { "$ref": "#/definitions/TranslationApplied" },
+    { "$ref": "#/definitions/TranslationRejected" },
+    { "$ref": "#/definitions/PluginRegistered" },
+    { "$ref": "#/definitions/PluginRejected" },
+    { "$ref": "#/definitions/TranslationReviewed" },
+    { "$ref": "#/definitions/EmbeddingGenerated" },
+    { "$ref": "#/definitions/JobClosed" }
+  ],
+  "definitions": {
+    "BaseEnvelope": {
+      "description": "Fields required on every custody event. Concrete event types extend this envelope via additional required fields but may not remove any base field.",
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "JOB_STARTED",
+            "LANGUAGE_DETECTED",
+            "ENGINE_POLICY_ENFORCED",
+            "TRANSLATION_APPLIED",
+            "TRANSLATION_REJECTED",
+            "PLUGIN_REGISTERED",
+            "PLUGIN_REJECTED",
+            "TRANSLATION_REVIEWED",
+            "EMBEDDING_GENERATED",
+            "JOB_CLOSED"
+          ]
+        },
+        "event_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "RFC 4122 UUID v4 (or v7) uniquely identifying this custody event across all tenants and jobs.",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO-8601 UTC timestamp with explicit timezone (e.g., '2026-04-24T14:32:07.123456Z'). Paired with clock_source to bound trust."
+        },
+        "job_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Pipeline job identifier. Stable across all events for a given job run."
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tenant identifier for multi-tenant isolation. Required on every event even in single-tenant mode (default: 'default')."
+        },
+        "chain_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 (lowercase hex) of the canonical serialization of the prior custody event. The first event of a chain uses the 64-character zero string as its prior-hash anchor."
+        },
+        "clock_source": {
+          "type": "string",
+          "enum": ["local", "ntp", "ptp", "manual"],
+          "description": "Clock-trust signal. 'ntp' is the default in cloud deployments; 'ptp' in high-trust data centers; 'manual' means an operator supplied the clock (air-gap field kits); 'local' means unsynchronized system clock (weakest trust)."
+        }
+      },
+      "required": [
+        "event_type",
+        "event_id",
+        "timestamp",
+        "job_id",
+        "tenant_id",
+        "chain_hash",
+        "clock_source"
+      ]
+    },
+
+    "JobStarted": {
+      "description": "Event #1 -- job creation. First event in the custody chain for a given job. Anchors the source-file SHA-256 so that all downstream events bind to a specific input.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_type": { "const": "JOB_STARTED" },
+        "event_id": { "$ref": "#/definitions/BaseEnvelope/properties/event_id" },
+        "timestamp": { "$ref": "#/definitions/BaseEnvelope/properties/timestamp" },
+        "job_id": { "$ref": "#/definitions/BaseEnvelope/properties/job_id" },
+        "tenant_id": { "$ref": "#/definitions/BaseEnvelope/properties/tenant_id" },
+        "chain_hash": { "$ref": "#/definitions/BaseEnvelope/properties/chain_hash" },
+        "clock_source": { "$ref": "#/definitions/BaseEnvelope/properties/clock_source" },
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 (lowercase hex) of the source document bytes at intake."
+        },
+        "source_path": {
+          "type": "string",
+          "description": "Sanitized intake path (filesystem-safe; never raw operator-supplied path)."
+        },
+        "source_size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_mime": {
+          "type": "string",
+          "description": "Detected MIME type (e.g., 'application/pdf', 'image/tiff')."
+        },
+        "pipeline_version": {
+          "type": "string",
+          "description": "ocr_local.version.__version__ at job start."
+        },
+        "config_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the frozen PipelineConfig in effect for this job ( Ph3 CONFIG_APPLIED pattern)."
+        },
+        "privilege_flag": {
+          "type": "boolean",
+          "description": "True if the document was marked privileged at intake. Privilege-flagged documents are blocked from cloud engines."
+        }
+      },
+      "required": [
+        "event_type",
+        "event_id",
+        "timestamp",
+        "job_id",
+        "tenant_id",
+        "chain_hash",
+        "clock_source",
+        "source_sha256",
+        "pipeline_version",
+        "config_hash"
+      ]
+    },
+
+    "LanguageDetected": {
+      "description": "Event #2 -- per-span language detection. Additive, informational. Records the FastText binary SHA, tokenizer SHA, detector version, confidence, and spatial location. The optional text_sample is subject to privilege-or-short-doc redaction (default: suppress under privilege flag OR documents under 500 tokens).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_type": { "const": "LANGUAGE_DETECTED" },
+        "event_id": { "$ref": "#/definitions/BaseEnvelope/properties/event_id" },
+        "timestamp": { "$ref": "#/definitions/BaseEnvelope/properties/timestamp" },
+        "job_id": { "$ref": "#/definitions/BaseEnvelope/properties/job_id" },
+        "tenant_id": { "$ref": "#/definitions/BaseEnvelope/properties/tenant_id" },
+        "chain_hash": { "$ref": "#/definitions/BaseEnvelope/properties/chain_hash" },
+        "clock_source": { "$ref": "#/definitions/BaseEnvelope/properties/clock_source" },
+        "lang_code": {
+          "type": "string",
+          "minLength": 2,
+          "description": "ISO 639-1/639-3 language code (e.g., 'en', 'zh-Hans', 'ja')."
+        },
+        "script": {
+          "type": "string",
+          "description": "ISO 15924 script code (e.g., 'Latn', 'Hans', 'Jpan')."
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "detector_version": {
+          "type": "string",
+          "description": "Detector release string (e.g., 'fasttext-lid.176.bin@0.9.2')."
+        },
+        "detector_model_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the FastText binary actually loaded at detector init. (A-EN-01)"
+        },
+        "tokenizer_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the tokenizer resource used. (A-EN-01)"
+        },
+        "page_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "span_id": {
+          "type": "string",
+          "description": "Stable span identifier within the page."
+        },
+        "bbox": {
+          "type": "array",
+          "description": "Axis-aligned bounding box [x0, y0, x1, y1] in document coordinates.",
+          "items": { "type": "number" },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "text_sample": {
+          "type": "string",
+          "description": "Optional short span excerpt (default max 60 chars). MUST be omitted when privilege_flag is set OR when the document is under the short-doc threshold (default 500 tokens). See A-EN-02 / RED-04."
+        }
+      },
+      "required": [
+        "event_type",
+        "event_id",
+        "timestamp",
+        "job_id",
+        "tenant_id",
+        "chain_hash",
+        "clock_source",
+        "lang_code",
+        "script",
+        "confidence",
+        "detector_version",
+        "detector_model_sha256",
+        "tokenizer_sha256",
+        "page_index",
+        "span_id",
+        "bbox"
+      ]
+    },
+
+    "EnginePolicyEnforced": {
+      "description": "Event #3 -- translation/engine policy decision. Fired whenever a per-tenant policy blocks, allows, or routes a translation engine. Also fired on kill-switch overrides and policy reloads.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_type": { "const": "ENGINE_POLICY_ENFORCED" },
+        "event_id": { "$ref": "#/definitions/BaseEnvelope/properties/event_id" },
+        "timestamp": { "$ref": "#/definitions/BaseEnvelope/properties/timestamp" },
+        "job_id": { "$ref": "#/definitions/BaseEnvelope/properties/job_id" },
+        "tenant_id": { "$ref": "#/definitions/BaseEnvelope/properties/tenant_id" },
+        "chain_hash": { "$ref": "#/definitions/BaseEnvelope/properties/chain_hash" },
+        "clock_source": { "$ref": "#/definitions/BaseEnvelope/properties/clock_source" },
+        "policy_id": {
+          "type": "string",
+          "description": "Stable policy identifier (e.g., 'privilege_block_cloud', 'embed_translation_enabled')."
+        },
+        "policy_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the policy payload as evaluated."
+        },
+        "decision": {
+          "type": "string",
+          "enum": ["allow", "deny", "route"]
+        },
+        "engine_id": {
+          "type": "string",
+          "description": "Candidate engine identifier (e.g., 'ctranslate2:opus-mt-en-fr', 'managed-cloud-llm:vendor-model', 'vllm:open-weights-llm-awq-int4')."
+        },
+        "factors": {
+          "type": "array",
+          "description": "Decision factors considered by the policy engine.",
+          "items": {
+            "type": "string",
+            "enum": ["privilege", "license", "residency", "cost", "latency", "retention", "tenant_opt_in"]
+          }
+        },
+        "operator_identity": {
+          "type": "string",
+          "description": "Present if the decision was a manual operator override."
+        }
+      },
+      "required": [
+        "event_type",
+        "event_id",
+        "timestamp",
+        "job_id",
+        "tenant_id",
+        "chain_hash",
+        "clock_source",
+        "policy_id",
+        "policy_sha256",
+        "decision",
+        "engine_id",
+        "factors"
+      ]
+    },
+
+    "TranslationApplied": {
+      "description": "Event #4 -- translation completed. Binds the translation sidecar to the authoritative OCR bytes via source_ocr_sha256 (FRE 902(14) hook). Always emitted with certified=false semantics on the sidecar until a TRANSLATION_REVIEWED event flips certification.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_type": { "const": "TRANSLATION_APPLIED" },
+        "event_id": { "$ref": "#/definitions/BaseEnvelope/properties/event_id" },
+        "timestamp": { "$ref": "#/definitions/BaseEnvelope/properties/timestamp" },
+        "job_id": { "$ref": "#/definitions/BaseEnvelope/properties/job_id" },
+        "tenant_id": { "$ref": "#/definitions/BaseEnvelope/properties/tenant_id" },
+        "chain_hash": { "$ref": "#/definitions/BaseEnvelope/properties/chain_hash" },
+        "clock_source": { "$ref": "#/definitions/BaseEnvelope/properties/clock_source" },
+        "source_lang": { "type": "string" },
+        "target_lang": { "type": "string" },
+        "engine_id": { "type": "string" },
+        "engine_type": {
+          "type": "string",
+          "enum": ["nmt", "llm_local", "llm_cloud"]
+        },
+        "weights_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tokenizer_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "seed": { "type": "integer" },
+        "beam_size": { "type": "integer", "minimum": 1 },
+        "temperature": { "type": "number", "minimum": 0.0 },
+        "tenant_policy_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "license": {
+          "type": "string",
+          "enum": ["CC-BY-NC", "Apache-2.0", "MIT", "proprietary", "unknown"],
+          "description": "Model license. CC-BY-NC flags downstream surfaces when applied to commercial matters. (B-EN-10)"
+        },
+        "source_ocr_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the authoritative OCR text bytes translated. This is the FRE 902(14) binding. (B-EN-02)"
+        },
+        "sidecar_path": { "type": "string" },
+        "sidecar_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "cometkiwi_score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Reference-free quality triage score. NOT a known error rate -- used as gate only."
+        },
+        "deterministic": {
+          "type": "boolean",
+          "description": "True only if engine is bit-deterministic under (seed, beam_size, temperature=0) on the executing hardware. CPU CTranslate2 is always deterministic; GPU paths are deterministic on same GPU class + driver only."
+        },
+        "provider_region": {
+          "type": "string",
+          "description": "Cloud engine only. Geographic region used for the call (e.g., 'us-central1', 'eu-west-1')."
+        },
+        "provider_retention_class": {
+          "type": "string",
+          "enum": ["zero", "training_excluded", "quality_review", "standard"],
+          "description": "Cloud engine only. Retention posture for the prompt/response. Managed cloud LLM provider under zero-retention rider = 'zero'. (B-EN-07)"
+        }
+      },
+      "required": [
+        "event_type",
+        "event_id",
+        "timestamp",
+        "job_id",
+        "tenant_id",
+        "chain_hash",
+        "clock_source",
+        "source_lang",
+        "target_lang",
+        "engine_id",
+        "engine_type",
+        "weights_sha256",
+        "tokenizer_sha256",
+        "seed",
+        "beam_size",
+        "temperature",
+        "tenant_policy_hash",
+        "license",
+        "source_ocr_sha256",
+        "sidecar_path",
+        "sidecar_sha256",
+        "cometkiwi_score",
+        "deterministic"
+      ]
+    },
+
+    "TranslationRejected": {
+      "description": "Event #5 -- privilege hard-block or policy denial. ALWAYS fires on any block -- never a silent drop. This is the privilege log's technical evidence and is admissible negative evidence.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_type": { "const": "TRANSLATION_REJECTED" },
+        "event_id": { "$ref": "#/definitions/BaseEnvelope/properties/event_id" },
+        "timestamp": { "$ref": "#/definitions/BaseEnvelope/properties/timestamp" },
+        "job_id": { "$ref": "#/definitions/BaseEnvelope/properties/job_id" },
+        "tenant_id": { "$ref": "#/definitions/BaseEnvelope/properties/tenant_id" },
+        "chain_hash": { "$ref": "#/definitions/BaseEnvelope/properties/chain_hash" },
+        "clock_source": { "$ref": "#/definitions/BaseEnvelope/properties/clock_source" },
+        "reason_code": {
+          "type": "string",
+          "enum": [
+            "privilege_hard_block",
+            "policy_denied",
+            "license_forbidden",
+            "residency_violation",
+            "cometkiwi_below_threshold",
+            "engine_unavailable",
+            "operator_revocation"
+          ]
+        },
+        "engine_id_attempted": { "type": "string" },
+        "tenant_policy_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "page_index_or_span_id": {
+          "type": "string",
+          "description": "Either a stringified page index ('p0042') or a span identifier."
+        },
+        "details": {
+          "type": "string",
+          "description": "Optional free-text detail. MUST be redacted for privilege-flagged documents."
+        }
+      },
+      "required": [
+        "event_type",
+        "event_id",
+        "timestamp",
+        "job_id",
+        "tenant_id",
+        "chain_hash",
+        "clock_source",
+        "reason_code",
+        "engine_id_attempted",
+        "tenant_policy_hash",
+        "page_index_or_span_id"
+      ]
+    },
+
+    "PluginRegistered": {
+      "description": "Event #6 -- plugin lifecycle at startup or dynamic reload. Records signature verification status, signer fingerprint, and boundary-side declaration. Analogous to Ph3 CONFIG_APPLIED.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_type": { "const": "PLUGIN_REGISTERED" },
+        "event_id": { "$ref": "#/definitions/BaseEnvelope/properties/event_id" },
+        "timestamp": { "$ref": "#/definitions/BaseEnvelope/properties/timestamp" },
+        "job_id": { "$ref": "#/definitions/BaseEnvelope/properties/job_id" },
+        "tenant_id": { "$ref": "#/definitions/BaseEnvelope/properties/tenant_id" },
+        "chain_hash": { "$ref": "#/definitions/BaseEnvelope/properties/chain_hash" },
+        "clock_source": { "$ref": "#/definitions/BaseEnvelope/properties/clock_source" },
+        "plugin_name": { "type": "string" },
+        "plugin_version": { "type": "string" },
+        "entry_point_group": { "type": "string" },
+        "boundary_side": {
+          "type": "string",
+          "enum": ["forensic_core", "ai_adjacent", "ui_only"]
+        },
+        "tier": {
+          "type": "string",
+          "enum": ["tier1_in_process_signed", "tier2_out_of_process_sandboxed"],
+          "description": "Two-tier model from Panel 3 C4 resolution. (D-EN-01)"
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "signature_verified": { "type": "boolean" },
+        "signer_fingerprint": {
+          "type": "string",
+          "description": "Fingerprint of the signing certificate (e.g., SHA-256 of the X.509 SPKI)."
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": [
+        "event_type",
+        "event_id",
+        "timestamp",
+        "job_id",
+        "tenant_id",
+        "chain_hash",
+        "clock_source",
+        "plugin_name",
+        "plugin_version",
+        "entry_point_group",
+        "boundary_side",
+        "tier",
+        "manifest_sha256",
+        "signature_verified",
+        "signer_fingerprint"
+      ]
+    },
+
+    "PluginRejected": {
+      "description": "Event #7 -- unsigned/invalid plugin quarantined from the bus. Companion to PLUGIN_REGISTERED. Supply-chain failure record.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_type": { "const": "PLUGIN_REJECTED" },
+        "event_id": { "$ref": "#/definitions/BaseEnvelope/properties/event_id" },
+        "timestamp": { "$ref": "#/definitions/BaseEnvelope/properties/timestamp" },
+        "job_id": { "$ref": "#/definitions/BaseEnvelope/properties/job_id" },
+        "tenant_id": { "$ref": "#/definitions/BaseEnvelope/properties/tenant_id" },
+        "chain_hash": { "$ref": "#/definitions/BaseEnvelope/properties/chain_hash" },
+        "clock_source": { "$ref": "#/definitions/BaseEnvelope/properties/clock_source" },
+        "plugin_name": { "type": "string" },
+        "plugin_version": { "type": "string" },
+        "entry_point_group": { "type": "string" },
+        "reason_code": {
+          "type": "string",
+          "enum": [
+            "signature_invalid",
+            "signature_missing",
+            "unknown_signer",
+            "manifest_malformed",
+            "boundary_declaration_missing",
+            "boundary_declaration_denied",
+            "tier_policy_violation"
+          ]
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "May be present for manifest-malformed cases where the file parsed but failed validation."
+        },
+        "signer_fingerprint": { "type": "string" },
+        "details": { "type": "string" }
+      },
+      "required": [
+        "event_type",
+        "event_id",
+        "timestamp",
+        "job_id",
+        "tenant_id",
+        "chain_hash",
+        "clock_source",
+        "plugin_name",
+        "plugin_version",
+        "entry_point_group",
+        "reason_code"
+      ]
+    },
+
+    "TranslationReviewed": {
+      "description": "Event #8 -- human reviewer certification decision. This is the ONLY event that may flip certified: false -> true on a translation sidecar, and only when decision='approved' AND reviewer_auth_method in {piv_cac, oidc_mfa, hardware_token}. Binds to a PIV/CAC / OIDC-MFA / hardware-token-authenticated reviewer.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_type": { "const": "TRANSLATION_REVIEWED" },
+        "event_id": { "$ref": "#/definitions/BaseEnvelope/properties/event_id" },
+        "timestamp": { "$ref": "#/definitions/BaseEnvelope/properties/timestamp" },
+        "job_id": { "$ref": "#/definitions/BaseEnvelope/properties/job_id" },
+        "tenant_id": { "$ref": "#/definitions/BaseEnvelope/properties/tenant_id" },
+        "chain_hash": { "$ref": "#/definitions/BaseEnvelope/properties/chain_hash" },
+        "clock_source": { "$ref": "#/definitions/BaseEnvelope/properties/clock_source" },
+        "reviewer_id": {
+          "type": "string",
+          "description": "Reviewer identifier (human-attributable; not a service account)."
+        },
+        "reviewer_auth_method": {
+          "type": "string",
+          "enum": ["piv_cac", "oidc_mfa", "hardware_token", "username_password"],
+          "description": "username_password is recorded but is NOT sufficient to flip certified. See B-EN-03 / RED-03."
+        },
+        "reviewer_signature_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the detached reviewer signature blob over sidecar_sha256."
+        },
+        "decision": {
+          "type": "string",
+          "enum": ["approved", "rejected", "escalated"]
+        },
+        "sidecar_path": { "type": "string" },
+        "prior_sidecar_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "new_sidecar_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional reviewer notes. Not disclosable by default; may be work-product."
+        }
+      },
+      "required": [
+        "event_type",
+        "event_id",
+        "timestamp",
+        "job_id",
+        "tenant_id",
+        "chain_hash",
+        "clock_source",
+        "reviewer_id",
+        "reviewer_auth_method",
+        "reviewer_signature_sha256",
+        "decision",
+        "sidecar_path",
+        "prior_sidecar_sha256",
+        "new_sidecar_sha256"
+      ]
+    },
+
+    "EmbeddingGenerated": {
+      "description": "Event #9 -- embedding sidecar generation. Records the embedding model provenance, output sidecar hash, and (for privileged content) the encryption key id used to seal the sidecar at rest.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_type": { "const": "EMBEDDING_GENERATED" },
+        "event_id": { "$ref": "#/definitions/BaseEnvelope/properties/event_id" },
+        "timestamp": { "$ref": "#/definitions/BaseEnvelope/properties/timestamp" },
+        "job_id": { "$ref": "#/definitions/BaseEnvelope/properties/job_id" },
+        "tenant_id": { "$ref": "#/definitions/BaseEnvelope/properties/tenant_id" },
+        "chain_hash": { "$ref": "#/definitions/BaseEnvelope/properties/chain_hash" },
+        "clock_source": { "$ref": "#/definitions/BaseEnvelope/properties/clock_source" },
+        "embedding_model_id": {
+          "type": "string",
+          "description": "e.g., 'bge-m3', 'bge-small-en-v1.5'."
+        },
+        "embedding_model_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "dim": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sidecar_path": { "type": "string" },
+        "sidecar_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_kind": {
+          "type": "string",
+          "enum": ["ocr_original", "translation"]
+        },
+        "source_lang": { "type": "string" },
+        "span_id_or_page_index": { "type": "string" },
+        "encryption_key_id": {
+          "type": "string",
+          "description": "KEK identifier (not the data-encryption key). Required when the source is privilege-flagged. (D-EN-03)"
+        }
+      },
+      "required": [
+        "event_type",
+        "event_id",
+        "timestamp",
+        "job_id",
+        "tenant_id",
+        "chain_hash",
+        "clock_source",
+        "embedding_model_id",
+        "embedding_model_sha256",
+        "dim",
+        "sidecar_path",
+        "sidecar_sha256",
+        "source_kind",
+        "source_lang",
+        "span_id_or_page_index"
+      ]
+    },
+
+    "JobClosed": {
+      "description": "Event #10 -- final hash-chain anchor. Last event in a job's custody chain. Records the final chain tip, TSA anchor status for the tip, and the job-level disposition. Presence of a trailing JOB_CLOSED is how tools distinguish a completed custody file from a truncated one.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_type": { "const": "JOB_CLOSED" },
+        "event_id": { "$ref": "#/definitions/BaseEnvelope/properties/event_id" },
+        "timestamp": { "$ref": "#/definitions/BaseEnvelope/properties/timestamp" },
+        "job_id": { "$ref": "#/definitions/BaseEnvelope/properties/job_id" },
+        "tenant_id": { "$ref": "#/definitions/BaseEnvelope/properties/tenant_id" },
+        "chain_hash": { "$ref": "#/definitions/BaseEnvelope/properties/chain_hash" },
+        "clock_source": { "$ref": "#/definitions/BaseEnvelope/properties/clock_source" },
+        "disposition": {
+          "type": "string",
+          "enum": ["succeeded", "failed", "partial", "cancelled"]
+        },
+        "final_chain_tip_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the canonical serialization of this event prior to chain_hash calculation. The TSA anchor, if present, countersigns this value."
+        },
+        "tsa_anchor_status": {
+          "type": "string",
+          "enum": ["anchored", "warning_tsa_unreachable", "anchored_by_internal_tsa", "skipped_by_policy"]
+        },
+        "tsa_response_path": {
+          "type": "string",
+          "description": "Path to the RFC3161 .tsr file that countersigns final_chain_tip_sha256, when anchored."
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Total number of custody events emitted for this job, inclusive of JOB_CLOSED."
+        }
+      },
+      "required": [
+        "event_type",
+        "event_id",
+        "timestamp",
+        "job_id",
+        "tenant_id",
+        "chain_hash",
+        "clock_source",
+        "disposition",
+        "final_chain_tip_sha256",
+        "tsa_anchor_status",
+        "event_count"
+      ]
+    }
+  }
+}

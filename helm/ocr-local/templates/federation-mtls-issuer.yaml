@@ -1,0 +1,34 @@
+{{- if and .Values.federation.enabled .Values.federation.mtls.enabled (not .Values.federation.mtls.caRef) }}
+# =============================================================================
+# Federation mTLS — bootstrap Issuer (item C8)
+#
+# Self-signed bootstrap Issuer used to mint the federation root CA Certificate
+# that subsequent leaf certs (coordinator, rabbitmq, peer client) are issued
+# from. Skipped entirely when `federation.mtls.caRef` references an existing
+# CA Secret managed outside the chart.
+#
+# When `federation.mtls.clusterIssuer=true`, a cluster-scoped ClusterIssuer
+# is rendered instead of a namespaced Issuer. Use this when the federation
+# CA must be shareable across multiple Helm releases / namespaces.
+# =============================================================================
+apiVersion: cert-manager.io/v1
+kind: {{ if .Values.federation.mtls.clusterIssuer }}ClusterIssuer{{ else }}Issuer{{ end }}
+metadata:
+  name: {{ .Release.Name }}-federation-mtls-bootstrap
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-mtls
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: {{ if .Values.federation.mtls.clusterIssuer }}ClusterIssuer{{ else }}Issuer{{ end }}
+metadata:
+  name: {{ .Release.Name }}-federation-mtls-ca
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-mtls
+spec:
+  ca:
+    secretName: {{ .Release.Name }}-federation-mtls-ca-secret
+{{- end }}

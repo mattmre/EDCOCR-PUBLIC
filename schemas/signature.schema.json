@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/signature.schema.json",
+  "title": "Signature Verification Output",
+  "description": "Experimental signature detection and verification sidecar. Written to EXPORT/SIGNATURE/<subfolder>/<document_name>.signature.json. This feature never certifies a signature as authentic.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for this output format."
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Unique document identifier."
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Source document filename."
+    },
+    "processing": {
+      "type": "object",
+      "description": "Processing metadata.",
+      "properties": {
+        "experimental": {
+          "type": "boolean",
+          "const": true,
+          "description": "Always true; signature verification is experimental."
+        },
+        "pipeline_version": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Disclaimer notes about the experimental nature of this feature."
+        }
+      },
+      "required": ["experimental", "pipeline_version", "timestamp", "notes"]
+    },
+    "document_summary": {
+      "type": "object",
+      "description": "Document-level signature summary.",
+      "properties": {
+        "total_candidate_pages": { "type": "integer", "description": "Pages with signature candidate regions." },
+        "total_presence_pages": { "type": "integer", "description": "Pages where ink presence was detected." },
+        "total_review_pages": { "type": "integer", "description": "Pages flagged for analyst review." },
+        "experimental": { "type": "boolean" }
+      },
+      "required": ["total_candidate_pages", "total_presence_pages", "total_review_pages", "experimental"]
+    },
+    "pages": {
+      "type": "array",
+      "description": "Per-page signature verification results.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page_num": { "type": "integer" },
+          "has_signature_candidate": { "type": "boolean" },
+          "presence_detected": { "type": "boolean" },
+          "review_required": { "type": "boolean" },
+          "authenticity_signal": {
+            "type": "string",
+            "enum": ["not_applicable", "inconclusive", "review_required"],
+            "description": "Strongest outcome is inconclusive or review_required."
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "page_num": { "type": "integer" },
+                "source": {
+                  "type": "string",
+                  "description": "Candidate source: form_field or ocr_keyword."
+                },
+                "bbox": { "type": "array", "items": { "type": "number" } },
+                "label": { "type": "string" },
+                "ocr_confidence": { "type": "number" },
+                "presence_detected": { "type": "boolean" },
+                "presence_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+                "authenticity_signal": { "type": "string" },
+                "review_required": { "type": "boolean" },
+                "reason_codes": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Reason codes: ink_present, no_signature_ink, typed_text_suspected, low_stroke_complexity, wide_signature_span, stroke_complexity_present, invalid_bbox."
+                },
+                "metrics": {
+                  "type": "object",
+                  "description": "Ink ratio, stroke complexity, dark span ratio, and aspect ratio metrics.",
+                  "properties": {
+                    "ink_ratio": { "type": "number" },
+                    "stroke_complexity": { "type": "number" },
+                    "dark_span_ratio": { "type": "number" },
+                    "aspect_ratio": { "type": "number" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": ["page_num", "has_signature_candidate", "presence_detected", "review_required", "authenticity_signal"]
+      }
+    }
+  },
+  "required": ["schema_version", "document_id", "source_file", "processing", "document_summary", "pages"]
+}

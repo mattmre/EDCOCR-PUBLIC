@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EDCOCR — Use Cases</title>
+  <meta name="description" content="Where EDCOCR fits: eDiscovery, legal, forensic, government, healthcare, insurance, compliance archive.">
+  <link rel="stylesheet" href="assets/styles.css">
+  <style>
+    .uc-hero {
+      padding: 80px 0 48px;
+      background: linear-gradient(180deg, rgba(16, 185, 129, 0.08) 0%, transparent 100%);
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+    }
+    .uc-hero h1 {
+      font-size: clamp(2.25rem, 5vw, 3.75rem);
+      max-width: 1000px;
+      margin: 0 auto 16px;
+    }
+    .uc-section {
+      padding: 56px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .uc-section:last-of-type { border-bottom: none; }
+    .uc-section h2 {
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+      font-size: clamp(1.5rem, 2.6vw, 2rem);
+      margin-bottom: 8px;
+    }
+    .uc-section h2 .tag {
+      font-family: var(--font-mono);
+      font-size: 0.7em;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 999px;
+    }
+    .uc-section .uc-lead {
+      color: var(--text-dim);
+      font-size: 1.1rem;
+      max-width: 820px;
+      margin-bottom: 32px;
+    }
+    .uc-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 24px;
+      margin-top: 16px;
+    }
+    @media (max-width: 900px) {
+      .uc-grid { grid-template-columns: 1fr; }
+    }
+    .uc-body {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px 28px;
+    }
+    .uc-body h3 {
+      color: var(--accent);
+      font-size: 1.05rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin: 16px 0 8px;
+    }
+    .uc-body h3:first-child { margin-top: 0; }
+    .uc-body p { margin-bottom: 12px; color: var(--text); }
+    .uc-body ul {
+      margin: 8px 0 16px 20px;
+      color: var(--text-dim);
+    }
+    .uc-body li { margin-bottom: 6px; }
+    .uc-meta {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .uc-meta .row {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+    .uc-meta .row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    .uc-meta .label {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 4px;
+    }
+    .uc-meta .val {
+      color: var(--text);
+      font-weight: 500;
+    }
+    .uc-meta .val strong { color: var(--accent); }
+    .topology-pill {
+      display: inline-block;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--accent);
+      margin-right: 4px;
+    }
+    .features-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .features-list .feature {
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px 12px;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+    .features-list .feature.hot {
+      border-color: var(--accent-3);
+      color: var(--accent-3);
+    }
+    .accent-1 h2 .icon { color: var(--accent); }
+    .accent-2 h2 .icon { color: var(--accent-2); }
+    .accent-3 h2 .icon { color: var(--accent-3); }
+    .accent-4 h2 .icon { color: var(--accent-4); }
+    .accent-5 h2 .icon { color: var(--accent-5); }
+    .h2-icon {
+      display: inline-block;
+      width: 36px;
+      height: 36px;
+      line-height: 36px;
+      text-align: center;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 0.85rem;
+    }
+    .summary-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+      margin: 32px 0 16px;
+    }
+    .summary-pill {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      text-align: center;
+    }
+    .summary-pill .v {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: var(--accent);
+      line-height: 1;
+    }
+    .summary-pill .l {
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-top: 6px;
+    }
+    .not-fit-card {
+      background: var(--bg-card);
+      border-left: 4px solid var(--accent-4);
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin: 32px 0;
+    }
+    .not-fit-card h3 {
+      color: var(--accent-4);
+      margin-bottom: 8px;
+    }
+    .not-fit-card ul {
+      margin: 8px 0 0 20px;
+      color: var(--text-dim);
+    }
+    @media print {
+      .header, .footer { display: none; }
+      .uc-section { page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+<header class="header">
+  <div class="container header-inner">
+    <div class="logo">EDC<span class="accent">OCR</span></div>
+    <nav class="nav">
+      <a href="index.html">Overview</a>
+      <a href="executive-summary.html">Exec Summary</a>
+      <a href="technical-brief.html">Tech Brief</a>
+      <a href="white-paper.html">White Paper</a>
+      <a href="use-cases.html" style="color: var(--text);">Use Cases</a>
+      <a href="https://github.com/mattmre/EDCOCR-PUBLIC" class="hidden-mobile">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="uc-hero">
+  <div class="container">
+    <h1>Where EDCOCR Fits</h1>
+    <p class="lead" style="margin: 0 auto;">
+      Seven scenarios where forensic-grade OCR matters more than peak benchmark accuracy.
+      Each one tells you the topology to deploy, the features to flip on, and the outcomes to expect.
+    </p>
+    <div class="badges" style="margin-top: 24px;">
+      <span class="badge">7 scenarios</span>
+      <span class="badge">v4.1.0</span>
+      <span class="badge">Apache 2.0</span>
+    </div>
+  </div>
+</section>
+
+<section class="uc-section accent-1" id="ediscovery">
+  <div class="container">
+    <h2>
+      <span class="h2-icon icon">EDX</span>
+      eDiscovery &amp; Legal Hold
+      <span class="tag">Scenario 01</span>
+    </h2>
+    <p class="uc-lead">
+      Outside counsel collects a 50 GB document production. Every page must be Bates-stamped,
+      every redaction must be auditable, and every extraction must survive opposing counsel's
+      challenge in deposition.
+    </p>
+
+    <div class="uc-grid">
+      <div class="uc-body">
+        <h3>The problem</h3>
+        <p>
+          Cloud OCR APIs produce text that may include hallucinated characters with no way to
+          verify which model emitted them. Tesseract alone struggles on noisy scans and offers
+          no chain-of-custody primitives. Your bates-numbered production needs to be defensible
+          for years.
+        </p>
+
+        <h3>EDCOCR's answer</h3>
+        <ul>
+          <li>CTC-only recognition means extracted text is bounded by what was actually in the image — no fabrication.</li>
+          <li>Bates stamping is built in (<code>stamps/</code> module) with stamp-aware custody events (<code>BATES_STAMP_APPLIED</code>).</li>
+          <li>Privilege-keyword detection runs as part of structured extraction — flagged pages route to the human review queue.</li>
+          <li>The custody log gives every reviewer a hash-verifiable answer to "did this text change after extraction?"</li>
+          <li>Air-gapped deployment supports protective orders that prohibit cloud uploads.</li>
+        </ul>
+
+        <h3>Operational outcome</h3>
+        <p>
+          A 50 GB production processes in hours on a single multi-GPU host (T3) or scales
+          to a multi-tenant SaaS bureau on Kubernetes (T6). Output flows directly into Relativity,
+          Everlaw, or your review platform of choice via the searchable PDF + sidecar JSON.
+        </p>
+      </div>
+
+      <div class="uc-meta">
+        <div class="row">
+          <div class="label">Recommended topology</div>
+          <div class="val">
+            <span class="topology-pill">T3</span> Multi-GPU host
+            <br><span class="topology-pill">T6</span> Kubernetes (bureau-scale)
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Features to enable</div>
+          <div class="features-list">
+            <span class="feature hot">Bates stamping</span>
+            <span class="feature hot">Privilege detection</span>
+            <span class="feature">Review queue</span>
+            <span class="feature">NER (CASE_NUMBER)</span>
+            <span class="feature">Webhook delivery</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Output families used</div>
+          <div class="val">
+            <code>PDF/</code> · <code>TEXT/</code> · <code>NER/</code> · <code>EXTRACTION/</code> · custody log
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Typical scale</div>
+          <div class="val">50k–500k pages/job &middot; sustained 10k+ docs/day</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="uc-section accent-2" id="legal" style="background: var(--bg-elev);">
+  <div class="container">
+    <h2>
+      <span class="h2-icon icon">LEG</span>
+      Law Firm Internal Operations
+      <span class="tag">Scenario 02</span>
+    </h2>
+    <p class="uc-lead">
+      A mid-sized firm needs to digitize legacy paper files, make all contracts text-searchable,
+      and extract key fields (effective date, parties, term) for the matter-management system.
+      The data cannot leave the firm's network.
+    </p>
+
+    <div class="uc-grid">
+      <div class="uc-body">
+        <h3>The problem</h3>
+        <p>
+          Contract review tools that demand cloud upload run into client confidentiality issues.
+          On-prem OCR options that don't ship structured-extraction integrations leave the firm
+          with text but no fields. The firm wants both, on infrastructure they control.
+        </p>
+
+        <h3>EDCOCR's answer</h3>
+        <ul>
+          <li>Self-hosted, Apache 2.0 — no per-page billing, no cloud upload, no SaaS subscription.</li>
+          <li>Structured extraction via PaddleNLP UIE (or regex fallback) emits dates, amounts, names, addresses to <code>EXPORT/EXTRACTION/</code>.</li>
+          <li>Document classification routes contracts vs litigation correspondence vs general business records to the right extraction profile.</li>
+          <li>Webhook delivery pushes results into the matter-management system as each document finishes.</li>
+        </ul>
+
+        <h3>Operational outcome</h3>
+        <p>
+          A single mid-range GPU server (T1) backed by a NAS for the document store covers a
+          50-attorney firm comfortably. The Python SDK gives the IT team a clean handle to
+          script integrations against.
+        </p>
+      </div>
+
+      <div class="uc-meta">
+        <div class="row">
+          <div class="label">Recommended topology</div>
+          <div class="val">
+            <span class="topology-pill">T1</span> Single GPU host
+            <br><span class="topology-pill">T4</span> Distributed (multi-office)
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Features to enable</div>
+          <div class="features-list">
+            <span class="feature hot">Classification</span>
+            <span class="feature hot">Structured extraction</span>
+            <span class="feature">NER</span>
+            <span class="feature">Webhook delivery</span>
+            <span class="feature">File watcher</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Output families used</div>
+          <div class="val">
+            <code>PDF/</code> · <code>EXTRACTION/</code> · <code>CLASSIFICATION/</code> · <code>NER/</code>
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Typical scale</div>
+          <div class="val">100–1k docs/day &middot; latency-tolerant batch</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="uc-section accent-3" id="forensic">
+  <div class="container">
+    <h2>
+      <span class="h2-icon icon">FOR</span>
+      Digital Forensics &amp; Investigations
+      <span class="tag">Scenario 03</span>
+    </h2>
+    <p class="uc-lead">
+      A forensic examiner is processing a seized drive containing scanned ledgers, photographed
+      documents, and PDFs of varying quality. Every page must be preserved exactly as found,
+      and every operation must be reproducible at trial.
+    </p>
+
+    <div class="uc-grid">
+      <div class="uc-body">
+        <h3>The problem</h3>
+        <p>
+          Cloud OCR APIs drop pages they can't read. They mutate the source. They sit behind
+          terms of service that prohibit forensic use. Their model versions are opaque, so
+          you cannot say in court which model emitted which character on which day.
+        </p>
+
+        <h3>EDCOCR's answer</h3>
+        <ul>
+          <li>Forensic image preservation: pages that fail OCR are embedded as images in the output PDF — evidence is never discarded.</li>
+          <li>Hash-chained custody log captures the exact PaddleOCR model version, DPI, engine fallback chain, and confidence per page.</li>
+          <li>Deterministic processing: same input + model + config = byte-identical output (modulo timestamps).</li>
+          <li>Air-gapped deployment supports SCIF environments and chain-of-custody requirements that forbid network exposure.</li>
+          <li>Handwriting detection and signature detection (advisory) flag manual-review items separately.</li>
+        </ul>
+
+        <h3>Operational outcome</h3>
+        <p>
+          A single GPU workstation (T1) or air-gapped bundle (T7) gives the examiner a portable,
+          defensible toolkit. The custody log can be exported to the case-management system
+          and verified by hash from any reviewer.
+        </p>
+      </div>
+
+      <div class="uc-meta">
+        <div class="row">
+          <div class="label">Recommended topology</div>
+          <div class="val">
+            <span class="topology-pill">T1</span> Single GPU workstation
+            <br><span class="topology-pill">T7</span> Air-gapped bundle
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Features to enable</div>
+          <div class="features-list">
+            <span class="feature hot">Custody log</span>
+            <span class="feature hot">Image preservation</span>
+            <span class="feature">Handwriting detection</span>
+            <span class="feature">Signature detection</span>
+            <span class="feature">Validation sidecar</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Output families used</div>
+          <div class="val">
+            <code>PDF/</code> · <code>HANDWRITING/</code> · <code>SIGNATURE/</code> · <code>VALIDATION/</code> · custody log
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Typical scale</div>
+          <div class="val">Case-by-case &middot; reproducibility &gt; throughput</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="uc-section accent-4" id="government" style="background: var(--bg-elev);">
+  <div class="container">
+    <h2>
+      <span class="h2-icon icon">GOV</span>
+      Government &amp; FOIA Backlog
+      <span class="tag">Scenario 04</span>
+    </h2>
+    <p class="uc-lead">
+      A federal agency has a multi-year FOIA backlog of scanned correspondence, handwritten
+      memos, and multi-language records. Generative AI is contractually off the table.
+      The pipeline must be auditable end-to-end.
+    </p>
+
+    <div class="uc-grid">
+      <div class="uc-body">
+        <h3>The problem</h3>
+        <p>
+          Procurement constraints rule out cloud OCR APIs. Internal IT does not have the
+          headcount to build OCR from scratch. The volume — millions of pages — needs to scale
+          horizontally. The languages — English, Spanish, Arabic, Chinese — need real coverage,
+          not best-effort.
+        </p>
+
+        <h3>EDCOCR's answer</h3>
+        <ul>
+          <li>Apache 2.0 license; no per-page billing; can be deployed inside the agency's existing Kubernetes footprint.</li>
+          <li>34 core languages with FastText-driven model swapping handles mixed-language documents out of the box.</li>
+          <li>Helm chart with KEDA autoscaling lets the backlog burst-process during off-hours.</li>
+          <li>Handwriting detection flags handwritten memos for the human review queue separately from clean-print correspondence.</li>
+          <li>No outbound network calls at runtime — fully compatible with FedRAMP-class network posture.</li>
+        </ul>
+
+        <h3>Operational outcome</h3>
+        <p>
+          A Kubernetes deployment (T6) can churn through millions of pages over weeks with
+          full audit trail. The agency's existing Prometheus / Grafana stack picks up EDCOCR's
+          metrics natively.
+        </p>
+      </div>
+
+      <div class="uc-meta">
+        <div class="row">
+          <div class="label">Recommended topology</div>
+          <div class="val">
+            <span class="topology-pill">T6</span> Kubernetes (Helm)
+            <br><span class="topology-pill">T7</span> Air-gapped (for classified)
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Features to enable</div>
+          <div class="features-list">
+            <span class="feature hot">45 languages</span>
+            <span class="feature hot">Handwriting detection</span>
+            <span class="feature hot">Review queue</span>
+            <span class="feature">KEDA autoscaling</span>
+            <span class="feature">Prometheus + Grafana</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Output families used</div>
+          <div class="val">
+            <code>PDF/</code> · <code>TEXT/</code> · <code>LANGUAGE/</code> · <code>HANDWRITING/</code> · custody log
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Typical scale</div>
+          <div class="val">1M–10M pages per backlog cycle</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="uc-section accent-5" id="healthcare">
+  <div class="container">
+    <h2>
+      <span class="h2-icon icon">HLT</span>
+      Healthcare Records Digitization
+      <span class="tag">Scenario 05</span>
+    </h2>
+    <p class="uc-lead">
+      A hospital system needs to digitize legacy patient charts, extract PHI for the EHR
+      migration, and produce an auditable trail that satisfies the compliance officer.
+      The data cannot touch a public cloud at any point.
+    </p>
+
+    <div class="uc-grid">
+      <div class="uc-body">
+        <h3>The problem</h3>
+        <p>
+          HIPAA-class restrictions take cloud OCR off the table. Existing on-prem tools may not
+          extract spatial PHI (bounding boxes on the original page) with the fidelity needed
+          for downstream redaction. Per-tenant isolation matters when multiple departments
+          share infrastructure.
+        </p>
+
+        <h3>EDCOCR's answer</h3>
+        <ul>
+          <li>PII/PHI spatial extraction emits bounding boxes on the original page, so downstream redaction tools know exactly what to mask.</li>
+          <li>Per-tenant isolation enforced at API, DB, and output-path level — no leakage between departments.</li>
+          <li>Air-gap deployment with pre-baked models supports HIPAA-class network postures.</li>
+          <li>Custody log gives the compliance officer a hash-verifiable trail.</li>
+          <li>Output retention policy (configurable) integrates with the records-management retention schedule.</li>
+        </ul>
+
+        <h3>Operational outcome</h3>
+        <p>
+          A distributed deployment (T4 or T6) on the hospital's on-prem cluster covers a
+          multi-facility system. PHI extraction feeds the EHR migration tool with bounding
+          boxes for accurate masking.
+        </p>
+      </div>
+
+      <div class="uc-meta">
+        <div class="row">
+          <div class="label">Recommended topology</div>
+          <div class="val">
+            <span class="topology-pill">T4</span> Distributed
+            <br><span class="topology-pill">T6</span> Kubernetes
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Features to enable</div>
+          <div class="features-list">
+            <span class="feature hot">PII/PHI spatial extraction</span>
+            <span class="feature hot">Per-tenant isolation</span>
+            <span class="feature hot">Air-gap</span>
+            <span class="feature">Handwriting detection</span>
+            <span class="feature">Validation sidecar</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Output families used</div>
+          <div class="val">
+            <code>PDF/</code> · <code>NER/</code> · <code>HANDWRITING/</code> · <code>VALIDATION/</code> · custody log
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Typical scale</div>
+          <div class="val">EHR migration backlog &middot; ongoing intake stream</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="uc-section accent-1" id="insurance" style="background: var(--bg-elev);">
+  <div class="container">
+    <h2>
+      <span class="h2-icon icon">INS</span>
+      Insurance Claims &amp; Underwriting
+      <span class="tag">Scenario 06</span>
+    </h2>
+    <p class="uc-lead">
+      A carrier needs to process claim packets — photographs of damaged property, scanned
+      medical bills, handwritten driver statements, multi-page forms. Field extraction must be
+      accurate enough to flag fraud signals automatically.
+    </p>
+
+    <div class="uc-grid">
+      <div class="uc-body">
+        <h3>The problem</h3>
+        <p>
+          Claim packets are heterogenous — photos, forms, scans, handwriting all in one bundle.
+          Cloud OCR APIs charge per page and have to be carefully audited for compliance.
+          Internal teams want a self-hosted pipeline that produces consistent structured fields.
+        </p>
+
+        <h3>EDCOCR's answer</h3>
+        <ul>
+          <li>18 image formats + PDF support handle the heterogeneous packet without preprocessing.</li>
+          <li>Document classification routes forms vs photographs vs medical bills to the right downstream extractor.</li>
+          <li>Structured extraction emits dates, amounts, names, addresses — the fields the claims system needs.</li>
+          <li>Handwriting detection flags handwritten statements for human review separately from machine-print pages.</li>
+          <li>Exception routing rules engine fires on low confidence, mismatched values, or fraud-signal keywords.</li>
+        </ul>
+
+        <h3>Operational outcome</h3>
+        <p>
+          A T4 distributed deployment handles a national carrier's intake stream. Webhook delivery
+          pushes results into the claims platform in real time. The review queue handles edge
+          cases without bottlenecking the main pipeline.
+        </p>
+      </div>
+
+      <div class="uc-meta">
+        <div class="row">
+          <div class="label">Recommended topology</div>
+          <div class="val">
+            <span class="topology-pill">T4</span> Distributed
+            <br><span class="topology-pill">T6</span> Kubernetes
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Features to enable</div>
+          <div class="features-list">
+            <span class="feature hot">Classification</span>
+            <span class="feature hot">Structured extraction</span>
+            <span class="feature hot">Exception routing</span>
+            <span class="feature">Handwriting detection</span>
+            <span class="feature">Review queue</span>
+            <span class="feature">Webhook delivery</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Output families used</div>
+          <div class="val">
+            <code>EXTRACTION/</code> · <code>CLASSIFICATION/</code> · <code>HANDWRITING/</code> · <code>RETRIEVAL/</code>
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Typical scale</div>
+          <div class="val">Continuous intake &middot; real-time response SLAs</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="uc-section accent-2" id="compliance">
+  <div class="container">
+    <h2>
+      <span class="h2-icon icon">REG</span>
+      Regulated Document Archive
+      <span class="tag">Scenario 07</span>
+    </h2>
+    <p class="uc-lead">
+      A financial services firm archives signed contracts, board minutes, and regulatory
+      filings. Records must be text-searchable for the audit team and retrievable on demand
+      for the regulator. Retention rules apply.
+    </p>
+
+    <div class="uc-grid">
+      <div class="uc-body">
+        <h3>The problem</h3>
+        <p>
+          Archives that are stored as image PDFs are not searchable. Re-OCR'ing them with a
+          cloud tool re-uploads sensitive documents. The audit team needs a unified retrieval
+          surface so they can answer regulator questions in hours, not days.
+        </p>
+
+        <h3>EDCOCR's answer</h3>
+        <ul>
+          <li>Re-processes archived PDFs in place, adding a searchable text layer and metadata sidecars.</li>
+          <li>Unified retrieval output (<code>EXPORT/RETRIEVAL/</code>) emits a structured JSON + Markdown package optimized for vector search or full-text indexing.</li>
+          <li>Entity recall API surfaces all instances of an entity across the archive (e.g., every document mentioning a counterparty).</li>
+          <li>Custody log gives the auditor a defensible answer to "when was this document indexed, with what model?"</li>
+          <li>Per-tenant cost tracking gives the CFO a per-department billing surface.</li>
+        </ul>
+
+        <h3>Operational outcome</h3>
+        <p>
+          A multi-year archive of millions of pages processes through a Kubernetes deployment (T6)
+          over a controlled rollout window. Output integrates with the firm's vector search
+          provider, RAG pipeline, or full-text index of choice.
+        </p>
+      </div>
+
+      <div class="uc-meta">
+        <div class="row">
+          <div class="label">Recommended topology</div>
+          <div class="val">
+            <span class="topology-pill">T6</span> Kubernetes
+            <br><span class="topology-pill">T4</span> Distributed (mid-market)
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Features to enable</div>
+          <div class="features-list">
+            <span class="feature hot">Retrieval output</span>
+            <span class="feature hot">Entity recall</span>
+            <span class="feature hot">Per-tenant cost tracking</span>
+            <span class="feature">Webhook delivery</span>
+            <span class="feature">NER</span>
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Output families used</div>
+          <div class="val">
+            <code>RETRIEVAL/</code> · <code>ENTITIES/</code> · <code>NER/</code> · custody log
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Typical scale</div>
+          <div class="val">1M+ pages backfill &middot; ongoing ingest</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <h2 class="text-center mb-2">Where EDCOCR is <em>not</em> a fit</h2>
+    <p class="lead text-center" style="margin: 0 auto 16px;">
+      Honest scoping. Pick a different tool for these.
+    </p>
+
+    <div class="not-fit-card">
+      <h3>Pure document understanding without provenance needs</h3>
+      <ul>
+        <li>If you need pure document-understanding chat ("summarize this") and don't care where the text came from, a generative VLM like GPT-4V or Claude with vision will be faster and more flexible.</li>
+        <li>EDCOCR optionally integrates with VLMs (Phase 4 VLM gateway), but the core is not built around that workflow.</li>
+      </ul>
+    </div>
+
+    <div class="not-fit-card">
+      <h3>Real-time consumer document scanning</h3>
+      <ul>
+        <li>If you need a mobile app to OCR a receipt in 200ms with no server, a small on-device model is the right choice.</li>
+        <li>EDCOCR is built for batch processing where each page may take 0.5–2 seconds and produces 14 output families with full custody.</li>
+      </ul>
+    </div>
+
+    <div class="not-fit-card">
+      <h3>Form auto-fill against a fixed template</h3>
+      <ul>
+        <li>If you have a single form to OCR (one PDF, fixed coordinates), specialized form-extraction tools like the AWS Textract Forms API can be configured faster.</li>
+        <li>EDCOCR is the right choice when the documents are heterogenous, the fields are not at fixed positions, or the document set spans languages and domains.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="section" style="background: var(--bg-elev);">
+  <div class="container text-center">
+    <h2>Ready to scope a deployment?</h2>
+    <p class="lead" style="margin: 0 auto 32px;">
+      The deployment decision guide walks you through the topology choice based on your
+      page volume, deployment posture, and operational constraints.
+    </p>
+    <div class="btn-group" style="justify-content: center;">
+      <a href="../docs/DEPLOYMENT-DECISION-GUIDE.md" class="btn btn-primary">Deployment Decision Guide</a>
+      <a href="technical-brief.html" class="btn btn-secondary">Technical Brief</a>
+      <a href="../INSTALL.md" class="btn btn-secondary">Install Guide</a>
+    </div>
+
+    <div class="summary-row">
+      <div class="summary-pill"><div class="v">45</div><div class="l">Languages</div></div>
+      <div class="summary-pill"><div class="v">14</div><div class="l">Output families</div></div>
+      <div class="summary-pill"><div class="v">7</div><div class="l">Topologies</div></div>
+      <div class="summary-pill"><div class="v">26</div><div class="l">Helm templates</div></div>
+      <div class="summary-pill"><div class="v">0</div><div class="l">Outbound calls</div></div>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-links">
+      <a href="index.html">Overview</a>
+      <a href="executive-summary.html">Executive Summary</a>
+      <a href="technical-brief.html">Tech Brief</a>
+      <a href="white-paper.html">White Paper</a>
+      <a href="https://github.com/mattmre/EDCOCR-PUBLIC">GitHub</a>
+    </div>
+    <p>EDCOCR v4.1.0 &middot; Apache 2.0 &middot; Built for evidence.</p>
+  </div>
+</footer>
+
+</body>
+</html>

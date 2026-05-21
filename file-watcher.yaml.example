@@ -1,0 +1,138 @@
+# ===========================================================================
+# File Watcher Configuration (Phase 5C)
+# ===========================================================================
+#
+# Hot-folder monitoring for automatic OCR submission.
+# Copy this file to file-watcher.yaml and adjust settings.
+#
+# Usage:
+#   python file_watcher.py --config file-watcher.yaml
+#
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Watch paths — one or more directories to monitor
+# ---------------------------------------------------------------------------
+watch_paths:
+  - path: /app/ocr_source
+    recursive: true
+    # native | polling | auto
+    # Use polling or auto for SMB/CIFS-style paths where native events are unreliable.
+    observer_mode: native
+    # Glob patterns for files to process (case-insensitive)
+    patterns:
+      - "*.pdf"
+      - "*.tif"
+      - "*.tiff"
+      - "*.jpg"
+      - "*.jpeg"
+      - "*.png"
+      - "*.bmp"
+      - "*.gif"
+      - "*.webp"
+      - "*.jp2"
+    # Glob patterns to ignore
+    ignore_patterns:
+      - "*.tmp"
+      - "*.part"
+      - "~*"
+    # Per-path OCR settings
+    enable_docintel: false
+    docintel_mode: full     # full | layout_only | tables_only
+    priority: normal        # low | normal | high
+
+  # Example: second watch folder with different settings
+  # - path: /mnt/scans/urgent
+  #   recursive: false
+  #   patterns:
+  #     - "*.pdf"
+  #   enable_docintel: true
+  #   docintel_mode: tables_only
+  #   priority: high
+
+# ---------------------------------------------------------------------------
+# Submission mode — how files are submitted to the OCR pipeline
+# ---------------------------------------------------------------------------
+# Options:
+#   pipeline    — copy to source folder + launch ocr_gpu_async.py subprocess
+#   api         — HTTP POST to the REST API (/api/jobs)
+#   distributed — HTTP POST to the Celery coordinator (/api/v1/jobs/)
+submission_mode: pipeline
+
+# ---------------------------------------------------------------------------
+# File stability / debounce
+# ---------------------------------------------------------------------------
+# Number of consecutive size-unchanged checks before a file is considered stable
+stability_checks: 3
+# Seconds between each size check
+stability_interval_seconds: 2.0
+
+# ---------------------------------------------------------------------------
+# API mode settings (used when submission_mode = api)
+# ---------------------------------------------------------------------------
+api_url: "http://localhost:8000"
+api_key: ""  # Set OCR_API_KEY value here, or leave empty for unauthenticated
+
+# ---------------------------------------------------------------------------
+# Distributed mode settings (used when submission_mode = distributed)
+# ---------------------------------------------------------------------------
+coordinator_url: "http://localhost:8001"
+coordinator_api_key: ""
+
+# ---------------------------------------------------------------------------
+# Pipeline mode settings (used when submission_mode = pipeline)
+# ---------------------------------------------------------------------------
+pipeline_script: ocr_gpu_async.py
+source_folder: /app/ocr_source
+output_folder: /app/ocr_output
+remote_staging_dir: /app/ocr_output/remote-ingest
+
+# ---------------------------------------------------------------------------
+# Optional remote ingest polling
+# ---------------------------------------------------------------------------
+# Remote files are fetched to remote_staging_dir and then submitted through the
+# existing pipeline/api/distributed backends.
+#
+# Supported protocols:
+#   ftp   - plain FTP
+#   ftps  - FTP over TLS
+#   sftp  - SSH File Transfer Protocol (strict host-key checking by default)
+#
+# remote_ingest:
+#   - protocol: sftp
+#     host: sftp.example.internal
+#     port: 22
+#     username: ocr-drop
+#     password: ""
+#     key_filename: /run/secrets/sftp_key
+#     known_hosts_path: /app/config/known_hosts
+#     allow_unknown_host: false
+#     remote_path: /drop/incoming
+#     poll_interval_seconds: 15
+#     timeout_seconds: 30
+#     delete_after_fetch: false
+#     patterns:
+#       - "*.pdf"
+#     ignore_patterns:
+#       - "*.part"
+#     enable_docintel: false
+#     docintel_mode: full
+#     priority: normal
+remote_ingest: []
+
+# ---------------------------------------------------------------------------
+# General settings
+# ---------------------------------------------------------------------------
+log_level: INFO  # DEBUG | INFO | WARNING | ERROR | CRITICAL
+
+# Path to SQLite database for tracking processed files across restarts.
+# Leave empty to use the legacy in-memory set (resets on restart).
+processed_db: ""
+
+# Seconds between watched-path recovery checks. When a configured path
+# disappears and later returns, the watcher will recreate the observer and
+# rescan the path safely via processed-file tracking.
+watch_path_retry_interval_seconds: 5.0
+
+# Maximum number of files submitted concurrently
+max_concurrent_submissions: 4

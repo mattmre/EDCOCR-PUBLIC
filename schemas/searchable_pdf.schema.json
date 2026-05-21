@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/searchable_pdf.schema.json",
+  "title": "Searchable PDF Output",
+  "description": "Searchable PDF with embedded OCR text layer. Written to EXPORT/PDF/<subfolder>/<document_name>.pdf. Binary artifact; this schema describes the metadata contract.",
+  "type": "object",
+  "properties": {
+    "artifact_type": {
+      "type": "string",
+      "const": "searchable_pdf",
+      "description": "Fixed identifier for this output type."
+    },
+    "file_extension": {
+      "type": "string",
+      "const": ".pdf",
+      "description": "File extension for the PDF artifact."
+    },
+    "mime_type": {
+      "type": "string",
+      "const": "application/pdf",
+      "description": "MIME type for the PDF artifact."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of the artifact."
+    }
+  },
+  "required": ["artifact_type", "file_extension", "mime_type"]
+}

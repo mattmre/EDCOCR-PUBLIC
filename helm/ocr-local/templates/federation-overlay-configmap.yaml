@@ -1,0 +1,47 @@
+{{- if .Values.federation.enabled }}
+# =============================================================================
+# Federation Overlay ConfigMap
+#
+# Cluster-identity values consumed by coordinator and workers as env vars.
+# Mounted only when federation is enabled; otherwise this resource is omitted
+# entirely and pods fall back to their pre-federation env surface.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-federation-overlay
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation
+data:
+  OCR_CLUSTER_NAME: {{ .Values.federation.clusterName | quote }}
+  OCR_PRESIGNED_ENDPOINT: {{ .Values.federation.presignedEndpoint | quote }}
+  OCR_FEDERATION_ENABLED: "true"
+  OCR_FEDERATION_OVERFLOW_QUEUES: {{ join "," .Values.federation.queues.overflowOnly | quote }}
+  OCR_FEDERATION_MAX_OVERFLOW_MESSAGES: {{ .Values.federation.queues.maxOverflowMessages | quote }}
+  {{- /* Render peer-cluster list as a comma-separated string of name=presignedEndpoint pairs */}}
+  OCR_PEER_CLUSTERS: {{- $peers := list }}
+    {{- range .Values.federation.upstreamClusters }}
+      {{- $peers = append $peers (printf "%s=%s" .name .presignedEndpoint) }}
+    {{- end }}
+    {{ join "," $peers | quote }}
+  {{- /* , item C4 -- cross-cluster routing flags. Always render
+        these keys so coordinator/worker pods see consistent env surface; the
+        ENABLED flag gates the router instantiation in coordinator/coordinator/celery.py. */}}
+  {{- $routing := .Values.federation.routing | default dict }}
+  OCR_FEDERATION_ROUTING_ENABLED: {{ $routing.enabled | default false | toString | quote }}
+  OCR_FEDERATION_ROUTING_STRATEGY: {{ $routing.strategy | default "local" | quote }}
+  OCR_FEDERATION_REGISTRY_POLL_SECONDS: {{ $routing.registry_poll_seconds | default 30 | quote }}
+  OCR_FEDERATION_LOAD_AWARE_CACHE_SECONDS: {{ $routing.load_aware_cache_seconds | default 5 | quote }}
+  OCR_FEDERATION_ROUTER_CALLABLE: {{ $routing.custom_callable | default "" | quote }}
+  {{- /* , item C8 -- federation mTLS env. Surfaces cert mount paths
+        when `federation.mtls.enabled=true`. The client cert Secret is shared
+        between the RabbitMQ federation upstream and the custody replication
+        HTTP client, so a single set of paths is sufficient. */}}
+  {{- if .Values.federation.mtls.enabled }}
+  OCR_FEDERATION_MTLS_ENABLED: "true"
+  OCR_FEDERATION_MTLS_CERT_PATH: "/etc/federation-mtls/tls.crt"
+  OCR_FEDERATION_MTLS_KEY_PATH: "/etc/federation-mtls/tls.key"
+  OCR_FEDERATION_MTLS_CA_PATH: "/etc/federation-mtls/ca.crt"
+  {{- end }}
+{{- end }}

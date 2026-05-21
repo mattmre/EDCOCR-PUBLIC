@@ -1,0 +1,1399 @@
+{{- if and .Values.prometheus.enabled .Values.prometheus.grafana.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-grafana-dashboard
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+    {{ .Values.prometheus.grafana.dashboardLabel }}: {{ .Values.prometheus.grafana.dashboardLabelValue | quote }}
+data:
+  ocr-pipeline.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "id": 1,
+          "title": "Overview",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 2,
+          "title": "Job Error Rate",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 1 },
+          "datasource": { "type": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 0.05 },
+                  { "color": "red", "value": 0.1 }
+                ]
+              },
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_job_error_rate_1h",
+              "legendFormat": "Error Rate"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Completion Rate",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 6, "x": 6, "y": 1 },
+          "datasource": { "type": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 0.85 },
+                  { "color": "green", "value": 0.9 }
+                ]
+              },
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_job_completion_rate_1h",
+              "legendFormat": "Completion Rate"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "GPU Workers Available",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 1 },
+          "datasource": { "type": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "green", "value": 2 }
+                ]
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_gpu_workers_available",
+              "legendFormat": "GPU Workers"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Pages Processed",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 1 },
+          "datasource": { "type": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "blue", "value": null }
+                ]
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_pages_processed_total",
+              "legendFormat": "Total Pages"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Jobs",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 7,
+          "title": "Jobs by Status",
+          "type": "piechart",
+          "gridPos": { "h": 10, "w": 8, "x": 0, "y": 10 },
+          "datasource": { "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "ocr_jobs_total",
+              "legendFormat": "{{ "{{status}}" }}"
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "title": "Jobs by Storage Backend",
+          "type": "piechart",
+          "gridPos": { "h": 10, "w": 8, "x": 8, "y": 10 },
+          "datasource": { "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "ocr_jobs_by_storage_backend",
+              "legendFormat": "{{ "{{backend}}" }}"
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "title": "Stuck Jobs",
+          "type": "stat",
+          "gridPos": { "h": 10, "w": 4, "x": 16, "y": 10 },
+          "datasource": { "type": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "red", "value": 3 }
+                ]
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_jobs_stuck_total",
+              "legendFormat": "Stuck Jobs"
+            }
+          ]
+        },
+        {
+          "id": 10,
+          "title": "Active OCR Alerts",
+          "type": "stat",
+          "gridPos": { "h": 10, "w": 4, "x": 20, "y": 10 },
+          "datasource": { "type": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 1 }
+                ]
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "count(ALERTS{alertname=~\"OCR.*\", alertstate=\"firing\"}) or vector(0)",
+              "legendFormat": "Firing Alerts"
+            }
+          ]
+        },
+        {
+          "id": 11,
+          "title": "Workers & Pages",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 12,
+          "title": "Workers by Status",
+          "type": "piechart",
+          "gridPos": { "h": 10, "w": 12, "x": 0, "y": 21 },
+          "datasource": { "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "ocr_workers_total",
+              "legendFormat": "{{ "{{status}}" }}"
+            }
+          ]
+        },
+        {
+          "id": 13,
+          "title": "Pages by Status",
+          "type": "timeseries",
+          "gridPos": { "h": 10, "w": 12, "x": 12, "y": 21 },
+          "datasource": { "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "ocr_pages_by_status",
+              "legendFormat": "{{ "{{status}}" }}"
+            }
+          ]
+        },
+        {
+          "id": 14,
+          "title": "Storage & Compliance",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 15,
+          "title": "S3 Error Rate",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 32 },
+          "datasource": { "type": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 0.05 },
+                  { "color": "red", "value": 0.15 }
+                ]
+              },
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_s3_job_error_rate_1h",
+              "legendFormat": "S3 Error Rate"
+            }
+          ]
+        },
+        {
+          "id": 16,
+          "title": "Custody Violations",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 6, "x": 6, "y": 32 },
+          "datasource": { "type": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 1 }
+                ]
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_custody_violations_total",
+              "legendFormat": "Violations"
+            }
+          ]
+        },
+        {
+          "id": 17,
+          "title": "Error Rate Comparison (All vs S3)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+          "datasource": { "type": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit"
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_job_error_rate_1h",
+              "legendFormat": "All Jobs"
+            },
+            {
+              "expr": "ocr_s3_job_error_rate_1h",
+              "legendFormat": "S3 Jobs"
+            }
+          ]
+        },
+        {
+          "id": 18,
+          "title": "Performance",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 19,
+          "title": "Avg Page Processing Time",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 41 },
+          "datasource": { "type": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 10000 },
+                  { "color": "red", "value": 30000 }
+                ]
+              },
+              "unit": "ms"
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_page_processing_time_avg_ms",
+              "legendFormat": "Avg Time"
+            }
+          ]
+        },
+        {
+          "id": 20,
+          "title": "Page Processing Time Over Time",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 9, "x": 6, "y": 41 },
+          "datasource": { "type": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms"
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_page_processing_time_avg_ms",
+              "legendFormat": "Avg Processing Time"
+            }
+          ]
+        },
+        {
+          "id": 21,
+          "title": "Completion Rate Over Time",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 9, "x": 15, "y": 41 },
+          "datasource": { "type": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_job_completion_rate_1h",
+              "legendFormat": "Completion Rate"
+            }
+          ]
+        },
+        {
+          "id": 22,
+          "title": "Baseline Monitoring",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 23,
+          "title": "Baseline Throughput (24h)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 50 },
+          "datasource": { "type": "prometheus" },
+          "description": "Pages processed rate over 24 hours using smoothed recording rules",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_pages_processed_total",
+              "legendFormat": "Total Pages"
+            },
+            {
+              "expr": "ocr:processing_time_avg:avg5m",
+              "legendFormat": "Processing Time (5m avg)"
+            }
+          ],
+          "options": {
+            "tooltip": { "mode": "multi" }
+          }
+        },
+        {
+          "id": 24,
+          "title": "Worker Utilization Ratio",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 50 },
+          "datasource": { "type": "prometheus" },
+          "description": "Ratio of busy workers to total workers from recording rule",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "blue", "value": null },
+                  { "color": "yellow", "value": 0.8 },
+                  { "color": "red", "value": 0.95 }
+                ]
+              },
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 15,
+                "thresholdsStyle": { "mode": "area" }
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr:worker_utilization_ratio",
+              "legendFormat": "Utilization Ratio"
+            },
+            {
+              "expr": "ocr:gpu_worker_availability_ratio",
+              "legendFormat": "GPU Availability Ratio"
+            }
+          ]
+        },
+        {
+          "id": 25,
+          "title": "Error Budget Burn Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 58 },
+          "datasource": { "type": "prometheus" },
+          "description": "SLO error budget consumption rate (99% target). Burn rate 1.0 = on budget, >14.4 = critical",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "orange", "value": 6 },
+                  { "color": "red", "value": 14.4 }
+                ]
+              },
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "thresholdsStyle": { "mode": "line+area" }
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr:error_budget_burn_rate_1h",
+              "legendFormat": "1h Burn Rate"
+            },
+            {
+              "expr": "ocr:error_budget_burn_rate_6h",
+              "legendFormat": "6h Burn Rate"
+            },
+            {
+              "expr": "ocr:error_budget_burn_rate_24h",
+              "legendFormat": "24h Burn Rate"
+            }
+          ]
+        },
+        {
+          "id": 26,
+          "title": "Processing Time Distribution",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 58 },
+          "datasource": { "type": "prometheus" },
+          "description": "Average processing time with smoothed trend lines at multiple windows",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 10000 },
+                  { "color": "red", "value": 30000 }
+                ]
+              },
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 5
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_page_processing_time_avg_ms",
+              "legendFormat": "Raw Avg"
+            },
+            {
+              "expr": "ocr:processing_time_avg:avg5m",
+              "legendFormat": "5m Smoothed"
+            },
+            {
+              "expr": "ocr:processing_time_avg:avg15m",
+              "legendFormat": "15m Smoothed"
+            }
+          ]
+        },
+        {
+          "id": 27,
+          "title": "Advanced Performance",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 66 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 28,
+          "title": "Processing Time Percentiles",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 67 },
+          "datasource": { "type": "prometheus" },
+          "description": "Page processing time: average, p95, and p99",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_page_processing_time_avg_ms",
+              "legendFormat": "Avg"
+            },
+            {
+              "expr": "ocr_page_processing_time_p95_ms",
+              "legendFormat": "p95"
+            },
+            {
+              "expr": "ocr:processing_time_p95:avg5m",
+              "legendFormat": "p95 (5m smoothed)"
+            },
+            {
+              "expr": "ocr_page_processing_time_p99_ms",
+              "legendFormat": "p99"
+            },
+            {
+              "expr": "ocr:processing_time_p99:avg5m",
+              "legendFormat": "p99 (5m smoothed)"
+            }
+          ],
+          "options": {
+            "tooltip": { "mode": "multi" }
+          }
+        },
+        {
+          "id": 29,
+          "title": "Queue Depth by Stage",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 67 },
+          "datasource": { "type": "prometheus" },
+          "description": "Number of jobs queued per pipeline stage",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 50,
+                "stacking": { "mode": "normal" }
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_queue_depth{queue_name=\"chunk\"}",
+              "legendFormat": "Chunk (Submitted)"
+            },
+            {
+              "expr": "ocr_queue_depth{queue_name=\"image\"}",
+              "legendFormat": "Image (Ingesting)"
+            },
+            {
+              "expr": "ocr_queue_depth{queue_name=\"assembly\"}",
+              "legendFormat": "Assembly"
+            },
+            {
+              "expr": "ocr_queue_depth{queue_name=\"compression\"}",
+              "legendFormat": "Compression"
+            }
+          ],
+          "options": {
+            "tooltip": { "mode": "multi" }
+          }
+        },
+        {
+          "id": 30,
+          "title": "DPI Escalation Rate",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 75 },
+          "datasource": { "type": "prometheus" },
+          "description": "Total pages that needed DPI escalation (fallback to Tesseract)",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 10 },
+                  { "color": "red", "value": 50 }
+                ]
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_dpi_escalation_total",
+              "legendFormat": "DPI Escalations"
+            }
+          ]
+        },
+        {
+          "id": 31,
+          "title": "Pages by Engine",
+          "type": "piechart",
+          "gridPos": { "h": 8, "w": 6, "x": 6, "y": 75 },
+          "datasource": { "type": "prometheus" },
+          "description": "Distribution of pages across OCR engines",
+          "targets": [
+            {
+              "expr": "ocr_pages_by_engine",
+              "legendFormat": "{{ "{{engine}}" }}"
+            }
+          ]
+        },
+        {
+          "id": 32,
+          "title": "Processing Duration Heatmap",
+          "type": "heatmap",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 75 },
+          "datasource": { "type": "prometheus" },
+          "description": "Processing duration distribution across bucket boundaries",
+          "targets": [
+            {
+              "expr": "sum(rate(ocr_processing_duration_seconds_bucket[$__rate_interval])) by (le)",
+              "legendFormat": "{{ "{{le}}" }}",
+              "format": "heatmap"
+            }
+          ],
+          "options": {
+            "calculate": false,
+            "yAxis": {
+              "unit": "s"
+            },
+            "color": {
+              "mode": "scheme",
+              "scheme": "Oranges"
+            },
+            "tooltip": { "show": true }
+          }
+        },
+        {
+          "id": 33,
+          "title": "Processing Time P50/P95/P99",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 83 },
+          "datasource": { "type": "prometheus" },
+          "description": "Histogram-derived processing time percentiles (p50, p95, p99)",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, sum(rate(ocr_processing_duration_seconds_bucket[$__rate_interval])) by (le))",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(ocr_processing_duration_seconds_bucket[$__rate_interval])) by (le))",
+              "legendFormat": "p95"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(ocr_processing_duration_seconds_bucket[$__rate_interval])) by (le))",
+              "legendFormat": "p99"
+            }
+          ],
+          "options": {
+            "tooltip": { "mode": "multi" }
+          }
+        },
+        {
+          "id": 34,
+          "title": "Processing Duration by Engine",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 83 },
+          "datasource": { "type": "prometheus" },
+          "description": "P95 processing duration broken down by OCR engine",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(ocr_processing_duration_seconds_bucket[$__rate_interval])) by (le, engine))",
+              "legendFormat": "{{ "{{engine}}" }} p95"
+            }
+          ],
+          "options": {
+            "tooltip": { "mode": "multi" }
+          }
+        },
+        {
+          "id": 35,
+          "title": "Tenant Overview",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 91 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 36,
+          "title": "Tenant Jobs by Status",
+          "type": "table",
+          "gridPos": { "h": 10, "w": 12, "x": 0, "y": 92 },
+          "datasource": { "type": "prometheus" },
+          "description": "Job counts per tenant broken down by status",
+          "targets": [
+            {
+              "expr": "ocr_tenant_jobs_total{tenant_id=~\"$tenant\"}",
+              "legendFormat": "{{ "{{tenant_id}}" }} - {{ "{{status}}" }}",
+              "format": "table",
+              "instant": true
+            }
+          ],
+          "options": {
+            "showHeader": true,
+            "sortBy": [{ "displayName": "Value", "desc": true }]
+          }
+        },
+        {
+          "id": 37,
+          "title": "Tenant Error Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 10, "w": 12, "x": 12, "y": 92 },
+          "datasource": { "type": "prometheus" },
+          "description": "Per-tenant job error rate over the last hour",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 0.05 },
+                  { "color": "red", "value": 0.1 }
+                ]
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_tenant_error_rate{tenant_id=~\"$tenant\"}",
+              "legendFormat": "{{ "{{tenant_id}}" }}"
+            }
+          ]
+        },
+        {
+          "id": 38,
+          "title": "Tenant Pages Processed",
+          "type": "stat",
+          "gridPos": { "h": 10, "w": 6, "x": 0, "y": 102 },
+          "datasource": { "type": "prometheus" },
+          "description": "Total pages processed per tenant",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "blue", "value": null }
+                ]
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_tenant_pages_processed{tenant_id=~\"$tenant\"}",
+              "legendFormat": "{{ "{{tenant_id}}" }}"
+            }
+          ]
+        },
+        {
+          "id": 39,
+          "title": "Tenant Avg Processing Time",
+          "type": "gauge",
+          "gridPos": { "h": 10, "w": 6, "x": 6, "y": 102 },
+          "datasource": { "type": "prometheus" },
+          "description": "Average page processing time per tenant",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 10000 },
+                  { "color": "red", "value": 30000 }
+                ]
+              },
+              "unit": "ms"
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_tenant_processing_time_avg_ms{tenant_id=~\"$tenant\"}",
+              "legendFormat": "{{ "{{tenant_id}}" }}"
+            }
+          ]
+        },
+        {
+          "id": 40,
+          "title": "SLA Compliance",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 112 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 41,
+          "title": "SLA Compliance Rate",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 113 },
+          "datasource": { "type": "prometheus" },
+          "description": "Combined SLA compliance rate based on P95 latency (30s) and error rate (1%) SLO targets. 100% = all SLOs met.",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 95 },
+                  { "color": "green", "value": 99 }
+                ]
+              },
+              "unit": "percent",
+              "min": 0,
+              "max": 100
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr:sla_compliance_rate * 100",
+              "legendFormat": "SLA Compliance %"
+            }
+          ]
+        },
+        {
+          "id": 42,
+          "title": "SLA Breach History",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 16, "x": 8, "y": 113 },
+          "datasource": { "type": "prometheus" },
+          "description": "P95 processing latency and error rate vs SLO thresholds (30s latency, 1% error rate)",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "thresholdsStyle": { "mode": "dashed" }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "P95 Latency" },
+                "properties": [
+                  { "id": "unit", "value": "s" },
+                  { "id": "custom.axisPlacement", "value": "left" },
+                  { "id": "thresholds", "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "green", "value": null },
+                      { "color": "red", "value": 30 }
+                    ]
+                  }}
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Error Rate" },
+                "properties": [
+                  { "id": "unit", "value": "percentunit" },
+                  { "id": "custom.axisPlacement", "value": "right" },
+                  { "id": "thresholds", "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      { "color": "green", "value": null },
+                      { "color": "red", "value": 0.01 }
+                    ]
+                  }}
+                ]
+              }
+            ]
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(ocr_processing_duration_seconds_bucket[$__rate_interval])) by (le))",
+              "legendFormat": "P95 Latency"
+            },
+            {
+              "expr": "ocr_job_error_rate_1h",
+              "legendFormat": "Error Rate"
+            }
+          ],
+          "options": {
+            "tooltip": { "mode": "multi" }
+          }
+        },
+        {
+          "id": 43,
+          "title": "Processing Time p95/p99",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 121 },
+          "datasource": { "type": "prometheus" },
+          "description": "Dedicated p95 and p99 processing time from the histogram metric. Use this panel to track tail latency and detect processing time regressions.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 30 },
+                  { "color": "red", "value": 60 }
+                ]
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "thresholdsStyle": { "mode": "dashed" }
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(ocr_processing_duration_seconds_bucket[$__rate_interval])) by (le))",
+              "legendFormat": "p95"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(ocr_processing_duration_seconds_bucket[$__rate_interval])) by (le))",
+              "legendFormat": "p99"
+            }
+          ],
+          "options": {
+            "tooltip": { "mode": "multi" }
+          }
+        },
+        {
+          "id": 44,
+          "title": "Cost & Queue Analysis",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 129 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 45,
+          "title": "Cost per Tenant",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 130 },
+          "datasource": { "type": "prometheus" },
+          "description": "Estimated processing cost per tenant based on resource usage metrics. Uses ocr_cost_estimate_total with tenant_id label.",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 50 },
+                  { "color": "red", "value": 200 }
+                ]
+              },
+              "unit": "currencyUSD",
+              "decimals": 2
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_cost_estimate_total{tenant_id=~\"$tenant_id\"}",
+              "legendFormat": "{{ "{{tenant_id}}" }}"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "colorMode": "value",
+            "graphMode": "none"
+          }
+        },
+        {
+          "id": 46,
+          "title": "Per-Tenant Processing Latency",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 16, "x": 8, "y": 130 },
+          "datasource": { "type": "prometheus" },
+          "description": "Processing latency breakdown per tenant showing p50 and p95 from the ocr_processing_duration_seconds histogram filtered by tenant_id.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, sum(rate(ocr_processing_duration_seconds_bucket{tenant_id=~\"$tenant_id\"}[$__rate_interval])) by (le, tenant_id))",
+              "legendFormat": "{{ "{{tenant_id}}" }} p50"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(ocr_processing_duration_seconds_bucket{tenant_id=~\"$tenant_id\"}[$__rate_interval])) by (le, tenant_id))",
+              "legendFormat": "{{ "{{tenant_id}}" }} p95"
+            }
+          ],
+          "options": {
+            "tooltip": { "mode": "multi" }
+          }
+        },
+        {
+          "id": 47,
+          "title": "Queue Depth per Stage",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 138 },
+          "datasource": { "type": "prometheus" },
+          "description": "Queue depth for each pipeline stage: extraction, OCR, compression, and NLP. Tracks Celery queue backlog to identify bottlenecks.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 20,
+                "stacking": { "mode": "none" }
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_queue_depth{queue_name=\"extraction\"}",
+              "legendFormat": "Extraction"
+            },
+            {
+              "expr": "ocr_queue_depth{queue_name=\"ocr\"}",
+              "legendFormat": "OCR"
+            },
+            {
+              "expr": "ocr_queue_depth{queue_name=\"compression\"}",
+              "legendFormat": "Compression"
+            },
+            {
+              "expr": "ocr_queue_depth{queue_name=\"nlp\"}",
+              "legendFormat": "NLP"
+            }
+          ],
+          "options": {
+            "tooltip": { "mode": "multi" },
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 48,
+          "title": "Infrastructure",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 146 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 49,
+          "title": "CPU vs GPU Throughput",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 147 },
+          "datasource": { "type": "prometheus" },
+          "description": "Comparison of CPU and GPU worker throughput measured as pages processed per second",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 15
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(ocr_pages_processed_total{engine!=\"\"}[$__rate_interval])) by (engine) * on group_left ocr_gpu_workers_available > 0 or sum(rate(ocr_pages_processed_total{engine!=\"\"}[$__rate_interval]))",
+              "legendFormat": "GPU Throughput"
+            },
+            {
+              "expr": "sum(rate(ocr_pages_processed_total[$__rate_interval]))",
+              "legendFormat": "CPU Throughput"
+            }
+          ],
+          "options": {
+            "tooltip": { "mode": "multi" },
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 50,
+          "title": "Storage Consumption",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 147 },
+          "datasource": { "type": "prometheus" },
+          "description": "Disk space used by OCR pipeline data volumes as a percentage of total capacity",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 0.7 },
+                  { "color": "red", "value": 0.9 }
+                ]
+              },
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1
+            }
+          },
+          "targets": [
+            {
+              "expr": "1 - (node_filesystem_avail_bytes{mountpoint=\"/data\"} / node_filesystem_size_bytes{mountpoint=\"/data\"})",
+              "legendFormat": "Disk Usage"
+            }
+          ]
+        },
+        {
+          "id": 51,
+          "title": "GPU VRAM Utilization",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 155 },
+          "datasource": { "type": "prometheus" },
+          "description": "GPU worker availability as a proxy for VRAM utilization. Fewer available workers indicates higher VRAM pressure across the fleet.",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "green", "value": 2 }
+                ]
+              },
+              "mappings": [],
+              "color": { "mode": "thresholds" }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_gpu_workers_available",
+              "legendFormat": "Available GPU Workers"
+            },
+            {
+              "expr": "ocr_workers_total{status=\"online\"} - ocr_gpu_workers_available",
+              "legendFormat": "Busy GPU Workers"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "colorMode": "background",
+            "graphMode": "area"
+          }
+        },
+        {
+          "id": 52,
+          "title": "CPU vs GPU Pages by Engine",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 155 },
+          "datasource": { "type": "prometheus" },
+          "description": "Throughput comparison between CPU and GPU OCR engines measured by pages processed per engine type from the ocr_pages_by_engine metric.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 20
+              }
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_pages_by_engine{engine=\"paddle\"}",
+              "legendFormat": "PaddleOCR (GPU)"
+            },
+            {
+              "expr": "ocr_pages_by_engine{engine=\"tesseract\"}",
+              "legendFormat": "Tesseract (CPU)"
+            },
+            {
+              "expr": "ocr_pages_by_engine{engine=\"onnx\"}",
+              "legendFormat": "ONNX (CPU)"
+            }
+          ],
+          "options": {
+            "tooltip": { "mode": "multi" },
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 53,
+          "title": "Tenant Storage Consumption",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 155 },
+          "datasource": { "type": "prometheus" },
+          "description": "Per-tenant storage consumption in bytes. Tracks output volume sizes per tenant to support capacity planning and cost allocation.",
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 5368709120 },
+                  { "color": "red", "value": 10737418240 }
+                ]
+              },
+              "unit": "decbytes",
+              "min": 0
+            }
+          },
+          "targets": [
+            {
+              "expr": "ocr_tenant_storage_bytes{tenant_id=~\"$tenant_id\"}",
+              "legendFormat": "{{ "{{tenant_id}}" }}"
+            }
+          ]
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["ocr", "pipeline"],
+      "templating": {
+        "list": [
+          {
+            "auto": true,
+            "auto_count": 30,
+            "auto_min": "10s",
+            "current": { "selected": false, "text": "auto", "value": "$__auto_interval_interval" },
+            "hide": 0,
+            "label": "Interval",
+            "name": "interval",
+            "options": [
+              { "selected": false, "text": "auto", "value": "$__auto_interval_interval" },
+              { "selected": false, "text": "1m", "value": "1m" },
+              { "selected": false, "text": "5m", "value": "5m" },
+              { "selected": false, "text": "15m", "value": "15m" },
+              { "selected": true, "text": "1h", "value": "1h" },
+              { "selected": false, "text": "6h", "value": "6h" },
+              { "selected": false, "text": "24h", "value": "24h" }
+            ],
+            "query": "1m,5m,15m,1h,6h,24h",
+            "refresh": 2,
+            "skipUrlSync": false,
+            "type": "interval"
+          },
+          {
+            "allValue": ".*",
+            "current": { "selected": true, "text": "All", "value": "$__all" },
+            "datasource": { "type": "prometheus" },
+            "definition": "label_values(ocr_tenant_jobs_total, tenant_id)",
+            "hide": 0,
+            "includeAll": true,
+            "label": "Tenant",
+            "multi": true,
+            "name": "tenant",
+            "query": "label_values(ocr_tenant_jobs_total, tenant_id)",
+            "refresh": 2,
+            "skipUrlSync": false,
+            "type": "query"
+          },
+          {
+            "allValue": ".*",
+            "current": { "selected": true, "text": "All", "value": "$__all" },
+            "datasource": { "type": "prometheus" },
+            "definition": "label_values(ocr_cost_estimate_total, tenant_id)",
+            "hide": 0,
+            "includeAll": true,
+            "label": "Tenant ID",
+            "multi": true,
+            "name": "tenant_id",
+            "query": "label_values(ocr_cost_estimate_total, tenant_id)",
+            "refresh": 2,
+            "regex": "",
+            "skipUrlSync": false,
+            "type": "query"
+          }
+        ]
+      },
+      "time": { "from": "now-6h", "to": "now" },
+      "title": "OCR Pipeline",
+      "uid": "ocr-pipeline"
+    }
+{{- end }}

@@ -1,0 +1,269 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/translation.schema.json",
+  "title": "Translation Sidecar Output",
+  "description": "Per-document translation sidecar.  Written to EXPORT/TRANSLATION/<subfolder>/<document_id>.<target_language>.translation.json.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0", "1.1"],
+      "description": "Schema version for this output format. 1.1 adds optional quality_estimation block."
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Unique document identifier."
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Source document filename or path."
+    },
+    "source_language": {
+      "type": "string",
+      "description": "Source BCP-47 language tag."
+    },
+    "target_language": {
+      "type": "string",
+      "description": "Target BCP-47 language tag."
+    },
+    "certified": {
+      "type": "boolean",
+      "default": false,
+      "description": "false until review queue promotes via piv_cac/oidc_mfa/hardware_token.  MUST be false in raw sidecar output -- certification is an explicit downstream attestation."
+    },
+    "engine": {
+      "type": "object",
+      "description": "Engine identity and provenance metadata.",
+      "properties": {
+        "id": { "type": "string" },
+        "is_local": { "type": "boolean" },
+        "license": {
+          "type": "string",
+          "description": "SPDX license identifier for the engine, e.g. 'Apache-2.0'."
+        },
+        "provider_retention_class": {
+          "type": "string",
+          "description": "One of local_only, zero_retention_with_baa, retention_enabled, unknown."
+        },
+        "weights_sha256": {
+          "type": "string",
+          "description": "SHA-256 of the model weights artifact, or empty string for engines without weights."
+        }
+      },
+      "required": [
+        "id",
+        "is_local",
+        "license",
+        "provider_retention_class",
+        "weights_sha256"
+      ]
+    },
+    "glossary": {
+      "type": ["object", "null"],
+      "description": "Optional active glossary metadata, or null when no glossary applied."
+    },
+    "quality": {
+      "type": "object",
+      "description": "Aggregate quality scoring across the document.",
+      "properties": {
+        "mean_score": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "below_threshold_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quality_class": {
+          "type": "string",
+          "description": "Quality bucket label, e.g. draft/standard/legal."
+        }
+      },
+      "required": ["mean_score", "below_threshold_count", "quality_class"]
+    },
+    "pages": {
+      "type": "array",
+      "description": "Per-page translated spans.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page_num": { "type": "integer", "minimum": 1 },
+          "spans": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "span_id": { "type": "string" },
+                "source_text": { "type": "string" },
+                "target_text": { "type": "string" },
+                "source_bbox": {
+                  "type": "array",
+                  "items": { "type": "number" }
+                },
+                "source_bboxes": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": { "type": "number" }
+                  }
+                },
+                "source_language": { "type": "string" },
+                "target_language": { "type": "string" },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "quality_score": {
+                  "type": ["number", "null"],
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "engine_id": { "type": "string" },
+                "glossary_hits": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              },
+              "required": [
+                "span_id",
+                "source_text",
+                "target_text",
+                "source_bbox",
+                "source_bboxes",
+                "source_language",
+                "target_language",
+                "confidence",
+                "quality_score",
+                "engine_id",
+                "glossary_hits"
+              ]
+            }
+          }
+        },
+        "required": ["page_num", "spans"]
+      }
+    },
+    "stats": {
+      "type": "object",
+      "description": "Aggregate counters (chars, tokens, latency, etc.)."
+    },
+    "custody": {
+      "type": "object",
+      "description": "Forensic chain-of-custody anchors for the translation output.",
+      "properties": {
+        "chain_head": {
+          "type": "string",
+          "description": "Hash-chained custody head covering the translation event."
+        },
+        "clock_source": {
+          "type": "string",
+          "description": "Clock source identifier (e.g. 'monotonic_ntp', 'system')."
+        },
+        "source_ocr_sha256": {
+          "type": "string",
+          "description": "SHA-256 of the upstream OCR text layer that fed translation."
+        }
+      },
+      "required": ["chain_head", "clock_source", "source_ocr_sha256"]
+    },
+    "processing": {
+      "type": "object",
+      "description": "Pipeline metadata for this translation run.",
+      "properties": {
+        "pipeline_version": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "enable_translation": { "type": "boolean" }
+      },
+      "required": ["pipeline_version", "timestamp", "enable_translation"]
+    },
+    "quality_estimation": {
+      "type": "object",
+      "description": "Optional reference-free translation quality estimation (COMETKiwi). Added in schema 1.1; absent when QE is disabled.",
+      "properties": {
+        "model_id": {
+          "type": "string",
+          "description": "Identifier of the QE model that produced these scores (e.g. Unbabel/wmt22-cometkiwi-da)."
+        },
+        "score_mean": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Mean QE score across all scored spans, or null when no spans were scored."
+        },
+        "score_min": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "threshold_warn": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "threshold_reject": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "threshold_warn_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "threshold_reject_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "span_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scored_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "page_means": {
+          "type": "object",
+          "description": "Per-page mean scores keyed by page number (string)."
+        },
+        "per_span_scores": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "page_num": { "type": "integer", "minimum": 0 },
+              "span_index": { "type": "integer", "minimum": 0 },
+              "span_id": { "type": "string" },
+              "score": { "type": ["number", "null"] },
+              "available": { "type": "boolean" },
+              "reason": { "type": ["string", "null"] }
+            },
+            "required": ["span_id", "score", "available"]
+          }
+        }
+      },
+      "required": [
+        "model_id",
+        "threshold_warn",
+        "threshold_reject",
+        "threshold_warn_count",
+        "threshold_reject_count"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "document_id",
+    "source_file",
+    "source_language",
+    "target_language",
+    "certified",
+    "engine",
+    "quality",
+    "pages",
+    "stats",
+    "custody",
+    "processing"
+  ]
+}

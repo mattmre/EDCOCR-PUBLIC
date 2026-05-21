@@ -1,0 +1,36 @@
+# OpenTelemetry Collector overlay for helm/ocr-local
+# Usage: helm upgrade ocr-local ./helm/ocr-local -f helm/ocr-local/values.yaml -f helm/ocr-local/values-otel.yaml
+otel:
+  enabled: true
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    endpoint: "http://otel-collector:4317"
+  jaeger:
+    enabled: true
+    image: jaegertracing/all-in-one:1.54
+    uiPort: 16686
+
+# Pass OTel env vars to coordinator and GPU workers
+coordinator:
+  extraEnv:
+    - name: OTEL_ENABLED
+      value: "true"
+    - name: OTEL_EXPORTER
+      value: "otlp"
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: "http://otel-collector:4317"
+    - name: OTEL_SAMPLE_RATE
+      value: "0.1"
+    - name: OTEL_ENVIRONMENT
+      value: "production"
+
+gpuWorker:
+  extraEnv:
+    - name: OTEL_ENABLED
+      value: "true"
+    - name: OTEL_EXPORTER
+      value: "otlp"
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: "http://otel-collector:4317"
+    - name: OTEL_SAMPLE_RATE
+      value: "0.1"

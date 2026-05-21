@@ -1,0 +1,534 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  root-lint-and-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install root dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov pytest-timeout ruff
+
+      - name: Lint root code
+        # Note: ruff is also available as a pre-commit hook locally
+        # Install: pip install pre-commit && pre-commit install
+        run: python -m ruff check .
+
+      - name: Run root tests with coverage
+        env:
+          OCR_SUBMIT_RATE_LIMIT: "10000/minute"
+          OCR_RATE_LIMIT: "10000/minute"
+          ALLOW_UNAUTHENTICATED: "true"
+          OCR_OUTPUT_DIR: "./ocr_output"
+        run: |
+          mkdir -p ./ocr_output
+          pytest -m "not integration" tests --tb=short -q --timeout=60 --cov=. --cov-report=xml:coverage.xml --cov-report=term-missing:skip-covered
+
+      - name: Upload coverage report
+        if: always
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report-${{ matrix.python-version }}
+          path: coverage.xml
+          retention-days: 30
+          if-no-files-found: warn
+
+  coordinator-lint-and-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install coordinator dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r coordinator/requirements.txt
+          pip install pytest pytest-django pytest-cov pytest-timeout ruff
+
+      - name: Lint coordinator code
+        run: python -m ruff check coordinator
+
+      - name: Run coordinator tests with coverage
+        run: pytest -c coordinator/pytest.ini coordinator/jobs/tests -m "not integration" --tb=short -q --cov=coordinator --cov-report=xml:coordinator-coverage.xml --cov-report=term-missing:skip-covered
+
+      - name: Upload coordinator coverage report
+        if: always
+        uses: actions/upload-artifact@v7
+        with:
+          name: coordinator-coverage-report
+          path: coordinator-coverage.xml
+          retention-days: 30
+          if-no-files-found: warn
+
+  e2e-smoke:
+    name: E2E API Smoke Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run E2E smoke tests
+        env:
+          OCR_SUBMIT_RATE_LIMIT: "10000/minute"
+          OCR_RATE_LIMIT: "10000/minute"
+          ALLOW_UNAUTHENTICATED: "true"
+        run: pytest tests/test_e2e_smoke.py -v --tb=short
+
+  sdk-tests:
+    name: SDK Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install SDK test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx pydantic pytest pytest-asyncio respx
+
+      - name: Run SDK tests
+        run: pytest tests/test_python_sdk_package.py tests/test_python_sdk.py -q
+
+  typescript-sdk-tests:
+    name: TypeScript SDK Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Install, test, and build
+        working-directory: sdk/typescript
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+  version-consistency:
+    name: Version Consistency Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Check version consistency
+        run: python scripts/check_version_consistency.py
+
+  release-state-verification:
+    name: Release State Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Verify release state
+        run: python scripts/verify_release_state.py --json
+
+  boundary-validation:
+    name: Forensic-AI Boundary Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Validate forensic-AI boundary
+        run: python scripts/validate_feature_boundary.py --json
+
+  helm-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.14.0
+
+      - name: Lint Helm chart
+        run: helm lint helm/ocr-local
+
+      - name: Template Helm chart
+        run: |
+          helm template test-release helm/ocr-local \
+            --set secrets.djangoSecretKey=test-key \
+            --set secrets.postgresPassword=test-pass \
+            --set secrets.rabbitmqPassword=test-pass \
+            --set secrets.redisPassword=test-pass \
+            --set secrets.flowerPassword=test-pass \
+            > /dev/null
+
+  resume-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run resume regression suite
+        env:
+          OCR_SUBMIT_RATE_LIMIT: "10000/minute"
+          OCR_RATE_LIMIT: "10000/minute"
+          ALLOW_UNAUTHENTICATED: "true"
+        run: |
+          pytest tests/test_resume_regression.py -v --tb=long -x
+
+  playwright-smoke:
+    runs-on: ubuntu-latest
+    needs: [root-lint-and-tests]
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: ocr_coordinator
+          POSTGRES_PASSWORD: testpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r coordinator/requirements.txt
+      - name: Install Playwright
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Start services (FastAPI and Django)
+        env:
+          ALLOW_UNAUTHENTICATED: "true"
+          OCR_SUBMIT_RATE_LIMIT: "10000/minute"
+          OCR_RATE_LIMIT: "10000/minute"
+          MAX_CONCURRENT_JOBS: "100"
+          DATABASE_URL: "postgres://postgres:testpass@127.0.0.1:5432/ocr_coordinator"
+          DJANGO_DEBUG: "True"
+          DJANGO_SECRET_KEY: "test-secret"
+          CELERY_BROKER_URL: "memory://"
+          OCR_SOURCE_DIR: "./ocr_source"
+          OCR_OUTPUT_DIR: "./ocr_output"
+        run: |
+          mkdir -p ./ocr_source
+          mkdir -p ./ocr_output
+          python -m uvicorn api.main:app --host 127.0.0.1 --port 8765 &
+          cd coordinator
+          python manage.py migrate
+          python manage.py seed_playwright_admin --reset --username admin --password adminpass
+          python manage.py runserver 127.0.0.1:8000 &
+          cd ..
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8765/api/v1/health > /dev/null 2>&1 && curl -sf http://127.0.0.1:8000/admin/login/ > /dev/null 2>&1; then
+              echo "Services are ready"
+              break
+            fi
+            echo "Waiting for services... ($i/30)"
+            sleep 1
+          done
+
+      - name: Run Playwright smoke tests
+        env:
+          PLAYWRIGHT_API_BASE_URL: http://127.0.0.1:8765
+          ALLOW_UNAUTHENTICATED: "true"
+          OCR_SUBMIT_RATE_LIMIT: "10000/minute"
+          OCR_RATE_LIMIT: "10000/minute"
+          PLAYWRIGHT_COORDINATOR_BASE_URL: http://127.0.0.1:8000
+          PLAYWRIGHT_DJANGO_ADMIN_USER: admin
+          PLAYWRIGHT_DJANGO_ADMIN_PASSWORD: adminpass
+          PLAYWRIGHT_ADMIN_SEEDED: "true"
+        run: npx playwright test --project=request-api --project=browser-api-docs --project=browser-admin
+
+      - name: Upload Playwright report
+        if: always
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-smoke-report
+          path: playwright-artifacts/
+          retention-days: 7
+          if-no-files-found: warn
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+
+      - name: Audit Python dependencies (root, advisory)
+        run: pip-audit -r requirements.txt --desc --output=pip-audit-root.txt || true
+
+      - name: Audit Python dependencies (coordinator, advisory)
+        run: pip-audit -r coordinator/requirements.txt --desc --output=pip-audit-coordinator.txt || true
+
+      - name: Audit Python dependencies (root, blocking)
+        run: pip-audit -r requirements.txt --ignore-vuln CVE-2026-4539
+
+      - name: Audit Python dependencies (coordinator, blocking)
+        run: pip-audit -r coordinator/requirements.txt --ignore-vuln CVE-2026-4539
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Audit npm dependencies (TypeScript SDK)
+        working-directory: sdk/typescript
+        run: |
+          npm ci
+          npm audit --audit-level=moderate
+
+      - name: Upload audit reports
+        if: always
+        uses: actions/upload-artifact@v7
+        with:
+          name: security-audit-reports
+          path: pip-audit-*.txt
+          retention-days: 30
+          if-no-files-found: ignore
+
+  generate-sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    needs: security-audit
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install CycloneDX
+        run: |
+          python -m pip install --upgrade pip
+          pip install cyclonedx-bom
+
+      - name: Generate SBOM from root requirements
+        run: cyclonedx-py requirements -i requirements.txt -o sbom-root.json --output-format json
+
+      - name: Generate SBOM from coordinator requirements
+        run: cyclonedx-py requirements -i coordinator/requirements.txt -o sbom-coordinator.json --output-format json
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-cyclonedx
+          path: sbom-*.json
+          retention-days: 90
+
+  helm-package:
+    runs-on: ubuntu-latest
+    needs: helm-lint
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: 'v3.14.0'
+
+      - name: Package Helm chart
+        run: |
+          helm package helm/ocr-local/ --destination .helm-packages/
+
+      - name: Upload chart artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: helm-chart
+          path: .helm-packages/*.tgz
+          retention-days: 30
+
+      - name: Push to OCI registry (tagged releases only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          HELM_REGISTRY_URL: ${{ vars.HELM_REGISTRY_URL }}
+          HELM_REGISTRY_USER: ${{ secrets.HELM_REGISTRY_USER }}
+          HELM_REGISTRY_PASSWORD: ${{ secrets.HELM_REGISTRY_PASSWORD }}
+        run: |
+          if [ -n "$HELM_REGISTRY_URL" ]; then
+            echo "$HELM_REGISTRY_PASSWORD" | helm registry login "$HELM_REGISTRY_URL" --username "$HELM_REGISTRY_USER" --password-stdin
+            helm push .helm-packages/*.tgz "oci://$HELM_REGISTRY_URL"
+          else
+            echo "HELM_REGISTRY_URL not set, skipping push"
+          fi
+
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.5.7"
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive -diff
+        working-directory: terraform
+
+      - name: Terraform validate (staging)
+        run: |
+          terraform init -backend=false
+          terraform validate
+        working-directory: terraform/environments/staging
+
+      - name: Terraform validate (production)
+        run: |
+          terraform init -backend=false
+          terraform validate
+        working-directory: terraform/environments/production
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v6
+
+      - name: TFLint modules/eks
+        run: |
+          tflint --init --config="$(pwd)/terraform/.tflint.hcl"
+          tflint --config="$(pwd)/terraform/.tflint.hcl" --chdir=terraform/modules/eks
+
+      - name: TFLint modules/gke
+        run: |
+          tflint --config="$(pwd)/terraform/.tflint.hcl" --chdir=terraform/modules/gke
+
+      - name: TFLint modules/oke
+        run: |
+          tflint --config="$(pwd)/terraform/.tflint.hcl" --chdir=terraform/modules/oke
+
+      - name: TFLint modules/shared
+        run: |
+          tflint --config="$(pwd)/terraform/.tflint.hcl" --chdir=terraform/modules/shared
+
+      - name: TFLint environments/staging
+        run: |
+          tflint --config="$(pwd)/terraform/.tflint.hcl" --chdir=terraform/environments/staging
+
+      - name: TFLint environments/production
+        run: |
+          tflint --config="$(pwd)/terraform/.tflint.hcl" --chdir=terraform/environments/production

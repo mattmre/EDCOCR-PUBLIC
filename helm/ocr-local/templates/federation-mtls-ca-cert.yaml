@@ -1,0 +1,34 @@
+{{- if and .Values.federation.enabled .Values.federation.mtls.enabled (not .Values.federation.mtls.caRef) }}
+# =============================================================================
+# Federation mTLS — Root CA Certificate (item C8)
+#
+# Long-lived self-signed root CA minted by the bootstrap Issuer. The resulting
+# Secret (`<release>-federation-mtls-ca-secret`) is referenced by the
+# `<release>-federation-mtls-ca` Issuer/ClusterIssuer that signs all leaf
+# certs (coordinator, rabbitmq, peer client).
+#
+# Skipped when `federation.mtls.caRef` references an externally-managed CA
+# Secret. In that case, leaf Certificates reference `caRef` directly via
+# a separate Issuer (which the operator must provision out-of-band).
+# =============================================================================
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-federation-mtls-ca
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-mtls
+spec:
+  isCA: true
+  commonName: {{ .Release.Name }}-federation-mtls-ca
+  secretName: {{ .Release.Name }}-federation-mtls-ca-secret
+  duration: 87600h   # 10 years
+  renewBefore: 2160h # 90 days
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ .Release.Name }}-federation-mtls-bootstrap
+    kind: {{ if .Values.federation.mtls.clusterIssuer }}ClusterIssuer{{ else }}Issuer{{ end }}
+    group: cert-manager.io
+{{- end }}

@@ -1,0 +1,127 @@
+{{- if .Values.cpuOcrWorker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-cpu-ocr-worker
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cpu-ocr-worker
+spec:
+  {{- if not .Values.cpuOcrWorker.autoscaling.enabled }}
+  replicas: {{ .Values.cpuOcrWorker.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: cpu-ocr-worker
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.labels" . | nindent 8 }}
+        app.kubernetes.io/component: cpu-ocr-worker
+      {{- if .Values.workerSecurity.mTLS.enabled }}
+      annotations:
+        {{ .Values.workerSecurity.mTLS.annotation }}: {{ .Values.workerSecurity.mTLS.annotationValue | quote }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.workerTerminationGracePeriodSeconds | default 360 }}
+      {{- with .Values.cpuOcrWorker.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.cpuOcrWorker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.cpuOcrWorker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: staging-volume
+          {{- if eq .Values.workerSecurity.stagingVolume.type "emptyDir" }}
+          emptyDir:
+            medium: {{ .Values.workerSecurity.stagingVolume.emptyDir.medium }}
+            sizeLimit: {{ .Values.workerSecurity.stagingVolume.emptyDir.sizeLimit }}
+          {{- else }}
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ "ReadWriteOnce" ]
+                storageClassName: {{ .Values.workerSecurity.stagingVolume.pvc.storageClass | quote }}
+                resources:
+                  requests:
+                    storage: {{ .Values.workerSecurity.stagingVolume.pvc.size }}
+          {{- end }}
+      containers:
+        - name: cpu-ocr-worker
+          image: {{ include "ocr-local.workerImage" . }}
+          imagePullPolicy: {{ .Values.image.worker.pullPolicy | default "IfNotPresent" }}
+          command:
+            - celery
+            - -A
+            - coordinator.coordinator
+            - worker
+            - --loglevel=info
+            - --queues={{ .Values.cpuOcrWorker.queues }}
+            - --concurrency={{ .Values.cpuOcrWorker.concurrency }}
+            - --max-tasks-per-child={{ .Values.cpuOcrWorker.maxTasksPerChild }}
+            - --hostname=cpu-ocr-worker@%h
+          volumeMounts:
+            - name: staging-volume
+              mountPath: {{ .Values.workerSecurity.stagingVolume.mountPath }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secret
+          env:
+            - name: WORKER_QUEUES
+              value: {{ .Values.cpuOcrWorker.queues | quote }}
+            - name: WORKER_CONCURRENCY
+              value: {{ .Values.cpuOcrWorker.concurrency | quote }}
+            - name: FASTTEXT_MODEL_PATH
+              value: /app/models/lid.176.bin
+            {{- range $key, $val := .Values.cpuOcrWorker.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          startupProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import celery"
+            failureThreshold: 10
+            periodSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - celery
+                - -A
+                - coordinator.coordinator
+                - inspect
+                - ping
+                - --timeout=5
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - celery
+                - -A
+                - coordinator.coordinator
+                - inspect
+                - ping
+                - --timeout=10
+            periodSeconds: 60
+          resources:
+            {{- toYaml .Values.cpuOcrWorker.resources | nindent 12 }}
+          {{- with .Values.cpuOcrWorker.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

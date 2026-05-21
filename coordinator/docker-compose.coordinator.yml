@@ -1,0 +1,166 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ocr_coordinator
+      POSTGRES_USER: ocr
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ocr -d ocr_coordinator"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: ${POSTGRES_MEM_LIMIT:-512m}
+    memswap_limit: ${POSTGRES_MEMSWAP_LIMIT:-768m}
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: ${RABBITMQ_MEM_LIMIT:-512m}
+    memswap_limit: ${RABBITMQ_MEMSWAP_LIMIT:-768m}
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env} --appendonly yes --maxmemory ${REDIS_MAXMEMORY:-192mb} --maxmemory-policy allkeys-lru
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: ${REDIS_MEM_LIMIT:-256m}
+    memswap_limit: ${REDIS_MEMSWAP_LIMIT:-384m}
+
+  django:
+    build:
+      context: .
+      dockerfile: Dockerfile.coordinator
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput 2>/dev/null;
+             gunicorn coordinator.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120"
+    environment: &coordinator_env
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-development}
+      PRODUCTION_READINESS_ACK: ${PRODUCTION_READINESS_ACK:-false}
+      DATABASE_URL: postgres://ocr:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/ocr_coordinator
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      EXTERNAL_TRANSLATION_PREFER: ${EXTERNAL_TRANSLATION_PREFER:-false}
+      EXTERNAL_TRANSLATION_URL: ${EXTERNAL_TRANSLATION_URL:-http://external-translation:8080}
+      EXTERNAL_TRANSLATION_PROVIDER_ID: ${EXTERNAL_TRANSLATION_PROVIDER_ID:-passthrough}
+      EXTERNAL_TRANSLATION_TIMEOUT_SECONDS: ${EXTERNAL_TRANSLATION_TIMEOUT_SECONDS:-30}
+      EXTERNAL_TRANSLATION_READINESS_PATH: ${EXTERNAL_TRANSLATION_READINESS_PATH:-/health}
+      NFS_ROOT: ${NFS_ROOT:-/shared}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-nfs}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      METRICS_API_KEY: ${METRICS_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${NFS_HOST_PATH:-./shared}:/shared
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: ${DJANGO_MEM_LIMIT:-1024m}
+    memswap_limit: ${DJANGO_MEMSWAP_LIMIT:-1536m}
+
+  celery-coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile.coordinator
+    command: celery -A coordinator worker -Q coordinator -c 2 -l info --hostname coordinator@%h
+    environment: *coordinator_env
+    volumes:
+      - ${NFS_HOST_PATH:-./shared}:/shared
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: ${CELERY_COORDINATOR_MEM_LIMIT:-1024m}
+    memswap_limit: ${CELERY_COORDINATOR_MEMSWAP_LIMIT:-1536m}
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.coordinator
+    command: celery -A coordinator beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment: *coordinator_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: ${CELERY_BEAT_MEM_LIMIT:-512m}
+    memswap_limit: ${CELERY_BEAT_MEMSWAP_LIMIT:-768m}
+
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.coordinator
+    command: celery -A coordinator flower --port=5555 --basic-auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:?Set FLOWER_PASSWORD in .env} --broker_api=http://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD}@rabbitmq:15672/api/
+    environment: *coordinator_env
+    ports:
+      - "5555:5555"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    mem_limit: ${FLOWER_MEM_LIMIT:-512m}
+    memswap_limit: ${FLOWER_MEMSWAP_LIMIT:-768m}
+
+  external-translation:
+    profiles:
+      - external-translation
+    build:
+      context: ${EXTERNAL_TRANSLATION_REPO:-../../EXTERNAL_TRANSLATION}
+      dockerfile: Dockerfile
+    image: ${EXTERNAL_TRANSLATION_IMAGE:-external-translation:0.1.0}
+    ports:
+      - "127.0.0.1:${EXTERNAL_TRANSLATION_HOST_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    mem_limit: ${EXTERNAL_TRANSLATION_MEM_LIMIT:-512m}
+    memswap_limit: ${EXTERNAL_TRANSLATION_MEMSWAP_LIMIT:-1024m}
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  redis_data:

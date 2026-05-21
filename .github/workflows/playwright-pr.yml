@@ -1,0 +1,169 @@
+name: Playwright PR Gate
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/playwright-pr.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "playwright.config.js"
+      - "playwright/**"
+      - "scripts/summarize_playwright_run.py"
+      - "docs/testing/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-env:
+    name: Check Playwright environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      has_base_url: ${{ steps.check.outputs.has_base_url }}
+    steps:
+      - name: Detect PLAYWRIGHT_API_BASE_URL
+        id: check
+        run: |
+          if [ -n "${{ vars.PLAYWRIGHT_API_BASE_URL }}" ]; then
+            echo "has_base_url=true" >> "$GITHUB_OUTPUT"
+            echo "PLAYWRIGHT_API_BASE_URL is configured -- Playwright tests will run."
+          else
+            echo "has_base_url=false" >> "$GITHUB_OUTPUT"
+            echo "PLAYWRIGHT_API_BASE_URL is not configured -- Playwright tests will be skipped (graceful)."
+          fi
+
+  playwright-pr:
+    needs: [check-env]
+    if: needs.check-env.outputs.has_base_url == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PLAYWRIGHT_RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}
+      PLAYWRIGHT_API_BASE_URL: ${{ vars.PLAYWRIGHT_API_BASE_URL }}
+      PLAYWRIGHT_COORDINATOR_BASE_URL: ${{ vars.PLAYWRIGHT_COORDINATOR_BASE_URL }}
+      PLAYWRIGHT_OCR_API_KEY: ${{ secrets.PLAYWRIGHT_OCR_API_KEY }}
+      PLAYWRIGHT_FEATURE_FLAGS_API_KEY: ${{ secrets.PLAYWRIGHT_FEATURE_FLAGS_API_KEY }}
+      PLAYWRIGHT_MULTITENANCY_PLATFORM_ADMIN_KEY: ${{ secrets.PLAYWRIGHT_MULTITENANCY_PLATFORM_ADMIN_KEY }}
+      PLAYWRIGHT_METRICS_API_KEY: ${{ secrets.PLAYWRIGHT_METRICS_API_KEY }}
+      PLAYWRIGHT_DJANGO_ADMIN_USER: ${{ secrets.PLAYWRIGHT_DJANGO_ADMIN_USER }}
+      PLAYWRIGHT_DJANGO_ADMIN_PASSWORD: ${{ secrets.PLAYWRIGHT_DJANGO_ADMIN_PASSWORD }}
+      PLAYWRIGHT_ADMIN_SEEDED: ${{ vars.PLAYWRIGHT_ADMIN_SEEDED }}
+      PLAYWRIGHT_EXPECT_TRANSFORMS_ENABLED: ${{ vars.PLAYWRIGHT_EXPECT_TRANSFORMS_ENABLED }}
+      PLAYWRIGHT_EXPECT_STAMPING_ENABLED: ${{ vars.PLAYWRIGHT_EXPECT_STAMPING_ENABLED }}
+      PLAYWRIGHT_EXPECT_MULTITENANCY_ENABLED: ${{ vars.PLAYWRIGHT_EXPECT_MULTITENANCY_ENABLED }}
+      PLAYWRIGHT_EXPECT_API_AUTH_REQUIRED: ${{ vars.PLAYWRIGHT_EXPECT_API_AUTH_REQUIRED }}
+      PLAYWRIGHT_EXPECT_METRICS_AUTH_REQUIRED: ${{ vars.PLAYWRIGHT_EXPECT_METRICS_AUTH_REQUIRED }}
+      PLAYWRIGHT_FEATURE_SAMPLE_INPUT_PATH: ${{ vars.PLAYWRIGHT_FEATURE_SAMPLE_INPUT_PATH }}
+      PLAYWRIGHT_FEATURE_OUTPUT_DIR: ${{ vars.PLAYWRIGHT_FEATURE_OUTPUT_DIR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Playwright dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright suite
+        id: playwright
+        continue-on-error: true
+        run: npm run pw:test
+
+      - name: Normalize Playwright summary
+        if: always
+        run: |
+          python scripts/summarize_playwright_run.py \
+            --results-json "playwright-artifacts/runs/${PLAYWRIGHT_RUN_ID}/results.json" \
+            --summary-markdown "playwright-artifacts/runs/${PLAYWRIGHT_RUN_ID}/summary.md" \
+            --summary-json "playwright-artifacts/runs/${PLAYWRIGHT_RUN_ID}/summary.json" \
+            --trigger "GitHub Actions pull request run" \
+            --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
+            --commit "${GITHUB_SHA}" \
+            --pr "${{ github.event.pull_request.number || 'manual' }}" \
+            --operator "GitHub Actions" \
+            --suite-scope "Playwright PR matrix" \
+            --feature-flag "env-gated via PLAYWRIGHT_EXPECT_* variables" \
+            --environment-url "PLAYWRIGHT_API_BASE_URL" \
+            --environment-url "PLAYWRIGHT_COORDINATOR_BASE_URL" \
+            --auth-mode "optional OCR API key" \
+            --auth-mode "optional Django admin credentials" \
+            --auth-mode "optional metrics API key" \
+            --deferred-item "Live browser-backed assertions remain blocked until workflow env vars are configured." \
+            --follow-up "Provide repo variables and secrets for a non-skip PR run." \
+            --follow-up "Promote the suite from informative to staged gate enforcement in the release-gate lane."
+
+      - name: Publish job summary
+        if: always
+        run: cat "playwright-artifacts/runs/${PLAYWRIGHT_RUN_ID}/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Playwright artifacts
+        if: always
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-${{ env.PLAYWRIGHT_RUN_ID }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            playwright-artifacts/runs/${{ env.PLAYWRIGHT_RUN_ID }}/html-report
+            playwright-artifacts/runs/${{ env.PLAYWRIGHT_RUN_ID }}/results.json
+            playwright-artifacts/runs/${{ env.PLAYWRIGHT_RUN_ID }}/results.xml
+            playwright-artifacts/runs/${{ env.PLAYWRIGHT_RUN_ID }}/blob-report
+            playwright-artifacts/runs/${{ env.PLAYWRIGHT_RUN_ID }}/test-results
+            playwright-artifacts/runs/${{ env.PLAYWRIGHT_RUN_ID }}/summary.md
+            playwright-artifacts/runs/${{ env.PLAYWRIGHT_RUN_ID }}/summary.json
+
+      - name: Enforce unexpected-failure gate
+        if: always
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          summary_path = Path("playwright-artifacts/runs") / "${{ env.PLAYWRIGHT_RUN_ID }}" / "summary.json"
+          payload = json.loads(summary_path.read_text(encoding="utf-8"))
+          status = payload["status"]
+          print(f"Normalized Playwright status: {status}")
+          if status == "FAIL":
+              raise SystemExit(1)
+          PY
+
+  playwright-gate:
+    name: Playwright Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: always
+    needs: [check-env, playwright-pr]
+    steps:
+      - name: Evaluate gate result
+        run: |
+          echo "check-env has_base_url: ${{ needs.check-env.outputs.has_base_url }}"
+          echo "playwright-pr result:   ${{ needs.playwright-pr.result }}"
+
+          HAS_URL="${{ needs.check-env.outputs.has_base_url }}"
+          TEST_RESULT="${{ needs.playwright-pr.result }}"
+
+          if [ "$HAS_URL" != "true" ]; then
+            echo "PLAYWRIGHT_API_BASE_URL not configured -- gate passes (graceful skip)."
+            exit 0
+          fi
+
+          if [ "$TEST_RESULT" = "success" ]; then
+            echo "Playwright tests passed -- gate passes."
+            exit 0
+          fi
+
+          echo "Playwright tests did not succeed (result: $TEST_RESULT) -- gate FAILS."
+          exit 1

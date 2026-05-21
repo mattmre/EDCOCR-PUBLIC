@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+data:
+  # ---- Django / Coordinator ----
+  DJANGO_SETTINGS_MODULE: "coordinator.coordinator.settings"
+  DJANGO_DEBUG: {{ .Values.coordinator.env.DJANGO_DEBUG | quote }}
+  DJANGO_ALLOWED_HOSTS: {{ .Values.coordinator.env.DJANGO_ALLOWED_HOSTS | quote }}
+  DEPLOYMENT_ENV: {{ .Values.coordinator.env.DEPLOYMENT_ENV | quote }}
+  PRODUCTION_READINESS_ACK: {{ .Values.coordinator.env.PRODUCTION_READINESS_ACK | quote }}
+
+  # ---- External EXTERNAL_TRANSLATION seam (default OFF) ----
+  EXTERNAL_TRANSLATION_PREFER: {{ .Values.externalTranslation.preferExternal | quote }}
+  EXTERNAL_TRANSLATION_URL: {{ .Values.externalTranslation.url | quote }}
+  EXTERNAL_TRANSLATION_PROVIDER_ID: {{ .Values.externalTranslation.providerId | quote }}
+  EXTERNAL_TRANSLATION_TIMEOUT_SECONDS: {{ .Values.externalTranslation.timeoutSeconds | quote }}
+  EXTERNAL_TRANSLATION_READINESS_PATH: {{ .Values.externalTranslation.readinessPath | quote }}
+
+  # ---- Storage ----
+  STORAGE_BACKEND: {{ .Values.storage.backend | quote }}
+  NFS_ROOT: {{ .Values.storage.nfs.path | quote }}
+  S3_CACHE_DIR: {{ .Values.storage.s3.cacheDir | quote }}
+  S3_CACHE_MAX_SIZE_GB: {{ .Values.storage.s3.cacheMaxSizeGB | quote }}
+
+  # ---- Celery / RabbitMQ ----
+  CELERY_USE_QUORUM_QUEUES: {{ .Values.rabbitmq.quorumQueues | quote }}
+
+  # ---- Assembly tuning ----
+  ASSEMBLY_STREAMING_THRESHOLD_PAGES: {{ .Values.assembly.streamingThresholdPages | quote }}
+  ASSEMBLY_CHECKPOINT_INTERVAL_PAGES: {{ .Values.assembly.checkpointIntervalPages | quote }}
+
+  # ---- Cleanup / Retention ----
+  JOB_RETENTION_DAYS: {{ .Values.cleanup.retentionDays | quote }}
+  PII_ENTITY_RETENTION_DAYS: {{ .Values.cleanup.piiRetentionDays | default 90 | quote }}
+  AUDIT_LOG_RETENTION_DAYS: {{ .Values.cleanup.auditLogRetentionDays | default 2555 | quote }}
+  OUTPUT_RETENTION_DAYS: {{ .Values.cleanup.outputRetentionDays | default 90 | quote }}
+
+  {{- if .Values.tls.enabled }}
+  # ---- Inter-service TLS ----
+  DATABASE_SSLMODE: "verify-full"
+  DATABASE_SSLROOTCERT: "/etc/tls/ca.crt"
+  CELERY_BROKER_USE_SSL: "true"
+  REDIS_SSL: "true"
+  {{- end }}

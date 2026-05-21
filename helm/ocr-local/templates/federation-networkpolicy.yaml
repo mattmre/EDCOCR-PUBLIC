@@ -1,0 +1,42 @@
+{{- if and .Values.federation.enabled .Values.federation.networkPolicy.enabled }}
+# =============================================================================
+# Federation NetworkPolicy
+#
+# Allows AMQPS egress from this cluster's RabbitMQ pod(s) to peer-cluster
+# RabbitMQ endpoints listed in `federation.networkPolicy.peerCidrs`.
+#
+# This policy is additive: it does not replace `networkpolicy.yaml`. It only
+# opens the cross-cluster AMQPS port; intra-cluster traffic is governed by
+# the base policy.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-federation-egress
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: rabbitmq
+  policyTypes:
+    - Egress
+  egress:
+    {{- if .Values.federation.networkPolicy.peerCidrs }}
+    - to:
+        {{- range .Values.federation.networkPolicy.peerCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.federation.networkPolicy.amqpsPort }}
+    {{- end }}
+    # DNS for peer-cluster hostname resolution
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}

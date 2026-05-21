@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "edcocr-sdk"
+version = "4.1.0"
+description = "Python SDK for EDCOCR forensic-grade OCR pipeline"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.9"
+authors = [
+    { name = "EDCOCR Contributors" },
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+keywords = ["ocr", "pdf", "document-processing", "forensic", "paddleocr"]
+dependencies = [
+    "httpx>=0.24.0",
+    "pydantic>=2.0.0",
+]
+
+[project.scripts]
+edcocr = "edcocr_sdk.cli:main"
+edcocr-mcp = "edcocr_sdk.mcp_server:main"
+
+[project.optional-dependencies]
+websockets = ["websockets>=11.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "respx>=0.20",
+]
+
+[project.urls]
+Homepage = "https://github.com/mattmre/EDCOCR-PUBLIC"
+Documentation = "https://github.com/mattmre/EDCOCR-PUBLIC/tree/main/sdk/python"
+Repository = "https://github.com/mattmre/EDCOCR-PUBLIC"
+Issues = "https://github.com/mattmre/EDCOCR-PUBLIC/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/edcocr_sdk"]

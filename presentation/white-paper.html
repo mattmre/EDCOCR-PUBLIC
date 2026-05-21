@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EDCOCR — Technical White Paper</title>
+  <meta name="description" content="Forensic-grade OCR for electronic discovery and regulated document workflows. v4.1.0 technical white paper.">
+  <link rel="stylesheet" href="assets/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    .wp-hero {
+      padding: 100px 0 56px;
+      background: linear-gradient(180deg, rgba(245, 158, 11, 0.07) 0%, transparent 100%);
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+    }
+    .wp-hero h1 {
+      font-size: clamp(2.25rem, 5vw, 3.5rem);
+      max-width: 1000px;
+      margin: 0 auto 16px;
+    }
+    .wp-hero .subtitle {
+      color: var(--text-dim);
+      font-size: 1.2rem;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    .wp-meta {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 24px;
+      margin-top: 24px;
+      color: var(--text-dim);
+      font-size: 0.95rem;
+    }
+    .wp-meta strong { color: var(--text); }
+    .wp-layout {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 48px;
+      padding: 48px 0;
+      align-items: start;
+    }
+    @media (max-width: 1024px) {
+      .wp-layout { grid-template-columns: 1fr; }
+      .wp-toc-sticky { position: static !important; }
+    }
+    .wp-toc-sticky {
+      position: sticky;
+      top: 80px;
+    }
+    .wp-toc {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+    }
+    .wp-toc-title {
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+    }
+    .wp-toc ol {
+      list-style: none;
+      counter-reset: section;
+      padding: 0;
+      margin: 0;
+    }
+    .wp-toc li {
+      counter-increment: section;
+      padding: 4px 0;
+      border-bottom: 1px dashed var(--border);
+    }
+    .wp-toc li:last-child { border-bottom: none; }
+    .wp-toc li a {
+      color: var(--text-dim);
+      font-size: 0.9rem;
+      display: flex;
+      gap: 8px;
+    }
+    .wp-toc li a::before {
+      content: counter(section, decimal-leading-zero);
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+    }
+    .wp-toc li a:hover { color: var(--text); opacity: 1; }
+    .wp-main h2 {
+      font-size: clamp(1.4rem, 2.4vw, 1.9rem);
+      margin: 56px 0 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      scroll-margin-top: 80px;
+    }
+    .wp-main h2:first-child { margin-top: 0; }
+    .wp-main h2 .num {
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 0.85em;
+      margin-right: 12px;
+    }
+    .wp-main h3 {
+      font-size: 1.15rem;
+      color: var(--accent);
+      margin: 28px 0 8px;
+      scroll-margin-top: 80px;
+    }
+    .wp-main p {
+      color: var(--text);
+      margin-bottom: 14px;
+      line-height: 1.7;
+    }
+    .wp-main ul, .wp-main ol {
+      margin: 12px 0 16px 24px;
+      color: var(--text);
+    }
+    .wp-main li { margin-bottom: 6px; line-height: 1.7; }
+    .wp-main code { font-size: 0.85em; }
+    .abstract {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      padding: 24px 28px;
+      margin: 24px 0;
+    }
+    .abstract p { color: var(--text-dim); font-size: 1.05rem; line-height: 1.7; }
+    .abstract p:last-child { margin-bottom: 0; }
+    .wp-callout {
+      background: var(--bg-card);
+      border-left: 4px solid var(--accent-3);
+      border-radius: 6px;
+      padding: 16px 20px;
+      margin: 24px 0;
+      color: var(--text-dim);
+      font-size: 0.95rem;
+    }
+    .wp-callout strong { color: var(--accent-3); }
+    .pre-wrapper {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow-x: auto;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .pre-wrapper pre {
+      background: transparent;
+      padding: 0;
+      margin: 0;
+      border: none;
+    }
+    @media print {
+      .header, .footer, .wp-toc-sticky { display: none; }
+      .wp-layout { grid-template-columns: 1fr; }
+      .wp-main h2 { page-break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+<header class="header">
+  <div class="container header-inner">
+    <div class="logo">EDC<span class="accent">OCR</span></div>
+    <nav class="nav">
+      <a href="index.html">Overview</a>
+      <a href="executive-summary.html">Exec Summary</a>
+      <a href="technical-brief.html">Tech Brief</a>
+      <a href="white-paper.html" style="color: var(--text);">White Paper</a>
+      <a href="use-cases.html">Use Cases</a>
+      <a href="https://github.com/mattmre/EDCOCR-PUBLIC" class="hidden-mobile">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="wp-hero">
+  <div class="container">
+    <h1>Technical White Paper</h1>
+    <p class="subtitle">
+      Forensic-Grade OCR for Electronic Discovery and Regulated Document Workflows
+    </p>
+    <div class="wp-meta">
+      <div><strong>Version</strong> &middot; 4.1.0</div>
+      <div><strong>License</strong> &middot; Apache 2.0</div>
+      <div><strong>Date</strong> &middot; 2026-05-20</div>
+    </div>
+  </div>
+</section>
+
+<div class="container">
+  <div class="wp-layout">
+
+    <aside class="wp-toc-sticky">
+      <nav class="wp-toc">
+        <div class="wp-toc-title">Contents</div>
+        <ol>
+          <li><a href="#motivation">Motivation</a></li>
+          <li><a href="#principles">Design Principles</a></li>
+          <li><a href="#architecture">Architecture</a></li>
+          <li><a href="#output-schema">Output Schema</a></li>
+          <li><a href="#languages">Languages</a></li>
+          <li><a href="#security">Security Posture</a></li>
+          <li><a href="#translation">Translation Suite</a></li>
+          <li><a href="#deployment">Deployment</a></li>
+          <li><a href="#performance">Performance</a></li>
+          <li><a href="#non-goals">What EDCOCR Is Not</a></li>
+          <li><a href="#versioning">Versioning</a></li>
+          <li><a href="#references">References</a></li>
+        </ol>
+      </nav>
+    </aside>
+
+    <main class="wp-main">
+
+      <h2>Abstract</h2>
+      <div class="abstract">
+        <p>
+          EDCOCR is an open-source, GPU-accelerated OCR platform engineered for workflows where
+          every page must be accounted for and every extraction must be defensible. It combines
+          CTC (Connectionist Temporal Classification) recognition — which cannot synthesize
+          characters — with hash-chained custody logging, deterministic fallback behavior,
+          and forensic image preservation, producing outputs suitable for legal discovery,
+          regulated industries, and air-gapped environments.
+        </p>
+        <p>
+          The platform processes documents through a six-stage producer-consumer pipeline
+          (31 concurrent threads) and ships in three deployment topologies: single-machine
+          Docker, distributed Celery clusters, and Kubernetes via a 26-template Helm chart.
+          It supports 45 languages with per-span detection, integrates with NFS/S3/Azure/GCS
+          storage, and emits 14 structured output families plus a tamper-evident audit trail.
+        </p>
+        <p>
+          This document describes the design philosophy, system architecture, and operational
+          characteristics that distinguish EDCOCR from generative-model OCR tools and best-effort
+          cloud APIs.
+        </p>
+      </div>
+
+      <h2 id="motivation"><span class="num">1</span>Motivation</h2>
+
+      <h3 id="motivation-forensic">1.1 The Forensic Problem with Modern OCR</h3>
+      <p>
+        The dominant OCR tools of the 2020s have converged on generative architectures —
+        encoder-decoder transformers that condition on image features and emit text tokens.
+        These models achieve excellent accuracy on clean print, but they introduce three
+        failure modes that are unacceptable for forensic workflows:
+      </p>
+      <ol>
+        <li><strong>Hallucination.</strong> A generative recognizer can emit characters that were never on the page. There is no mathematical bound on what text it can produce given an image.</li>
+        <li><strong>Silent failure.</strong> When the model is uncertain, it still emits the most likely token. There is rarely a meaningful "I cannot read this" signal exposed to the consumer.</li>
+        <li><strong>Opaque provenance.</strong> Cloud APIs hide which model version processed which page, when, with what parameters. Reproducibility — the foundation of evidence — becomes impossible.</li>
+      </ol>
+      <p>
+        For workflows that produce evidence consumed by courts, regulators, or auditors,
+        these failure modes are not acceptable.
+      </p>
+
+      <h3 id="motivation-airgap">1.2 The "Air-Gap" Problem</h3>
+      <p>A significant fraction of regulated document processing occurs in environments where outbound network calls are contractually or legally prohibited:</p>
+      <ul>
+        <li>Classified government work (SCIF environments)</li>
+        <li>Healthcare records subject to HIPAA-class restrictions</li>
+        <li>Legal discovery under protective order</li>
+        <li>Financial workflows touching customer PII</li>
+      </ul>
+      <p>
+        Cloud OCR APIs are non-starters for these workflows. EDCOCR's runtime never makes
+        outbound calls; all models ship pre-baked into Docker images.
+      </p>
+
+      <h3 id="motivation-audit">1.3 Audit, Reproducibility, and Custody</h3>
+      <p>When OCR output is contested — by a litigant, a regulator, or an internal reviewer — the platform must answer four questions definitively:</p>
+      <ol>
+        <li><strong>What was the original input?</strong> (Cryptographic hash of the source file.)</li>
+        <li><strong>What model processed each page, with what parameters?</strong> (Custody event per operation.)</li>
+        <li><strong>Did anyone tamper with the output between extraction and review?</strong> (Hash-chained audit log.)</li>
+        <li><strong>Where did this specific character come from?</strong> (Page-level confidence + DPI + engine.)</li>
+      </ol>
+      <p>EDCOCR answers all four for every job, with no operator action required.</p>
+
+      <h2 id="principles"><span class="num">2</span>Design Principles</h2>
+
+      <h3 id="principles-ctc">2.1 CTC-Only Recognition</h3>
+      <p>
+        EDCOCR uses PaddleOCR 2.9.1 with CTC decoding as the primary engine. CTC heads emit
+        per-frame character probabilities and use a deterministic collapse function to map them
+        to text. The decoder <strong>cannot synthesize tokens</strong> that have no probability
+        mass somewhere in the input — a property that generative decoders do not share.
+      </p>
+      <p>The fallback chain is also generative-free:</p>
+      <ol>
+        <li><strong>PaddleOCR</strong> (CTC) — primary</li>
+        <li><strong>Tesseract</strong> (LSTM + CTC) — fallback</li>
+        <li><strong>Image-only preservation</strong> — final fallback</li>
+      </ol>
+      <p>
+        There is no generative LLM substitution in the core OCR loop. The opt-in translation
+        suite (Section 7) is the only place generative models touch the pipeline, and it is
+        gated by feature flags, custody events, and per-tenant policy.
+      </p>
+
+      <h3 id="principles-image">2.2 Forensic Image Preservation</h3>
+      <p>
+        If all OCR engines fail on a page, EDCOCR does <strong>not</strong> discard it. Instead,
+        the rasterized page image is embedded directly into the final PDF, ensuring the
+        document is always recoverable. The custody log records the failure with the original
+        image hash, so reviewers know which pages need manual handling.
+      </p>
+      <p>This is the inverse of cloud OCR APIs, which typically drop unreadable pages from output.</p>
+
+      <h3 id="principles-custody">2.3 Hash-Chained Custody Log</h3>
+      <p>
+        Every operation — file ingestion, page OCR completion, language detection, classification,
+        transform, stamp, output finalization — emits a custody event. Each event records:
+      </p>
+      <ul>
+        <li>Operation type (e.g., <code>PAGE_OCR_OK</code>, <code>LANGUAGE_DETECTED</code>, <code>BATES_STAMP_APPLIED</code>)</li>
+        <li>Timestamp (ISO 8601)</li>
+        <li>Job ID, page index, tenant ID</li>
+        <li>Operation-specific payload (model version, DPI, confidence, bbox)</li>
+        <li>SHA-256 of the previous event</li>
+      </ul>
+      <p>
+        Tampering with any event breaks the hash chain at that point and every event after,
+        making post-hoc modification detectable. The log is written as JSONL
+        (newline-delimited JSON) — append-only, easy to ship to external SIEM, and trivially diffable.
+      </p>
+
+      <div class="diagram">
+        <div class="diagram-title">Hash chain visualization</div>
+        <div class="mermaid">
+flowchart LR
+  e1[Event N<br>prev: H<sub>n-1</sub>] -- SHA-256 --> e2[Event N+1<br>prev: H<sub>n</sub>]
+  e2 -- SHA-256 --> e3[Event N+2<br>prev: H<sub>n+1</sub>]
+  e3 -- SHA-256 --> e4[Event N+3<br>prev: H<sub>n+2</sub>]
+  style e1 fill:#1a2236,stroke:#0ea5e9
+  style e2 fill:#1a2236,stroke:#10b981
+  style e3 fill:#1a2236,stroke:#f59e0b
+  style e4 fill:#1a2236,stroke:#8b5cf6
+        </div>
+      </div>
+
+      <h3 id="principles-determinism">2.4 Deterministic Behavior</h3>
+      <p>
+        Given the same input file, model versions, and configuration, EDCOCR produces
+        byte-identical output (modulo timestamps in the custody log). This is enforced through:
+      </p>
+      <ul>
+        <li>Fixed PaddleOCR model checkpoints (no live model swaps)</li>
+        <li>Pinned dependency versions</li>
+        <li>Deterministic page chunking (path-hash based)</li>
+        <li>Stable language detection (FastText with fixed seed)</li>
+      </ul>
+
+      <h3 id="principles-backpressure">2.5 Backpressure as a Feature</h3>
+      <p>
+        The pipeline uses bounded queues at every stage. When a downstream stage falls behind,
+        upstream stages block rather than dropping work. This trades latency for guaranteed
+        completion — the appropriate trade for batch document workflows.
+      </p>
+
+      <h2 id="architecture"><span class="num">3</span>Architecture</h2>
+
+      <h3 id="arch-pipeline">3.1 Producer-Consumer Pipeline</h3>
+      <p>The monolithic pipeline runs six stages concurrently:</p>
+
+      <table>
+        <thead>
+          <tr><th>Stage</th><th style="text-align:right;">Threads</th><th>Function</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1. Scheduler</td><td style="text-align:right;">1</td><td>Scans <code>ocr_source/</code>, creates chunk tasks, handles page-level resume</td></tr>
+          <tr><td>2. CPU Extractors</td><td style="text-align:right;">8</td><td>PDF/image → PIL images at 300 DPI</td></tr>
+          <tr><td>3. GPU Workers</td><td style="text-align:right;">12</td><td>PaddleOCR → Tesseract fallback → image-only fallback</td></tr>
+          <tr><td>4. Assembler</td><td style="text-align:right;">1</td><td>Collects pages via document registry, merges into final PDF + sidecars</td></tr>
+          <tr><td>5. Compressors</td><td style="text-align:right;">8</td><td>Ghostscript optimization with integrity validation</td></tr>
+          <tr><td>6. Monitor</td><td style="text-align:right;">1 (daemon)</td><td>Real-time metrics + healthcheck heartbeat</td></tr>
+        </tbody>
+      </table>
+
+      <p>Queues:</p>
+      <ul>
+        <li><code>chunk_queue</code> — Scheduler → Extractors</li>
+        <li><code>image_queue</code> — Extractors → Workers (size 200, ≈ 4 GB RAM budget)</li>
+        <li><code>assembly_queue</code> — Workers → Assembler</li>
+        <li><code>compression_queue</code> — Assembler → Compressors</li>
+      </ul>
+
+      <p>
+        This is implemented in <code>ocr_gpu_async.py</code>. The threading model (not asyncio)
+        is intentional — the workload is CPU/GPU-bound, not I/O-bound, and threading minimizes
+        context-switching overhead.
+      </p>
+
+      <h3 id="arch-distributed">3.2 Distributed Topology</h3>
+      <p>
+        For horizontal scale, the pipeline runs as a Django coordinator + Celery worker fleet:
+      </p>
+
+      <div class="diagram">
+        <div class="diagram-title">Distributed topology</div>
+        <div class="mermaid">
+flowchart TB
+  client[Client / SDK] --> api[FastAPI / Django<br>Job submission + WS/SSE]
+  api --> pg[(PostgreSQL<br>Job state)]
+  api --> rmq[(RabbitMQ<br>quorum queues)]
+  api --> redis[(Redis Sentinel<br>cache + streams)]
+  rmq -- ocr_gpu --> gpu_workers[GPU OCR Workers<br>PaddleOCR + Tesseract]
+  rmq -- ocr_cpu --> cpu_workers[CPU OCR Workers<br>ONNX Runtime]
+  rmq -- ocr_nlp --> nlp_workers[NLP Workers<br>NER + Classify]
+  gpu_workers -.heartbeat.-> api
+  cpu_workers -.heartbeat.-> api
+  nlp_workers -.heartbeat.-> api
+  style api fill:#0ea5e9,color:#fff
+  style gpu_workers fill:#10b981,color:#fff
+  style cpu_workers fill:#f59e0b,color:#fff
+  style nlp_workers fill:#8b5cf6,color:#fff
+        </div>
+      </div>
+
+      <p>
+        Workers register their capabilities on startup; the coordinator routes tasks based on
+        registered capability. KEDA autoscaling tracks queue depth and scales worker replica
+        counts dynamically.
+      </p>
+
+      <h3 id="arch-storage">3.3 Storage Abstraction</h3>
+      <p>The platform supports three storage backends through a unified interface:</p>
+      <table>
+        <thead>
+          <tr><th>Backend</th><th>Use Case</th><th>Worker Access Pattern</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Local filesystem</td><td>Single-machine, testing</td><td>Direct path</td></tr>
+          <tr><td>NFS</td><td>Multi-worker, on-prem</td><td>Shared mount</td></tr>
+          <tr><td>S3 / MinIO</td><td>Cloud-native, credential-free workers</td><td>Presigned URLs</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Workers in S3 mode receive presigned URLs from the coordinator and never see AWS
+        credentials, simplifying multi-tenant deployments.
+      </p>
+
+      <h3 id="arch-observability">3.4 Observability</h3>
+      <table>
+        <thead>
+          <tr><th>Layer</th><th>Component</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Metrics</td><td>Prometheus (<code>/api/v1/prometheus/</code>)</td><td>7 metric families, per-tenant cost/SLA gauges</td></tr>
+          <tr><td>Dashboards</td><td>Grafana (53 panels)</td><td>Queue depth, throughput, p50/95/99, GPU/CPU, fleet status</td></tr>
+          <tr><td>Alerts</td><td>PrometheusRule (5 rules)</td><td>Queue saturation, error rate, worker offline</td></tr>
+          <tr><td>Traces</td><td>OpenTelemetry</td><td>End-to-end job span propagation</td></tr>
+          <tr><td>Logs</td><td>Structured JSON</td><td>Stdout (Docker) + per-job NDJSON</td></tr>
+          <tr><td>Audit</td><td>Hash-chained JSONL</td><td>Custody events, immutable</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="output-schema"><span class="num">4</span>Output Schema</h2>
+      <p>
+        Every job produces a structured set of artifacts under
+        <code>ocr_output/EXPORT/&lt;family&gt;/&lt;subfolder&gt;/&lt;document&gt;.&lt;ext&gt;</code>:
+      </p>
+
+      <table>
+        <thead>
+          <tr><th>Family</th><th>Format</th><th>Contents</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>PDF/</code></td><td>PDF</td><td>Searchable PDF with embedded OCR text layer</td></tr>
+          <tr><td><code>TEXT/</code></td><td>.txt</td><td>Plain text extraction</td></tr>
+          <tr><td><code>STRUCTURE/</code></td><td>JSON</td><td>Layout regions, table cells (HTML), figure positions</td></tr>
+          <tr><td><code>NER/</code></td><td>JSON</td><td>Named entities — CASE_NUMBER, BATES_NUMBER, PERSON, ORG</td></tr>
+          <tr><td><code>ENTITIES/</code></td><td>JSON</td><td>Consolidated entity index across pages</td></tr>
+          <tr><td><code>CLASSIFICATION/</code></td><td>JSON</td><td>Document type with confidence</td></tr>
+          <tr><td><code>EXTRACTION/</code></td><td>JSON</td><td>Structured fields — dates, amounts, addresses</td></tr>
+          <tr><td><code>HANDWRITING/</code></td><td>JSON</td><td>Handwriting regions with confidence</td></tr>
+          <tr><td><code>SIGNATURE/</code></td><td>JSON</td><td>Signature detection (advisory)</td></tr>
+          <tr><td><code>VERTICAL/</code></td><td>JSON</td><td>CJK vertical text reading order</td></tr>
+          <tr><td><code>LANGUAGE/</code></td><td>JSON</td><td>Per-span language with BCP-47 tags</td></tr>
+          <tr><td><code>VALIDATION/</code></td><td>JSON</td><td>Per-page confidence + quality classification</td></tr>
+          <tr><td><code>RETRIEVAL/</code></td><td>JSON + MD</td><td>Unified retrieval format for downstream search</td></tr>
+          <tr><td>Custody log</td><td>JSONL</td><td>Hash-chained audit events</td></tr>
+        </tbody>
+      </table>
+      <p>Each family has a JSON Schema definition in <code>schemas/</code>, ensuring consumers can validate output structure.</p>
+
+      <h2 id="languages"><span class="num">5</span>Languages</h2>
+      <p>EDCOCR ships with a tiered language registry — 45 languages organized into two tiers:</p>
+
+      <h3>Core (34 languages, default, air-gapped ready)</h3>
+      <ul>
+        <li><strong>Latin:</strong> en, fr, de, es, it, pt, nl, sv, da, fi, ro, pl, cs, hu, tr, vi</li>
+        <li><strong>Cyrillic:</strong> ru, uk, be, bg</li>
+        <li><strong>CJK:</strong> ch (Simplified), chinese_cht (Traditional), japan, korean</li>
+        <li><strong>Arabic / RTL:</strong> ar, fa, ur, ug</li>
+        <li><strong>Indic:</strong> hi, ta, te, kn</li>
+        <li><strong>Other:</strong> el (Greek), ka (Georgian)</li>
+      </ul>
+
+      <h3>Extended (+11 languages, opt-in via <code>OCR_LANGUAGE_TIERS=core,extended</code>)</h3>
+      <ul>
+        <li><strong>Latin:</strong> hr, sk, no, lt, lv, et, rs_latin</li>
+        <li><strong>Indic:</strong> bn (Bengali), mr (Marathi), ne (Nepali)</li>
+        <li><strong>Southeast Asian:</strong> th (Thai)</li>
+      </ul>
+
+      <p>
+        Language selection is two-pass: FastText runs first on a quick text sample, the
+        best-matching PaddleOCR model is loaded, and detection re-runs on extracted text to
+        catch mixed-script pages. Per-span detection (opt-in via
+        <code>ENABLE_PER_SPAN_LANGUAGE=true</code>) emits a <code>.language.json</code> sidecar
+        with BCP-47 tags at line, page, and document levels.
+      </p>
+
+      <h2 id="security"><span class="num">6</span>Security Posture</h2>
+      <table>
+        <thead><tr><th>Control</th><th>Implementation</th></tr></thead>
+        <tbody>
+          <tr><td>Container hardening</td><td>All 6 Dockerfiles non-root (UID 1000), capabilities dropped, seccomp default</td></tr>
+          <tr><td>Authentication</td><td>X-API-Key header (default), optional OIDC Bearer</td></tr>
+          <tr><td>Rate limiting</td><td>slowapi per-endpoint, per-tenant limits</td></tr>
+          <tr><td>Per-tenant isolation</td><td>Tenant ID flows through every API, DB filter, and output path</td></tr>
+          <tr><td>Webhook secrets</td><td>Fernet-encrypted at rest, key from <code>WEBHOOK_SECRET_KEY</code></td></tr>
+          <tr><td>SSRF protection</td><td>Outbound URL allowlist; metadata IPs blocked</td></tr>
+          <tr><td>Subprocess timeouts</td><td>Ghostscript 300s, Tesseract 120s, Poppler 300s</td></tr>
+          <tr><td>OpenAPI docs gating</td><td><code>EXPOSE_API_DOCS=false</code> by default; prevents endpoint enumeration</td></tr>
+          <tr><td>Audit logging</td><td>Hash-chained JSONL; masked API key in request audit log</td></tr>
+          <tr><td>Database security</td><td>SQLite 0o600 perms; PostgreSQL backup CronJob; Redis Sentinel HA</td></tr>
+          <tr><td>Request size limit</td><td>413 on oversized non-multipart bodies, configurable</td></tr>
+          <tr><td>WS idle timeout</td><td>Idle connection close; max connection age cap</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="translation"><span class="num">7</span>Translation Suite (Opt-In)</h2>
+      <p>
+        EDCOCR includes a pluggable translation layer that operates downstream of OCR.
+        All translation is feature-gated and defaults OFF.
+      </p>
+
+      <h3 id="translation-engines">7.1 Engine Adapters</h3>
+      <table>
+        <thead><tr><th>Engine</th><th>License</th><th>Default</th></tr></thead>
+        <tbody>
+          <tr><td>OPUS-MT</td><td>Apache 2.0</td><td>Recommended for commercial use</td></tr>
+          <tr><td>MADLAD-400</td><td>Apache 2.0</td><td>Recommended quality tier</td></tr>
+          <tr><td>NLLB-200</td><td>CC-BY-NC-4.0</td><td>Opt-in via <code>allow_nc_licensed=True</code></td></tr>
+          <tr><td>LLM tier (Ollama / vLLM / OpenAI-compatible)</td><td>varies</td><td>Opt-in, operator-managed endpoints</td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="translation-policy">7.2 Policy Controls</h3>
+      <ul>
+        <li>Per-tenant <code>allow_nc_licensed</code> flag (NC license routing)</li>
+        <li>Privilege-blocked content (legal privilege keywords) never routes to cloud generative engines</li>
+        <li>Custody event on every engine selection (<code>MODEL_SELECTED</code>) and every translation (<code>TRANSLATION_COMPLETED</code> or <code>TRANSLATION_REJECTED</code>)</li>
+        <li>Certification gated behind strong-auth review (PIV/CAC, OIDC MFA, hardware token)</li>
+        <li>Generative translations are tagged <code>is_generative=true</code> in the sidecar</li>
+      </ul>
+
+      <h3 id="translation-boundary">7.3 Forensic Integrity</h3>
+      <p>
+        The forensic-core (OCR pipeline) and AI-adjacent (translation, summarization) capability
+        classes are separated by a contract documented at
+        <a href="../docs/architecture/forensic-ai-boundary-contract.md">architecture/forensic-ai-boundary-contract.md</a>.
+        A boundary validator (<code>scripts/validate_feature_boundary.py</code>) enforces:
+      </p>
+      <ul>
+        <li>Language detection isolation from translation routing</li>
+        <li>Certified-translation filter at write time</li>
+        <li>Plugin signature validation</li>
+      </ul>
+
+      <h2 id="deployment"><span class="num">8</span>Deployment</h2>
+
+      <h3 id="deploy-docker">8.1 Single Machine (Docker)</h3>
+      <div class="pre-wrapper">
+<pre><code>git clone https://github.com/mattmre/EDCOCR-PUBLIC.git
+cd EDCOCR-PUBLIC
+docker compose up -d --build</code></pre>
+      </div>
+      <p>Source documents go in <code>ocr_source/</code>; results land in <code>ocr_output/EXPORT/</code>.</p>
+
+      <h3 id="deploy-k8s">8.2 Kubernetes (Helm)</h3>
+      <div class="pre-wrapper">
+<pre><code>helm install edcocr helm/ocr-local/ \
+  -f values-secret.yaml \
+  --namespace edcocr \
+  --create-namespace</code></pre>
+      </div>
+      <p>The chart ships 26 templates including:</p>
+      <ul>
+        <li>GPU/CPU worker deployments with KEDA autoscalers</li>
+        <li>PostgreSQL + RabbitMQ + Redis StatefulSets (with optional Sentinel HA)</li>
+        <li>Prometheus ServiceMonitor + PrometheusRule + Grafana dashboard ConfigMap</li>
+        <li>PodDisruptionBudgets, NetworkPolicies, and a configurable Ingress</li>
+      </ul>
+
+      <h3 id="deploy-airgap">8.3 Air-Gapped</h3>
+      <div class="pre-wrapper">
+<pre><code>./scripts/airgap-bundle.sh    # On a connected host
+# (transfer the bundle to the isolated host)
+./scripts/airgap-deploy.sh    # On the isolated host</code></pre>
+      </div>
+      <p>
+        The bundle includes all Docker images, pre-baked models (PaddleOCR + FastText + LayoutLMv3),
+        and Helm charts. No outbound calls are made at runtime.
+      </p>
+
+      <h3 id="deploy-multicloud">8.4 Multi-Cloud (Terraform)</h3>
+      <p>
+        Terraform modules ship for AWS EKS, GCP GKE, and Oracle OKE under <code>terraform/</code>.
+        Each module provisions the cluster, configures KEDA, and renders the Helm release with
+        environment-specific values.
+      </p>
+
+      <h2 id="performance"><span class="num">9</span>Performance Characteristics</h2>
+
+      <table>
+        <thead>
+          <tr><th>Configuration</th><th style="text-align:right;">GPU Workers</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>16 GB VRAM</td><td style="text-align:right;">8–12</td><td>Default for consumer GPUs (RTX 4080 / A5000)</td></tr>
+          <tr><td>24 GB VRAM</td><td style="text-align:right;">12–16</td><td>RTX 4090 / A6000 sweet spot</td></tr>
+          <tr><td>48 GB VRAM</td><td style="text-align:right;">16–24</td><td>A100 / H100 maximum density</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        CPU-only deployments (ONNX Runtime backend) achieve 4–7× speedup over the PaddleOCR
+        default Python backend, making meaningful throughput available without GPU hardware.
+      </p>
+
+      <p>
+        Adaptive DPI escalation auto-retries low-confidence pages at 450 and 600 DPI;
+        adaptive batch sizing scales batch dimensions to page complexity.
+      </p>
+
+      <h2 id="non-goals"><span class="num">10</span>What EDCOCR Is Not</h2>
+      <p>To set expectations clearly:</p>
+      <ul>
+        <li><strong>Not a document review platform.</strong> EDCOCR extracts text and structure; downstream review happens in your platform of choice.</li>
+        <li><strong>Not a generative document understanding system.</strong> There is no "summarize this contract" endpoint in the core. Optional VLM and LLM integrations exist behind feature flags, but they are sidecars, not the main loop.</li>
+        <li><strong>Not a hosted service.</strong> EDCOCR is software you run. There is no SaaS endpoint operated by the project maintainers.</li>
+        <li><strong>Not Cloud-API-equivalent.</strong> Cloud OCR APIs may have higher accuracy on specific document types where they have trained extensively. EDCOCR optimizes for defensibility, auditability, and air-gap deployment instead.</li>
+      </ul>
+
+      <h2 id="versioning"><span class="num">11</span>Versioning and Stability</h2>
+      <p>
+        EDCOCR follows semantic versioning. The 2.x line guarantees REST API compatibility within
+        the major version. Output schemas are versioned independently, and migration guides
+        accompany schema-breaking releases.
+      </p>
+      <p>
+        The SDK packages (<code>edcocr-sdk</code> for Python, <code>@edcocr/sdk</code> for TypeScript)
+        are versioned in lockstep with the server.
+      </p>
+      <p>
+        See <a href="../docs/SDK-VERSIONING-POLICY.md">SDK-VERSIONING-POLICY.md</a> and
+        <a href="../docs/api-stability-contract.md">api-stability-contract.md</a> for the complete policy.
+      </p>
+
+      <h2 id="references"><span class="num">12</span>References</h2>
+      <ul>
+        <li><a href="../docs/00-SYSTEM-BLUEPRINT.md">00-SYSTEM-BLUEPRINT.md</a> — System overview</li>
+        <li><a href="../docs/01-TECH-STACK-DNA.md">01-TECH-STACK-DNA.md</a> — Tech stack</li>
+        <li><a href="../docs/03-INFORMATION-FLOWS.md">03-INFORMATION-FLOWS.md</a> — Data flow diagrams</li>
+        <li><a href="../docs/architecture/pipeline-design.md">architecture/pipeline-design.md</a> — Pipeline internals</li>
+        <li><a href="../docs/architecture/forensic-ai-boundary-contract.md">architecture/forensic-ai-boundary-contract.md</a> — Forensic-AI boundary</li>
+        <li><a href="../docs/API-REFERENCE.md">API-REFERENCE.md</a> — Full API reference</li>
+        <li><a href="../docs/forensic/evidence-bundle-specification.md">forensic/evidence-bundle-specification.md</a> — Evidence bundle spec</li>
+        <li><a href="../docs/compliance/">compliance/</a> — Compliance readiness matrices</li>
+      </ul>
+
+      <div class="wp-callout">
+        EDCOCR is open source under the Apache 2.0 license. The project is published at
+        <a href="https://github.com/mattmre/EDCOCR-PUBLIC">github.com/mattmre/EDCOCR-PUBLIC</a>.
+        Contributions welcome — see <a href="../CONTRIBUTING.md">CONTRIBUTING.md</a>.
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-links">
+      <a href="index.html">Overview</a>
+      <a href="executive-summary.html">Executive Summary</a>
+      <a href="technical-brief.html">Tech Brief</a>
+      <a href="use-cases.html">Use Cases</a>
+      <a href="https://github.com/mattmre/EDCOCR-PUBLIC">GitHub</a>
+    </div>
+    <p>EDCOCR v4.1.0 &middot; Apache 2.0 &middot; Built for evidence.</p>
+  </div>
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      primaryColor: '#1a2236',
+      primaryTextColor: '#e6edf3',
+      primaryBorderColor: '#2a3654',
+      lineColor: '#0ea5e9',
+      secondaryColor: '#121829',
+      tertiaryColor: '#0d1424',
+      background: '#0a0e1a',
+      mainBkg: '#1a2236',
+      secondBkg: '#121829',
+      fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif'
+    }
+  });
+</script>
+
+</body>
+</html>

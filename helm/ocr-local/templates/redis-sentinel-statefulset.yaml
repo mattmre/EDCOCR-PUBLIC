@@ -1,0 +1,200 @@
+{{- if and .Values.redis.enabled .Values.redis.sentinel.enabled }}
+# =============================================================================
+# Redis Sentinel Headless Service
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-redis-sentinel
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-sentinel
+spec:
+  clusterIP: None
+  ports:
+    - name: sentinel
+      port: 26379
+      targetPort: sentinel
+      protocol: TCP
+  selector:
+    {{- include "ocr-local.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-sentinel
+---
+# =============================================================================
+# Redis Replica StatefulSet
+# =============================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-redis-replica
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-replica
+spec:
+  serviceName: {{ .Release.Name }}-redis-replica
+  replicas: {{ .Values.redis.sentinel.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis-replica
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis-replica
+    spec:
+      {{- with .Values.redis.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: redis-replica
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - >-
+              redis-server
+              --requirepass $(REDIS_PASSWORD)
+              --replicaof {{ .Release.Name }}-redis 6379
+              --masterauth $(REDIS_PASSWORD)
+              --appendonly yes
+              --maxmemory {{ .Values.redis.maxmemory }}
+              --maxmemory-policy {{ .Values.redis.maxmemoryPolicy }}
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: REDIS_PASSWORD
+          {{- with .Values.redis.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.redis.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - REDISCLI_AUTH=$REDIS_PASSWORD redis-cli ping | grep -q PONG
+            periodSeconds: 10
+            initialDelaySeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - REDISCLI_AUTH=$REDIS_PASSWORD redis-cli ping | grep -q PONG
+            periodSeconds: 10
+            initialDelaySeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: redis-replica-data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-replica-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- if .Values.redis.storageClass }}
+        storageClassName: {{ .Values.redis.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.redis.storage }}
+---
+# =============================================================================
+# Redis Sentinel StatefulSet
+# =============================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-redis-sentinel
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-sentinel
+spec:
+  serviceName: {{ .Release.Name }}-redis-sentinel
+  replicas: {{ .Values.redis.sentinel.sentinelReplicas | default 3 }}
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis-sentinel
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis-sentinel
+    spec:
+      {{- with .Values.redis.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: sentinel
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              cat > /tmp/sentinel.conf <<CONF
+              port 26379
+              sentinel monitor {{ .Values.redis.sentinel.masterName }} {{ .Release.Name }}-redis 6379 {{ .Values.redis.sentinel.quorum }}
+              sentinel auth-pass {{ .Values.redis.sentinel.masterName }} $(REDIS_PASSWORD)
+              sentinel down-after-milliseconds {{ .Values.redis.sentinel.masterName }} {{ .Values.redis.sentinel.downAfterMs }}
+              sentinel failover-timeout {{ .Values.redis.sentinel.masterName }} {{ .Values.redis.sentinel.failoverTimeoutMs }}
+              sentinel parallel-syncs {{ .Values.redis.sentinel.masterName }} 1
+              CONF
+              redis-sentinel /tmp/sentinel.conf
+          ports:
+            - name: sentinel
+              containerPort: 26379
+              protocol: TCP
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: REDIS_PASSWORD
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          {{- with .Values.redis.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli -p 26379 ping | grep -q PONG
+            periodSeconds: 10
+            initialDelaySeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli -p 26379 ping | grep -q PONG
+            periodSeconds: 10
+            initialDelaySeconds: 5
+            failureThreshold: 3
+{{- end }}

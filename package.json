@@ -1,0 +1,21 @@
+{
+  "name": "edcocr-playwright",
+  "private": true,
+  "description": "Playwright browser and request testing scaffold for EDCOCR.",
+  "scripts": {
+    "pw:install": "npx playwright install --with-deps chromium firefox",
+    "pw:test": "npx playwright test",
+    "pw:test:smoke": "npx playwright test --grep @smoke",
+    "pw:test:request": "npx playwright test --project=request-api",
+    "pw:test:feature-flags": "npx playwright test --project=feature-flags-api",
+    "pw:test:ops": "npx playwright test --project=ops-api",
+    "pw:test:browser": "npx playwright test --project=browser-api-docs --project=browser-admin",
+    "pw:summary": "python scripts/summarize_playwright_run.py",
+    "pw:report": "npx playwright show-report",
+    "pw:codegen": "npx playwright codegen"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.3",
+    "@playwright/test": "^1.60.0"
+  }
+}

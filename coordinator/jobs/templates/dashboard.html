@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EDCOCR Operator Dashboard</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 2rem; background: #f9fafb; color: #333; }
+        .card { background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1.5rem; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .stat { font-size: 2rem; font-weight: bold; color: #2563eb; }
+        .stat-label { font-size: 0.875rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { text-align: left; padding: 0.75rem; border-bottom: 1px solid #e5e7eb; }
+        th { color: #6b7280; font-weight: 600; }
+        .badge { padding: 0.25rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+        .bg-green { background: #d1fae5; color: #065f46; }
+        .bg-yellow { background: #fef3c7; color: #047857; }
+        .bg-red { background: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body>
+    <h1>EDCOCR Pipeline Dashboard</h1>
+
+    <div class="grid">
+        <div class="card">
+            <div class="stat">{{ jobs_total }}</div>
+            <div class="stat-label">Total Jobs</div>
+        </div>
+        <div class="card">
+            <div class="stat">{{ workers_online }}</div>
+            <div class="stat-label">Workers Online</div>
+        </div>
+        <div class="card">
+            <div class="stat">{{ pages_processed }}</div>
+            <div class="stat-label">Pages Processed</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Recent Jobs</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Job ID</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Pages</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for job in recent_jobs %}
+                <tr>
+                    <td>{{ job.id }}</td>
+                    <td>
+                        <span class="badge {% if job.status == 'completed' %}bg-green{% elif job.status == 'failed' %}bg-red{% else %}bg-yellow{% endif %}">
+                            {{ job.status }}
+                        </span>
+                    </td>
+                    <td>{{ job.created_at|date:"M d, H:i" }}</td>
+                    <td>{{ job.total_pages|default:"-" }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="4">No recent jobs found.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

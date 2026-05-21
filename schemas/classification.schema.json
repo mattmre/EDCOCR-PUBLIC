@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/classification.schema.json",
+  "title": "Document Classification Output",
+  "description": "Document classification sidecar with text rules, layout features, and optional ML ensemble results. Written to EXPORT/CLASSIFICATION/<subfolder>/<document_name>.classification.json.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for this output format."
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Unique document identifier."
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Source document filename."
+    },
+    "processing": {
+      "type": "object",
+      "description": "Classification processing metadata.",
+      "properties": {
+        "classification_engine": {
+          "type": "string",
+          "description": "Engine label: text_rules, layout_features, text_rules+layout_features, ml, or text_rules+layout_features+ml."
+        },
+        "pipeline_version": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["classification_engine", "pipeline_version", "timestamp"]
+    },
+    "document_summary": {
+      "type": "object",
+      "description": "Document-level classification result.",
+      "properties": {
+        "document_type": {
+          "type": "string",
+          "description": "Primary predicted document type (invoice, contract, letter, form, report, memo, receipt, handwritten, photograph, other)."
+        },
+        "document_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "type_distribution": {
+          "type": "object",
+          "description": "Fraction of pages classified as each type."
+        },
+        "document_type_scores": {
+          "type": "object",
+          "description": "Aggregate confidence scores per document type."
+        },
+        "document_labels": {
+          "type": "array",
+          "description": "Multi-label classification results.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": { "type": "string" },
+              "confidence": { "type": "number" },
+              "source": { "type": "string" }
+            }
+          }
+        },
+        "custom_profile_matches": {
+          "type": "array",
+          "description": "Matches from custom classification profiles.",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": ["document_type", "document_confidence", "type_distribution"]
+    },
+    "pages": {
+      "type": "array",
+      "description": "Per-page classification results.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page_num": { "type": "integer" },
+          "predicted_type": { "type": "string" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "method": {
+            "type": "string",
+            "description": "Classification method used for this page."
+          },
+          "type_scores": {
+            "type": "object",
+            "description": "Per-type confidence scores for this page."
+          },
+          "is_handwritten": { "type": "boolean" },
+          "profile_matches": {
+            "type": "array",
+            "items": { "type": "object" }
+          }
+        },
+        "required": ["page_num", "predicted_type", "confidence", "method"]
+      }
+    }
+  },
+  "required": ["schema_version", "document_id", "source_file", "processing", "document_summary", "pages"]
+}

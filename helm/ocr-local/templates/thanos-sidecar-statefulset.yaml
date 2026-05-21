@@ -1,0 +1,109 @@
+{{- if and .Values.observability .Values.observability.federation .Values.observability.federation.enabled }}
+{{- if eq .Values.observability.federation.mode "thanos_sidecar" }}
+{{- if .Values.observability.federation.thanos_sidecar.enabled }}
+# =============================================================================
+#  -- C3 Federated Observability (Thanos sidecar)
+#
+# The Thanos sidecar runs alongside Prometheus and uploads completed TSDB
+# blocks to object storage. The chart does NOT include Prometheus itself --
+# this StatefulSet is intended to be wired up next to an existing
+# prometheus-operator Prometheus pod (typically as an additional pod that
+# mounts the same TSDB PVC, or in Prometheus's `thanos:` field directly).
+#
+# This StatefulSet is the simpler "external sidecar" pattern: it runs a
+# standalone Thanos container that connects to a Prometheus reachable via
+# its in-cluster service and continuously uploads blocks. Use the operator's
+# native `Prometheus.spec.thanos` field if you want sidecar-as-init-container
+# semantics instead.
+#
+# Object storage configuration is read from a Secret referenced by
+# `observability.federation.thanos_sidecar.object_storage_secret_ref`.
+# That Secret MUST be present and populated BEFORE applying this manifest.
+# =============================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-thanos-sidecar
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: thanos-sidecar
+spec:
+  serviceName: {{ .Release.Name }}-thanos-sidecar
+  replicas: {{ .Values.observability.federation.thanos_sidecar.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: thanos-sidecar
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: thanos-sidecar
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: thanos-sidecar
+          image: {{ .Values.observability.federation.thanos_sidecar.image | quote }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - "sidecar"
+            - "--prometheus.url=http://prometheus-operated.monitoring.svc:9090"
+            - "--objstore.config-file=/etc/thanos/objstore.yaml"
+            - "--http-address=0.0.0.0:10902"
+            - "--grpc-address=0.0.0.0:10901"
+          ports:
+            - name: http
+              containerPort: 10902
+              protocol: TCP
+            - name: grpc
+              containerPort: 10901
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: OCR_CLUSTER_LABEL
+              value: {{ .Values.observability.federation.cluster_label | quote }}
+            {{- if .Values.observability.federation.region_label }}
+            - name: OCR_REGION_LABEL
+              value: {{ .Values.observability.federation.region_label | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: objstore-config
+              mountPath: /etc/thanos
+              readOnly: true
+          resources:
+            {{- with .Values.observability.federation.thanos_sidecar.resources }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: objstore-config
+          secret:
+            secretName: {{ .Values.observability.federation.thanos_sidecar.object_storage_secret_ref.name | quote }}
+            items:
+              - key: {{ .Values.observability.federation.thanos_sidecar.object_storage_secret_ref.key | quote }}
+                path: objstore.yaml
+{{- end }}
+{{- end }}
+{{- end }}

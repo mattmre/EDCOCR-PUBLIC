@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EDCOCR — Architecture Deck</title>
+  <link rel="stylesheet" href="assets/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    .toc {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin: 32px 0;
+    }
+    .toc ol {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      counter-reset: toc;
+    }
+    .toc li {
+      counter-increment: toc;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .toc li:last-child { border-bottom: none; }
+    .toc li::before {
+      content: counter(toc, decimal-leading-zero) ". ";
+      color: var(--accent);
+      font-family: var(--font-mono);
+      margin-right: 8px;
+    }
+    .toc a { color: var(--text); }
+    .toc a:hover { color: var(--accent); }
+    .arch-section h2 {
+      border-bottom: 2px solid var(--accent);
+      padding-bottom: 12px;
+      margin-bottom: 24px;
+    }
+    .arch-section { padding: 64px 0; border-bottom: 1px solid var(--border); }
+    .arch-section:last-child { border-bottom: none; }
+    .anchor-offset {
+      scroll-margin-top: 80px;
+    }
+  </style>
+</head>
+<body>
+
+<header class="header">
+  <div class="container header-inner">
+    <div class="logo">EDC<span class="accent">OCR</span></div>
+    <nav class="nav">
+      <a href="index.html">Overview</a>
+      <a href="slides.html">Slides</a>
+      <a href="#toc">Contents</a>
+      <a href="https://github.com/mattmre/EDCOCR-PUBLIC" class="hidden-mobile">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="container">
+    <h1>Architecture Walkthrough</h1>
+    <p class="lead" style="margin: 0 auto;">
+      Component-by-component tour of the EDCOCR platform. Diagrams are the
+      authoritative source; the prose is here to explain trade-offs.
+    </p>
+    <div class="badges">
+      <span class="badge">Version 4.1.0</span>
+      <span class="badge">Last updated: 2026-05-20</span>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <div class="toc" id="toc">
+      <h3 style="margin-bottom: 16px;">Contents</h3>
+      <ol>
+        <li><a href="#system-overview">System Overview</a></li>
+        <li><a href="#pipeline">Production Pipeline (6 Stages)</a></li>
+        <li><a href="#data-model">Coordinator Data Model</a></li>
+        <li><a href="#deployment">Deployment Topologies</a></li>
+        <li><a href="#storage">Storage Architecture</a></li>
+        <li><a href="#api">REST &amp; Realtime Surface</a></li>
+        <li><a href="#observability">Observability Stack</a></li>
+        <li><a href="#security">Security Architecture</a></li>
+        <li><a href="#custody">Chain of Custody</a></li>
+        <li><a href="#failure">Failure &amp; Resume Modes</a></li>
+        <li><a href="#translation">Translation Suite</a></li>
+        <li><a href="#performance">Performance Tuning Map</a></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- 1. System Overview -->
+<section class="arch-section anchor-offset" id="system-overview">
+  <div class="container">
+    <h2>1. System Overview</h2>
+    <p>
+      EDCOCR is a producer-consumer document processing platform with a single
+      production entry point (<code>ocr_gpu_async.py</code>) and three deployment shapes.
+      The platform is structured as a strict <strong>core forensic plane</strong>
+      (CTC OCR, custody log, output assembly) surrounded by <strong>AI-adjacent
+      extensions</strong> (NER, classification, structured extraction, translation).
+      The boundary is enforced by <code>scripts/validate_feature_boundary.py</code>.
+    </p>
+
+    <div class="diagram">
+      <div class="diagram-title">High-Level Component Map</div>
+      <div class="mermaid">
+flowchart TB
+  subgraph INPUT[Input Layer]
+    WATCH[File Watcher]
+    SFTP[SFTP Poller]
+    API_IN[REST API]
+    BATCH[Batch API]
+  end
+
+  subgraph CORE[Forensic Core Plane]
+    SCHED[Scheduler]
+    EXT[Extractors]
+    GPU[GPU Workers - PaddleOCR CTC]
+    ASM[Assembler]
+    CMP[Compressors]
+    CUST[Custody Log]
+  end
+
+  subgraph AI[AI-Adjacent Plane]
+    NER[NER spaCy]
+    CLS[Classifier]
+    XTR[Extractor PaddleNLP UIE]
+    HW[Handwriting]
+    SIG[Signature]
+    TRN[Translation]
+  end
+
+  subgraph OUTPUT[Output Layer]
+    PDF[PDF + Text]
+    JSON[Sidecar JSON]
+    EVENTS[Webhook/SSE/WS]
+  end
+
+  INPUT --> SCHED
+  SCHED --> EXT --> GPU --> ASM --> CMP --> OUTPUT
+  GPU -.-> AI
+  AI --> OUTPUT
+  GPU -.-> CUST
+  ASM -.-> CUST
+  CUST --> OUTPUT
+
+  style CORE fill:#0a1f2e,stroke:#0ea5e9
+  style AI fill:#1f1a2e,stroke:#8b5cf6
+      </div>
+    </div>
+
+    <p class="text-dim">
+      The split matters because forensic workflows can accept the CTC OCR result
+      as evidentiary, but the AI-adjacent outputs (NER, classification, etc.)
+      are always advisory and require human review before use as evidence.
+    </p>
+  </div>
+</section>
+
+<!-- 2. Pipeline -->
+<section class="arch-section anchor-offset" id="pipeline">
+  <div class="container">
+    <h2>2. Production Pipeline (6 Stages)</h2>
+    <p>
+      The async pipeline runs six stages concurrently, with bounded queues between
+      them providing backpressure. All work is doc/page-granular so a crash never
+      loses more than one page of progress.
+    </p>
+
+    <div class="diagram">
+      <div class="diagram-title">Stage Detail with Queue Bounds</div>
+      <div class="mermaid">
+flowchart LR
+  S[Scheduler] -->|chunk_queue<br>maxsize=50| EX[Extractors x8]
+  EX -->|image_queue<br>maxsize=200| GW[GPU Workers x12]
+  GW -->|page_queue<br>unbounded| AS[Assembler]
+  AS -->|compression_queue<br>unbounded| CP[Compressors x8]
+  CP --> OUT[Final PDFs]
+
+  MON[Monitor daemon] -.heartbeat.-> HC[Healthcheck]
+  GW -.metrics.-> MON
+  AS -.metrics.-> MON
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Stage</th>
+          <th>Threads</th>
+          <th>Responsibility</th>
+          <th>Output</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1. Scheduler</td>
+          <td>1</td>
+          <td>Scan source, hash path -&gt; doc_id, create chunk tasks, page-level resume</td>
+          <td>Chunk tasks</td>
+        </tr>
+        <tr>
+          <td>2. Extractors</td>
+          <td>8</td>
+          <td>PDF/image -&gt; PIL @ 300 DPI, image preprocessing if degraded</td>
+          <td>PIL image batches</td>
+        </tr>
+        <tr>
+          <td>3. GPU Workers</td>
+          <td>12</td>
+          <td>PaddleOCR detection + recognition, language model swap, Tesseract fallback, NER + classify + extract</td>
+          <td>Page result + custody event</td>
+        </tr>
+        <tr>
+          <td>4. Assembler</td>
+          <td>1</td>
+          <td>doc_registry merge, finalize PDF, emit sidecar JSON (10+ schemas)</td>
+          <td>Final PDF + sidecars</td>
+        </tr>
+        <tr>
+          <td>5. Compressors</td>
+          <td>8</td>
+          <td>Ghostscript optimization, integrity validation, atomic rename</td>
+          <td>Deliverable PDFs</td>
+        </tr>
+        <tr>
+          <td>6. Monitor</td>
+          <td>1 daemon</td>
+          <td>Heartbeat, PPM metrics, healthcheck file write</td>
+          <td>Liveness signal</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="text-dim">
+      Defaults assume a single 16-24GB GPU. Scale <code>NUM_WORKERS</code> based on
+      VRAM; the other knobs follow throughput tuning.
+    </p>
+  </div>
+</section>
+
+<!-- 3. Data Model -->
+<section class="arch-section anchor-offset" id="data-model">
+  <div class="container">
+    <h2>3. Coordinator Data Model</h2>
+    <p>
+      In distributed mode, the Django coordinator persists job state to PostgreSQL.
+      The schema is intentionally narrow: enough to coordinate workers and answer
+      "where is my document?" without becoming an evidence store.
+    </p>
+
+    <div class="diagram">
+      <div class="diagram-title">Core Entity Relationships</div>
+      <div class="mermaid">
+erDiagram
+  TENANT ||--o{ JOB : owns
+  JOB ||--o{ PAGE_RESULT : has
+  JOB ||--o{ CUSTODY_EVENT : has
+  JOB ||--o{ PII_ENTITY : has
+  WORKER ||--o{ PAGE_RESULT : produced
+  WORKER {
+    string worker_id PK
+    string capability "ocr_gpu / ocr_cpu / nlp / compress"
+    string status "online / offline / draining"
+    datetime last_heartbeat
+  }
+  JOB {
+    uuid id PK
+    string tenant_id FK
+    string status "pending / processing / done / failed"
+    int priority "0..9"
+    datetime created_at
+    json settings
+  }
+  PAGE_RESULT {
+    uuid id PK
+    uuid job_id FK
+    int page_number
+    float confidence
+    string quality "high / medium / low"
+    string engine "paddleocr / tesseract / image-only"
+  }
+  CUSTODY_EVENT {
+    uuid id PK
+    uuid job_id FK
+    string event_type
+    string prev_hash "SHA-256"
+    string this_hash "SHA-256"
+    datetime timestamp
+    json payload
+  }
+      </div>
+    </div>
+
+    <p class="text-dim">
+      Notably absent: an OCR text column. Extracted text lives in the output
+      filesystem (NFS or S3), not in the coordinator DB. Keeps the DB small,
+      the deliverable canonical, and recovery from a failed coordinator simple.
+    </p>
+  </div>
+</section>
+
+<!-- 4. Deployment -->
+<section class="arch-section anchor-offset" id="deployment">
+  <div class="container">
+    <h2>4. Deployment Topologies</h2>
+    <p>
+      Three deployment patterns, same container image, same OCR logic.
+    </p>
+
+    <div class="grid grid-3" style="margin: 32px 0;">
+      <div class="card">
+        <h3 class="text-accent">Single Machine</h3>
+        <p>One container, GPU optional, watches a folder. Fits on a workstation.</p>
+        <p class="text-dim">Best for: pilot, dev, small teams, &lt; 10k pages/day.</p>
+      </div>
+      <div class="card">
+        <h3 class="text-accent-2">Distributed (K8s)</h3>
+        <p>Coordinator + N workers, KEDA-driven autoscaling on queue depth.</p>
+        <p class="text-dim">Best for: production, multi-tenant, &gt; 10k pages/day.</p>
+      </div>
+      <div class="card">
+        <h3 class="text-accent-3">Air-Gapped</h3>
+        <p>Bundled artifact, no outbound traffic, models pre-baked.</p>
+        <p class="text-dim">Best for: SCIF, classified, regulated environments.</p>
+      </div>
+    </div>
+
+    <div class="diagram">
+      <div class="diagram-title">Distributed Topology</div>
+      <div class="mermaid">
+flowchart TB
+  subgraph EXT[External]
+    USERS[Users / API Clients]
+    INGRESS[Ingress / Load Balancer]
+  end
+
+  subgraph CTRL[Control Plane]
+    COORD[Django Coordinator x2]
+    BEAT[Celery Beat x1]
+  end
+
+  subgraph DATA[Data Plane]
+    PG[(PostgreSQL<br>Primary + Backup CronJob)]
+    RMQ[(RabbitMQ<br>Quorum Queues)]
+    REDIS[(Redis + Sentinel)]
+  end
+
+  subgraph WORK[Worker Plane]
+    GPU1[GPU Worker 1]
+    GPU2[GPU Worker 2]
+    GPUN[GPU Worker N]
+    CPU1[CPU Worker 1]
+    NLP1[NLP Worker]
+  end
+
+  subgraph STORE[Storage]
+    NFS[NFS]
+    S3[S3 / MinIO]
+  end
+
+  USERS --> INGRESS --> COORD
+  COORD <--> PG
+  COORD <--> REDIS
+  COORD --> RMQ
+  BEAT --> RMQ
+  RMQ --> GPU1 & GPU2 & GPUN & CPU1 & NLP1
+  GPU1 & GPU2 & GPUN & CPU1 & NLP1 --> NFS
+  GPU1 & GPU2 & GPUN & CPU1 & NLP1 --> S3
+  GPU1 & GPU2 & GPUN & CPU1 & NLP1 -.heartbeat.-> COORD
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 5. Storage -->
+<section class="arch-section anchor-offset" id="storage">
+  <div class="container">
+    <h2>5. Storage Architecture</h2>
+    <p>
+      Dual NFS/S3 backend. Workers see paths or presigned URLs uniformly through
+      <code>jobs/storage.py</code>. Migration between backends is non-destructive
+      and supports resume via SHA-256 checksum verification.
+    </p>
+
+    <div class="diagram">
+      <div class="diagram-title">Storage Backend Abstraction</div>
+      <div class="mermaid">
+flowchart LR
+  W[Worker] --> SA[storage.py<br>Backend Abstraction]
+  SA --> NFS_B[NFS Backend]
+  SA --> S3_B[S3 / MinIO Backend]
+  NFS_B --> NFS_FS[NFS Mount]
+  S3_B --> PRES[Presigned URL Generator]
+  PRES --> S3_BUCKET[S3 / MinIO Bucket]
+
+  style SA fill:#0ea5e9,color:#fff
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Concern</th>
+          <th>NFS</th>
+          <th>S3 / MinIO</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Worker credentials</td><td>None (volume mount)</td><td>Presigned URL (no creds)</td></tr>
+        <tr><td>Multi-region</td><td>No</td><td>Yes</td></tr>
+        <tr><td>Air-gap friendly</td><td>Yes</td><td>Yes (MinIO on-prem)</td></tr>
+        <tr><td>Lifecycle policies</td><td>Manual</td><td>Native</td></tr>
+        <tr><td>Best for</td><td>Single-DC, simple</td><td>Multi-DC, regulated</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 6. API -->
+<section class="arch-section anchor-offset" id="api">
+  <div class="container">
+    <h2>6. REST &amp; Realtime Surface</h2>
+    <p>
+      FastAPI server with API-key auth, rate limiting, request size limits,
+      and three real-time channels: WebSocket per job, SSE for fleet events,
+      and HMAC-signed webhook delivery.
+    </p>
+
+    <div class="diagram">
+      <div class="diagram-title">API Request Lifecycle</div>
+      <div class="mermaid">
+sequenceDiagram
+  participant C as Client
+  participant A as Auth Middleware
+  participant R as Rate Limiter
+  participant J as Job Manager
+  participant Q as Celery Queue
+  participant W as Worker
+  participant WH as Webhook Engine
+
+  C->>A: POST /api/v1/jobs
+  A->>A: Verify X-API-Key
+  A->>R: Check rate limit
+  R->>J: Submit job
+  J->>J: Validate, persist
+  J->>Q: Enqueue
+  J-->>C: 201 + job_id
+  Q->>W: Dispatch
+  W->>W: Process
+  W->>J: Update status
+  J->>WH: Trigger webhook
+  WH->>C: HMAC-signed POST
+      </div>
+    </div>
+
+    <p>
+      <strong>Endpoint families:</strong> jobs (CRUD + retry), outputs (manifest +
+      download), recall (entity / extraction search), review (human review queue),
+      health (liveness + detailed), metrics (Prometheus). All endpoints are
+      tenant-scoped.
+    </p>
+  </div>
+</section>
+
+<!-- 7. Observability -->
+<section class="arch-section anchor-offset" id="observability">
+  <div class="container">
+    <h2>7. Observability Stack</h2>
+
+    <div class="diagram">
+      <div class="diagram-title">Telemetry Flow</div>
+      <div class="mermaid">
+flowchart LR
+  P[Pipeline + API] -->|stdlib logging| LOG[Structured JSON Logs]
+  P -->|prometheus_client| PROM[Prometheus]
+  P -->|OpenTelemetry SDK| OTEL[OTel Collector]
+  PROM --> GRAF[Grafana - 53 Panel Dashboard]
+  PROM --> ALRT[Alertmanager - 5 Rules]
+  OTEL --> TRACE[Jaeger / Tempo / etc.]
+  LOG --> FW[Fluentd / Promtail]
+  FW --> ESLOG[ES / Loki]
+
+  style PROM fill:#f59e0b,color:#000
+  style GRAF fill:#10b981,color:#fff
+      </div>
+    </div>
+
+    <div class="two-col" style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px;">
+      <div class="card">
+        <h3 class="text-accent">Metrics (7 families)</h3>
+        <p style="margin: 0;">
+          <code>ocr_pages_processed</code>, <code>ocr_job_duration_seconds</code>,
+          <code>ocr_queue_depth</code>, <code>ocr_worker_status</code>,
+          <code>ocr_gpu_utilization</code>, <code>ocr_cost_estimate_total</code>,
+          <code>ocr_sla_breach_total</code>.
+        </p>
+      </div>
+      <div class="card">
+        <h3 class="text-accent-2">Alerts (5 rules)</h3>
+        <p style="margin: 0;">
+          High queue depth, worker offline, GPU saturation,
+          coordinator unhealthy, SLA breach rate threshold.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 8. Security -->
+<section class="arch-section anchor-offset" id="security">
+  <div class="container">
+    <h2>8. Security Architecture</h2>
+
+    <div class="diagram">
+      <div class="diagram-title">Defense Layers</div>
+      <div class="mermaid">
+flowchart TB
+  subgraph N[Network Layer]
+    NP[NetworkPolicies]
+    IP[Ingress IP Allowlist]
+  end
+  subgraph T[Transport]
+    TLS[TLS Termination]
+    MTLS[Worker mTLS opt-in]
+  end
+  subgraph A[Application]
+    AUTH[API Key + secrets.compare_digest]
+    RL[Rate Limiter]
+    SZ[Request Size Limit]
+    SSRF[SSRF Filter]
+  end
+  subgraph D[Data]
+    ENC[Webhook Secrets Encrypted - Fernet]
+    SQL[ORM - No Raw SQL]
+    PERMS[SQLite 0o600]
+    TENANT[Per-Tenant Isolation]
+  end
+  subgraph C[Container]
+    NR[Non-Root UID 1000]
+    CAP[Capabilities Dropped]
+    SC[Seccomp Default]
+    RO[Read-Only Mounts]
+  end
+  subgraph AUDIT[Audit]
+    CUST[Hash-Chained Custody Log]
+    AUDIT_LOG[API Audit Middleware]
+  end
+
+  N --> T --> A --> D --> C
+  D -.-> AUDIT
+  A -.-> AUDIT
+      </div>
+    </div>
+
+    <table style="margin-top: 24px;">
+      <thead>
+        <tr><th>Threat</th><th>Mitigation</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Credential leak via API key in logs</td><td>API audit middleware masks API keys</td></tr>
+        <tr><td>SSRF via webhook URL</td><td>Allowlist + metadata IP block in <code>api/webhooks.py</code></td></tr>
+        <tr><td>SQL injection</td><td>Django ORM, parameterized; no raw SQL outside migrations</td></tr>
+        <tr><td>Container escape</td><td>Non-root, dropped capabilities, seccomp default</td></tr>
+        <tr><td>Cross-tenant data leak</td><td>Per-tenant filter on every query and output path</td></tr>
+        <tr><td>Custody log tampering</td><td>SHA-256 chain; break any entry to invalidate all subsequent</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 9. Custody -->
+<section class="arch-section anchor-offset" id="custody">
+  <div class="container">
+    <h2>9. Chain of Custody</h2>
+    <p>
+      The custody log is a SHA-256 hash-chained JSONL file. Each event records
+      <code>prev_hash</code>, hashed inputs, and a <code>this_hash</code>. The
+      log is append-only; verification is a linear scan that recomputes hashes.
+    </p>
+
+    <div class="diagram">
+      <div class="diagram-title">Event Emission Points</div>
+      <div class="mermaid">
+sequenceDiagram
+  participant FS as Filesystem
+  participant SC as Scheduler
+  participant GW as GPU Worker
+  participant ASM as Assembler
+  participant CL as Custody Log
+
+  FS->>SC: New file
+  SC->>CL: FILE_INGESTED (SHA-256 of source)
+  SC->>GW: Chunk task
+  GW->>CL: PAGE_OCR_OK or PAGE_OCR_FAILED
+  GW->>CL: LANGUAGE_DETECTED (per page)
+  GW->>CL: NER_EXTRACTED (entity counts)
+  ASM->>CL: DOCUMENT_FINALIZED (output SHA-256)
+  ASM->>CL: COMPRESSION_COMPLETE
+      </div>
+    </div>
+
+    <p>
+      <strong>Event taxonomy:</strong> <code>FILE_INGESTED</code>,
+      <code>PAGE_OCR_OK</code>, <code>PAGE_OCR_FAILED</code>,
+      <code>LANGUAGE_DETECTED</code>, <code>LANGUAGE_MIXED_SCRIPT</code>,
+      <code>LANGUAGE_REDETECTED</code>, <code>NER_EXTRACTED</code>,
+      <code>CLASSIFIED</code>, <code>HANDWRITING_DETECTED</code>,
+      <code>SIGNATURE_DETECTED</code>, <code>DOCUMENT_FINALIZED</code>,
+      <code>TRANSLATION_REJECTED</code>, <code>CERTIFICATION_GRANTED</code>,
+      <code>CONFIG_APPLIED</code>, and twenty-plus more in the full schema.
+    </p>
+  </div>
+</section>
+
+<!-- 10. Failure -->
+<section class="arch-section anchor-offset" id="failure">
+  <div class="container">
+    <h2>10. Failure &amp; Resume Modes</h2>
+
+    <table>
+      <thead>
+        <tr><th>Failure</th><th>Behavior</th><th>Recovery</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Process crash mid-document</td>
+          <td>Per-page PDFs in <code>ocr_temp/&lt;doc_hash&gt;/</code></td>
+          <td>Restart resumes from last completed page</td>
+        </tr>
+        <tr>
+          <td>OCR fails on a page</td>
+          <td>Adaptive DPI escalation -&gt; 450 DPI -&gt; 600 DPI</td>
+          <td>If all retries fail, embed original image; custody event recorded</td>
+        </tr>
+        <tr>
+          <td>Tesseract / Ghostscript hang</td>
+          <td>Subprocess timeout (120s / 300s) kills the process</td>
+          <td>Page enters failure pipeline; document continues</td>
+        </tr>
+        <tr>
+          <td>GPU OOM</td>
+          <td>Adaptive batch sizing reduces batch; retry</td>
+          <td>Falls back to single-page if needed</td>
+        </tr>
+        <tr>
+          <td>Coordinator DB down</td>
+          <td>Celery retries with exponential backoff</td>
+          <td>Workers continue from queued tasks once DB recovers</td>
+        </tr>
+        <tr>
+          <td>RabbitMQ failover</td>
+          <td>Quorum queues hold messages across broker restarts</td>
+          <td>Auto-reconnect; no message loss</td>
+        </tr>
+        <tr>
+          <td>Worker pod killed</td>
+          <td>Page-level resume + ack-late semantics</td>
+          <td>Another worker picks up unacked tasks</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="text-dim" style="margin-top: 32px;">
+      The design principle: <strong>never silently lose evidence</strong>. Failure
+      preserves the original image, records a custody event, and lets the operator
+      decide whether to retry, escalate, or accept the failed page as-is.
+    </p>
+  </div>
+</section>
+
+<!-- 11. Translation -->
+<section class="arch-section anchor-offset" id="translation">
+  <div class="container">
+    <h2>11. Translation Suite (Opt-In)</h2>
+    <p>
+      Pluggable engine adapters behind a policy router. All translation flags
+      default OFF; enabling requires explicit per-tenant policy and a 48-hour
+      bake before any flag-flip PR is considered for production.
+    </p>
+
+    <div class="diagram">
+      <div class="diagram-title">Engine Selection Flow</div>
+      <div class="mermaid">
+flowchart TB
+  REQ[Translation Request] --> POL[TenantPolicy]
+  POL -->|allow_nc_licensed=false| RANK[Rank Candidates]
+  POL -->|allow_nc_licensed=true| RANK
+  RANK --> FILTER[Filter NC-licensed if needed]
+  FILTER --> ROUTE{Route?}
+  ROUTE -->|privileged content| LOCAL[Local engines only]
+  ROUTE -->|normal content| ANY[Any engine]
+  LOCAL --> OPUS[OPUS-MT]
+  LOCAL --> NLLB[NLLB-200]
+  LOCAL --> MADLAD[MADLAD-400]
+  ANY --> OPUS
+  ANY --> NLLB
+  ANY --> MADLAD
+  ANY --> LLM[LLM Tier]
+  OPUS --> CUSTODY[Custody Event]
+  NLLB --> CUSTODY
+  MADLAD --> CUSTODY
+  LLM --> CUSTODY
+      </div>
+    </div>
+
+    <p class="text-dim">
+      Privilege-blocked content (legal documents matching configured keywords)
+      never routes to cloud generative engines. The decision is logged before
+      the engine call so the audit trail records intent, not just outcome.
+    </p>
+  </div>
+</section>
+
+<!-- 12. Performance -->
+<section class="arch-section anchor-offset" id="performance">
+  <div class="container">
+    <h2>12. Performance Tuning Map</h2>
+
+    <table>
+      <thead>
+        <tr><th>Knob</th><th>Where</th><th>Default</th><th>When to change</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>NUM_EXTRACTORS</code></td><td>ocr_gpu_async.py</td><td>8</td><td>CPU-bound rasterization on large PDFs</td></tr>
+        <tr><td><code>NUM_WORKERS</code></td><td>ocr_gpu_async.py</td><td>12</td><td>Scale to fit VRAM (16GB: 8-12; 48GB: 16-24)</td></tr>
+        <tr><td><code>NUM_COMPRESSORS</code></td><td>ocr_gpu_async.py</td><td>8</td><td>Ghostscript is single-threaded; one per spare CPU core</td></tr>
+        <tr><td><code>IMAGE_QUEUE_SIZE</code></td><td>ocr_gpu_async.py</td><td>200</td><td>RAM budget: ~200 * 20MB = 4GB</td></tr>
+        <tr><td><code>DPI</code></td><td>ocr_gpu_async.py</td><td>300</td><td>Adaptive DPI handles low-confidence escalation</td></tr>
+        <tr><td><code>JPEG_QUALITY</code></td><td>ocr_gpu_async.py</td><td>85</td><td>Lower for size; rarely needed</td></tr>
+        <tr><td><code>OCR_ENGINE_SELECTION</code></td><td>env var</td><td>paddle</td><td><code>auto</code> uses quality-based routing</td></tr>
+        <tr><td><code>OCR_TASK_ROUTING</code></td><td>env var</td><td>gpu</td><td><code>auto</code> dispatches to ocr_cpu if no GPU online</td></tr>
+        <tr><td><code>ENABLE_PER_GPU_QUEUES</code></td><td>env var</td><td>false</td><td>Round-robin to <code>ocr_gpu_0..N-1</code> queues</td></tr>
+        <tr><td><code>OCR_LANGUAGE_TIERS</code></td><td>env var</td><td>core</td><td><code>core,extended</code> adds 11 more languages</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-links">
+      <a href="index.html">Overview</a>
+      <a href="slides.html">Slides</a>
+      <a href="../ARCHITECTURE.md">ARCHITECTURE.md</a>
+      <a href="https://github.com/mattmre/EDCOCR-PUBLIC">GitHub</a>
+    </div>
+    <p>EDCOCR v4.1.0 &middot; Architecture Deck &middot; Apache License 2.0</p>
+  </div>
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      primaryColor: '#1a2236',
+      primaryTextColor: '#e6edf3',
+      primaryBorderColor: '#2a3654',
+      lineColor: '#0ea5e9',
+      secondaryColor: '#121829',
+      tertiaryColor: '#0d1424',
+      background: '#0a0e1a',
+      mainBkg: '#1a2236',
+      secondBkg: '#121829',
+      fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif'
+    },
+    flowchart: { useMaxWidth: true, htmlLabels: true },
+    sequence: { useMaxWidth: true },
+    er: { useMaxWidth: true }
+  });
+</script>
+
+</body>
+</html>

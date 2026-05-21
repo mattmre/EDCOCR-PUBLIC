@@ -1,0 +1,138 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/retrieval.schema.json",
+  "title": "Unified Retrieval-Ready Document Output",
+  "description": "Merges OCR text, entities, classification, extraction, structure, validation, and handwriting data into a single retrieval-ready document-level JSON. Written to EXPORT/RETRIEVAL/<subfolder>/<document_name>.retrieval.json when ENABLE_RETRIEVAL_OUTPUT=true.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for this output format."
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Unique document identifier."
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Source document filename."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp when this retrieval document was generated."
+    },
+    "pipeline_version": {
+      "type": "string",
+      "description": "Pipeline version that produced this output."
+    },
+    "text": {
+      "type": "string",
+      "description": "Full concatenated OCR text for the document."
+    },
+    "text_by_page": {
+      "type": "array",
+      "description": "Per-page OCR text segments.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "integer" },
+          "text": { "type": "string" }
+        },
+        "required": ["page", "text"]
+      }
+    },
+    "classification": {
+      "type": "object",
+      "description": "Document classification result.",
+      "properties": {
+        "label": { "type": "string" },
+        "confidence": { "type": "number" },
+        "method": { "type": "string" }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "description": "Deduplicated named entities from NER and extraction.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "text": { "type": "string" },
+          "confidence": { "type": "number" },
+          "source": { "type": "string" },
+          "page": { "type": "integer" },
+          "bbox": { "type": "array", "items": { "type": "number" } },
+          "metadata": { "type": "object" }
+        },
+        "required": ["id", "type", "text", "confidence"]
+      }
+    },
+    "key_value_pairs": {
+      "type": "array",
+      "description": "Extracted key-value fields (dates, amounts, names, etc.).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string" },
+          "value": { "type": "string" },
+          "confidence": { "type": "number" },
+          "page": { "type": "integer" },
+          "source": { "type": "string" }
+        },
+        "required": ["key", "value", "confidence"]
+      }
+    },
+    "tables": {
+      "type": "array",
+      "description": "Tables extracted from document structure analysis.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "integer" },
+          "html": { "type": "string" },
+          "cell_bbox": { "type": "array" }
+        }
+      }
+    },
+    "handwriting": {
+      "type": "object",
+      "description": "Handwriting detection summary.",
+      "properties": {
+        "detected": { "type": "boolean" },
+        "regions_count": { "type": "integer" },
+        "coverage": { "type": "number" },
+        "is_primarily_handwritten": { "type": "boolean" }
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "description": "Entity relationships (if relationship extraction was enabled).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source_entity": { "type": "string" },
+          "target_entity": { "type": "string" },
+          "relation_type": { "type": "string" },
+          "confidence": { "type": "number" }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Document-level processing metadata.",
+      "properties": {
+        "pages": { "type": "integer" },
+        "quality": { "type": "string" },
+        "overall_confidence": { "type": "number" },
+        "languages": { "type": "array", "items": { "type": "string" } },
+        "ocr_methods": { "type": "array", "items": { "type": "string" } },
+        "text_extraction_rate": { "type": "number" },
+        "total_text_length": { "type": "integer" },
+        "output_hash": { "type": "string" }
+      }
+    }
+  },
+  "required": ["schema_version", "document_id", "source_file", "generated_at", "pipeline_version", "text"]
+}

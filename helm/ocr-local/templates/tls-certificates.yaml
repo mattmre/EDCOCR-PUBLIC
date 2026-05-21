@@ -1,0 +1,142 @@
+{{- if .Values.tls.enabled }}
+# =============================================================================
+# Inter-Service TLS — cert-manager resources
+# Two-tier CA chain: self-signed root -> CA issuer -> per-service certificates
+# Requires cert-manager CRDs (Certificate, Issuer) pre-installed in the cluster.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. Self-signed root CA Issuer
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: {{ .Values.tls.certManager.issuerKind }}
+metadata:
+  name: {{ include "ocr-local.fullname" . }}-selfsigned-root
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tls
+spec:
+  selfSigned: {}
+---
+# -----------------------------------------------------------------------------
+# 2. CA Certificate issued by the self-signed root
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "ocr-local.fullname" . }}-ca-cert
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tls
+spec:
+  isCA: true
+  commonName: {{ include "ocr-local.fullname" . }}-ca
+  secretName: {{ include "ocr-local.fullname" . }}-ca-secret
+  duration: 87600h    # 10 years
+  renewBefore: 2160h  # 90 days
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ include "ocr-local.fullname" . }}-selfsigned-root
+    kind: {{ .Values.tls.certManager.issuerKind }}
+    group: cert-manager.io
+---
+# -----------------------------------------------------------------------------
+# 3. CA Issuer backed by the CA Certificate
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: {{ .Values.tls.certManager.issuerKind }}
+metadata:
+  name: {{ include "ocr-local.fullname" . }}-ca-issuer
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tls
+spec:
+  ca:
+    secretName: {{ include "ocr-local.fullname" . }}-ca-secret
+---
+# -----------------------------------------------------------------------------
+# 4. PostgreSQL TLS Certificate
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "ocr-local.fullname" . }}-postgresql-cert
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tls
+spec:
+  secretName: {{ include "ocr-local.fullname" . }}-postgresql-tls
+  duration: 8760h      # 1 year
+  renewBefore: 720h    # 30 days
+  commonName: {{ .Release.Name }}-postgres
+  dnsNames:
+    - {{ .Release.Name }}-postgres
+    - {{ .Release.Name }}-postgres.{{ .Release.Namespace }}
+    - {{ .Release.Name }}-postgres.{{ .Release.Namespace }}.svc
+    - {{ .Release.Name }}-postgres.{{ .Release.Namespace }}.svc.cluster.local
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ include "ocr-local.fullname" . }}-ca-issuer
+    kind: {{ .Values.tls.certManager.issuerKind }}
+    group: cert-manager.io
+---
+# -----------------------------------------------------------------------------
+# 5. RabbitMQ TLS Certificate
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "ocr-local.fullname" . }}-rabbitmq-cert
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tls
+spec:
+  secretName: {{ include "ocr-local.fullname" . }}-rabbitmq-tls
+  duration: 8760h      # 1 year
+  renewBefore: 720h    # 30 days
+  commonName: {{ .Release.Name }}-rabbitmq
+  dnsNames:
+    - {{ .Release.Name }}-rabbitmq
+    - {{ .Release.Name }}-rabbitmq.{{ .Release.Namespace }}
+    - {{ .Release.Name }}-rabbitmq.{{ .Release.Namespace }}.svc
+    - {{ .Release.Name }}-rabbitmq.{{ .Release.Namespace }}.svc.cluster.local
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ include "ocr-local.fullname" . }}-ca-issuer
+    kind: {{ .Values.tls.certManager.issuerKind }}
+    group: cert-manager.io
+---
+# -----------------------------------------------------------------------------
+# 6. Redis TLS Certificate
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "ocr-local.fullname" . }}-redis-cert
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tls
+spec:
+  secretName: {{ include "ocr-local.fullname" . }}-redis-tls
+  duration: 8760h      # 1 year
+  renewBefore: 720h    # 30 days
+  commonName: {{ .Release.Name }}-redis
+  dnsNames:
+    - {{ .Release.Name }}-redis
+    - {{ .Release.Name }}-redis.{{ .Release.Namespace }}
+    - {{ .Release.Name }}-redis.{{ .Release.Namespace }}.svc
+    - {{ .Release.Name }}-redis.{{ .Release.Namespace }}.svc.cluster.local
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ include "ocr-local.fullname" . }}-ca-issuer
+    kind: {{ .Values.tls.certManager.issuerKind }}
+    group: cert-manager.io
+{{- end }}

@@ -1,0 +1,157 @@
+{{- if .Values.networkPolicy.enabled }}
+# =============================================================================
+# NetworkPolicy: Worker pods — restricted egress, no ingress
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-worker-netpol
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          - gpu-worker
+          - cpu-worker
+          - layout-cpu-worker
+          - nlp-gpu-worker
+  policyTypes:
+    - Ingress
+    - Egress
+  # No ingress rules — workers accept no inbound connections
+  ingress: []
+  egress:
+    # PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # RabbitMQ
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: rabbitmq
+      ports:
+        - protocol: TCP
+          port: 5672
+        {{- if .Values.tls.enabled }}
+        - protocol: TCP
+          port: 5671
+        {{- end }}
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+        {{- if .Values.tls.enabled }}
+        - protocol: TCP
+          port: 6380
+        {{- end }}
+    {{- if .Values.redis.sentinel.enabled }}
+    # Redis Sentinel
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "ocr-local.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis-sentinel
+      ports:
+        - protocol: TCP
+          port: 26379
+    {{- end }}
+    # DNS (kube-dns / CoreDNS)
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# =============================================================================
+# NetworkPolicy: Coordinator pods — ingress from any, egress to infra + any
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-coordinator-netpol
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: coordinator
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from any source (Ingress controller, other services)
+    - ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    # PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # RabbitMQ
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: rabbitmq
+      ports:
+        - protocol: TCP
+          port: 5672
+        {{- if .Values.tls.enabled }}
+        - protocol: TCP
+          port: 5671
+        {{- end }}
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+        {{- if .Values.tls.enabled }}
+        - protocol: TCP
+          port: 6380
+        {{- end }}
+    {{- if .Values.redis.sentinel.enabled }}
+    # Redis Sentinel
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "ocr-local.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis-sentinel
+      ports:
+        - protocol: TCP
+          port: 26379
+    {{- end }}
+    # DNS (kube-dns / CoreDNS)
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Any external (webhooks, external APIs)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+{{- end }}

@@ -1,0 +1,73 @@
+{{- if .Values.federation.enabled }}
+{{- /*
+RabbitMQ FederationUpstream resources.
+
+, item C2: this template now ranges over the dynamic peer
+registry under `.Values.federation.clusters` (preferred, C2) and falls back
+to the static `.Values.federation.upstreamClusters` list (C1) when the
+new registry is empty. This preserves the C1 install path while letting
+operators migrate to the C2 reconciler-driven workflow incrementally.
+
+One Federation CR is emitted per peer cluster; queue selection happens at the
+Policy level (see rabbitmq-federation-policy.yaml). Federation is overflow-only
+on the queue classes declared in `.Values.federation.queue_classes`; the
+coordinator queue is intentionally excluded (see  Section 4.4 --
+split-brain risk).
+*/}}
+{{- $useDynamic := gt (len .Values.federation.clusters) 0 -}}
+{{- if $useDynamic }}
+{{- range $idx, $c := .Values.federation.clusters }}
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Federation
+metadata:
+  name: {{ $.Release.Name }}-fed-upstream-{{ $c.name }}
+  labels:
+    {{- include "ocr-local.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: federation
+    app.kubernetes.io/managed-by: Helm
+    federation.ocr-local.io/peer: {{ $c.name | quote }}
+spec:
+  name: {{ $c.name }}-upstream
+  vhost: "/"
+  uriSecret:
+    name: {{ $.Release.Name }}-fed-upstream-{{ $c.name }}-secret
+  rabbitmqClusterReference:
+    name: {{ $.Release.Name }}-rabbitmq
+  ackMode: on-confirm
+  expires: 3600000               # 1h queue expiry on the upstream side
+  messageTTL: 1800000            # 30m message TTL on federated link
+  prefetchCount: 100
+  reconnectDelay: 5
+  trustUserId: false
+  maxHops: 1                     # never fan beyond one cluster
+{{- end }}
+{{- else }}
+{{- range $idx, $upstream := .Values.federation.upstreamClusters }}
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Federation
+metadata:
+  name: {{ $.Release.Name }}-fed-upstream-{{ $upstream.name }}
+  labels:
+    {{- include "ocr-local.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: federation
+    app.kubernetes.io/managed-by: Helm
+    federation.ocr-local.io/peer: {{ $upstream.name | quote }}
+spec:
+  name: {{ $upstream.name }}-upstream
+  vhost: "/"
+  uriSecret:
+    name: {{ $.Release.Name }}-fed-upstream-{{ $upstream.name }}-secret
+  rabbitmqClusterReference:
+    name: {{ $.Release.Name }}-rabbitmq
+  ackMode: on-confirm
+  expires: 3600000               # 1h queue expiry on the upstream side
+  messageTTL: 1800000            # 30m message TTL on federated link
+  prefetchCount: 100
+  reconnectDelay: 5
+  trustUserId: false
+  maxHops: 1                     # never fan beyond one cluster
+{{- end }}
+{{- end }}
+{{- end }}

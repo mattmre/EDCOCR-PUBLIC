@@ -1,0 +1,75 @@
+name: Helm Deploy (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      chart_version:
+        description: 'Chart version (leave empty for latest)'
+        required: false
+        type: string
+      dry_run:
+        description: 'Dry run only'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: 'v3.14.0'
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v5
+        with:
+          kubeconfig: ${{ secrets.KUBECONFIG }}
+
+      - name: Deploy chart
+        id: deploy
+        env:
+          RELEASE_NAME: ocr-local
+          NAMESPACE: ${{ inputs.environment == 'production' && 'ocr-production' || 'ocr-staging' }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: |
+          helm upgrade --install "$RELEASE_NAME" helm/ocr-local/ \
+            --namespace "$NAMESPACE" \
+            --create-namespace \
+            --values "helm/ocr-local/values-${{ inputs.environment }}.yaml" \
+            --timeout 10m \
+            --wait \
+            $DRY_RUN
+
+      - name: Rollback on failure
+        if: ${{ failure && steps.deploy.outcome == 'failure' && !inputs.dry_run }}
+        env:
+          RELEASE_NAME: ocr-local
+          NAMESPACE: ${{ inputs.environment == 'production' && 'ocr-production' || 'ocr-staging' }}
+        run: |
+          echo "Deploy failed — rolling back to previous release..."
+          helm rollback "$RELEASE_NAME" 0 \
+            --namespace "$NAMESPACE" \
+            --timeout 10m \
+            --wait
+          echo "Rollback complete. Listing current release history:"
+          helm history "$RELEASE_NAME" --namespace "$NAMESPACE" --max 5
+
+      - name: Verify deployment
+        if: ${{ !inputs.dry_run }}
+        env:
+          NAMESPACE: ${{ inputs.environment == 'production' && 'ocr-production' || 'ocr-staging' }}
+        run: |
+          kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/instance=ocr-local
+          kubectl get svc -n "$NAMESPACE" -l app.kubernetes.io/instance=ocr-local

@@ -1,0 +1,280 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/translation-bundle-v1.schema.json",
+  "title": "EDC TranslationBundle v1",
+  "description": "Versioned translation bundle produced by the translation side and consumed by OCR or downstream systems.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "translation-bundle-v1"
+    },
+    "document_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_ocr_sha256": {
+      "$ref": "#/definitions/sha256"
+    },
+    "source_bundle_sha256": {
+      "$ref": "#/definitions/sha256"
+    },
+    "target_language": {
+      "type": "string",
+      "minLength": 1
+    },
+    "translated_spans": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/translated_span"
+      }
+    },
+    "engine_provider": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "family": {
+          "type": "string",
+          "enum": [
+            "ct2_nmt",
+            "llm_local",
+            "llm_cloud",
+            "quality_estimation",
+            "passthrough",
+            "unknown"
+          ]
+        },
+        "is_local": {
+          "type": "boolean"
+        },
+        "is_cloud": {
+          "type": "boolean"
+        },
+        "license": {
+          "type": "string"
+        },
+        "provider_retention_class": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "family", "is_local", "is_cloud", "license", "provider_retention_class"]
+    },
+    "model_provenance": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "weights_sha256": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "runtime_version": {
+          "type": "string"
+        }
+      },
+      "required": ["weights_sha256"]
+    },
+    "quality_scores": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "mean_score": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "below_threshold_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quality_class": {
+          "type": "string"
+        }
+      },
+      "required": ["mean_score", "below_threshold_count", "quality_class"]
+    },
+    "certified": {
+      "type": "boolean"
+    },
+    "custody_chain_head": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_manifest": {
+      "$ref": "#/definitions/artifact_manifest"
+    },
+    "glossary_hits": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "review_decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "tsa_anchors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "model_approval_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_bundle_path": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "document_id",
+    "source_ocr_sha256",
+    "source_bundle_sha256",
+    "target_language",
+    "translated_spans",
+    "engine_provider",
+    "model_provenance",
+    "quality_scores",
+    "certified",
+    "custody_chain_head",
+    "artifact_manifest"
+  ],
+  "definitions": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "bbox": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "number"
+      }
+    },
+    "translated_span": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "span_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "page_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_text": {
+          "type": "string"
+        },
+        "translated_text": {
+          "type": "string"
+        },
+        "source_bbox": {
+          "$ref": "#/definitions/bbox"
+        },
+        "source_bboxes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/bbox"
+          }
+        },
+        "source_language": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_language": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "quality_score": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "engine_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "glossary_hits": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "span_id",
+        "page_number",
+        "source_text",
+        "translated_text",
+        "source_bbox",
+        "source_bboxes",
+        "source_language",
+        "target_language",
+        "confidence",
+        "quality_score",
+        "engine_id",
+        "glossary_hits"
+      ]
+    },
+    "artifact_manifest": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/artifact"
+          }
+        }
+      },
+      "required": ["artifacts"]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "mime_type": {
+          "type": "string"
+        }
+      },
+      "required": ["artifact_id", "artifact_type"]
+    }
+  }
+}

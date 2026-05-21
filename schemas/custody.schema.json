@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/custody.schema.json",
+  "title": "Chain of Custody Event",
+  "description": "A single hash-chained event in the forensic audit trail. Each event is a single JSON line in a .custody.jsonl file under ocr_output/custody/. Events are cryptographically linked via SHA-256 hashing.",
+  "type": "object",
+  "properties": {
+    "document_id": {
+      "type": "string",
+      "description": "Unique document identifier (typically SHA-256 hash prefix)."
+    },
+    "event_type": {
+      "type": "string",
+      "description": "Processing stage identifier.",
+      "enum": [
+        "file_ingested",
+        "page_extracted",
+        "ocr_primary",
+        "ocr_fallback",
+        "ocr_image_only",
+        "language_detected",
+        "language_reprocess",
+        "docintel_analysis",
+        "assembly_complete",
+        "compression_complete",
+        "dpi_escalation",
+        "processing_failed",
+        "temp_files_purged",
+        "pii_purged",
+        "tenant_purged",
+        "output_cleaned",
+        "audit_logs_rotated"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp with millisecond precision."
+    },
+    "data": {
+      "type": "object",
+      "description": "Stage-specific metadata dictionary."
+    },
+    "prev_hash": {
+      "type": ["string", "null"],
+      "description": "SHA-256 hash of the previous event in the chain. Null for the genesis event."
+    },
+    "hash": {
+      "type": "string",
+      "description": "SHA-256 hash of this event (computed from all other fields)."
+    }
+  },
+  "required": ["document_id", "event_type", "timestamp", "data", "prev_hash", "hash"]
+}

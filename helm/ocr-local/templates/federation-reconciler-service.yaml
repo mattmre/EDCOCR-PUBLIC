@@ -1,0 +1,27 @@
+{{- if and .Values.federation.enabled .Values.federation.reconciler.enabled .Values.federation.prometheus.enabled }}
+# =============================================================================
+# Federation Reconciler Service (item C2)
+#
+# ClusterIP service exposing /metrics on port 9100 for the federation
+# reconciler. Wired to ServiceMonitor when monitoring.enabled=true via the
+# common selector labels.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-federation-reconciler
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "ocr-local.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-reconciler
+  ports:
+    - name: metrics
+      port: {{ .Values.federation.prometheus.port | int }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}

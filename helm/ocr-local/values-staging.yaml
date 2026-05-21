@@ -1,0 +1,76 @@
+# =============================================================================
+# Staging environment overrides
+# =============================================================================
+#
+# WARNING -- STAGING ONLY. NEVER APPLY THIS OVERLAY TO PRODUCTION.
+#
+# This overlay flips the  translation feature flags ON for use
+# in test/staging clusters during the post-merge bake window. Production
+# overlays MUST keep these flags at their default OFF state until the bake
+# window has elapsed and an explicit post-bake flag-flip PR has been merged.
+#
+# See:
+(translation feature flags default OFF)
+#   - docs/operations/translation-flag-flip-runbook.md
+#   - helm/ocr-local/values-production.yaml (production overlay -- keep flags OFF)
+#
+# Secrets must be provided via --set at deploy time.
+# =============================================================================
+
+coordinator:
+  replicas: 1
+  env:
+    # ---- Staging-only translation flag flip ----
+    # NEVER copy these three keys into values-production.yaml without an
+    # explicit, reviewed post-bake flip PR.
+    ENABLE_TRANSLATION: "true"
+    ENABLE_TRANSLATION_API: "true"
+    ENABLE_HANDWRITING_MT: "false"
+    OCR_TRANSLATION_ENFORCE_PROVENANCE: "true"
+
+externalTranslation:
+  # Default remains OFF.  Set to "true" only for the explicit EDC split
+  # smoke after the standalone service is healthy.
+  preferExternal: "false"
+  url: "http://external-translation:8080"
+  providerId: "deterministic_ci"
+  timeoutSeconds: "30"
+  readinessPath: "/health"
+
+gpuWorker:
+  replicas: 1
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+  env:
+    # Workers honour the same flags so the assembler hook runs against
+    # OCR'd output produced inside the worker process.
+    ENABLE_TRANSLATION: "true"
+    ENABLE_HANDWRITING_MT: "false"
+    OCR_TRANSLATION_ENFORCE_PROVENANCE: "true"
+
+cpuWorker:
+  replicas: 1
+
+postgresql:
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+
+rabbitmq:
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+
+redis:
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "50m"
+
+prometheus:
+  enabled: true
+  grafana:
+    enabled: true

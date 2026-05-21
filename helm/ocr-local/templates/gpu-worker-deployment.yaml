@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-gpu-worker
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gpu-worker
+spec:
+  {{- if not .Values.gpuWorker.autoscaling.enabled }}
+  replicas: {{ .Values.gpuWorker.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gpu-worker
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.labels" . | nindent 8 }}
+        app.kubernetes.io/component: gpu-worker
+      {{- if .Values.workerSecurity.mTLS.enabled }}
+      annotations:
+        {{ .Values.workerSecurity.mTLS.annotation }}: {{ .Values.workerSecurity.mTLS.annotationValue | quote }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.workerTerminationGracePeriodSeconds | default 360 }}
+      {{- with .Values.gpuWorker.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gpuWorker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gpuWorker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.gpuWorker.shmSize }}
+        - name: staging-volume
+          {{- if eq .Values.workerSecurity.stagingVolume.type "emptyDir" }}
+          emptyDir:
+            medium: {{ .Values.workerSecurity.stagingVolume.emptyDir.medium }}
+            sizeLimit: {{ .Values.workerSecurity.stagingVolume.emptyDir.sizeLimit }}
+          {{- else }}
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ "ReadWriteOnce" ]
+                storageClassName: {{ .Values.workerSecurity.stagingVolume.pvc.storageClass | quote }}
+                resources:
+                  requests:
+                    storage: {{ .Values.workerSecurity.stagingVolume.pvc.size }}
+          {{- end }}
+      containers:
+        - name: gpu-worker
+          image: {{ include "ocr-local.workerImage" . }}
+          imagePullPolicy: {{ .Values.image.worker.pullPolicy | default "IfNotPresent" }}
+          command:
+            - celery
+            - -A
+            - coordinator.coordinator
+            - worker
+            - --loglevel=info
+            - --queues={{ .Values.gpuWorker.queues }}
+            - --concurrency={{ .Values.gpuWorker.concurrency }}
+            - --max-tasks-per-child={{ .Values.gpuWorker.maxTasksPerChild }}
+            - --hostname=gpu-worker@%h
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+            - name: staging-volume
+              mountPath: {{ .Values.workerSecurity.stagingVolume.mountPath }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secret
+            {{- if .Values.federation.enabled }}
+            - configMapRef:
+                name: {{ .Release.Name }}-federation-overlay
+            {{- end }}
+          env:
+            - name: WORKER_QUEUES
+              value: {{ .Values.gpuWorker.queues | quote }}
+            - name: WORKER_CONCURRENCY
+              value: {{ .Values.gpuWorker.concurrency | quote }}
+            - name: FASTTEXT_MODEL_PATH
+              value: /app/models/lid.176.bin
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'python -c "import paddle" && test -d {{ .Values.gpuWorker.startupProbe.modelDir | default "/app/models" }} && test "$(ls -A {{ .Values.gpuWorker.startupProbe.modelDir | default "/app/models" }})"'
+            failureThreshold: {{ .Values.gpuWorker.startupProbe.failureThreshold | default 30 }}
+            periodSeconds: {{ .Values.gpuWorker.startupProbe.periodSeconds | default 10 }}
+          readinessProbe:
+            exec:
+              command:
+                - celery
+                - -A
+                - coordinator.coordinator
+                - inspect
+                - ping
+                - --timeout=5
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - celery
+                - -A
+                - coordinator.coordinator
+                - inspect
+                - ping
+                - --timeout=10
+            periodSeconds: 60
+          resources:
+            {{- toYaml .Values.gpuWorker.resources | nindent 12 }}
+          {{- with .Values.gpuWorker.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

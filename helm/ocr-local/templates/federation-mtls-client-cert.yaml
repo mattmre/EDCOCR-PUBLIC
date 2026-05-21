@@ -1,0 +1,43 @@
+{{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
+{{- /*
+  Federation mTLS — peer-cluster client certificate (item C8).
+
+  Single client cert used both by:
+    1. The RabbitMQ federation upstream connection (this cluster acting as
+       a federation downstream pulling from a peer's exchanges).
+    2. The custody-replication HTTP client (POST custody events to peer
+       coordinator's `/api/v1/custody/replicate` endpoint).
+
+  Peer clusters validate this cert against the same CA, so the CN/SANs are
+  derived from `federation.clusterName` to make audit logging traceable.
+*/}}
+{{- $issuerName := .Values.federation.mtls.caRef | default (printf "%s-federation-mtls-ca" .Release.Name) -}}
+{{- $issuerKind := ternary "ClusterIssuer" "Issuer" .Values.federation.mtls.clusterIssuer -}}
+{{- $clusterName := .Values.federation.clusterName | default .Release.Name -}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-federation-mtls-client
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-mtls
+spec:
+  secretName: {{ .Release.Name }}-federation-mtls-client-tls
+  duration: {{ .Values.federation.mtls.certDuration | quote }}
+  renewBefore: {{ .Values.federation.mtls.certRenewBefore | quote }}
+  commonName: {{ printf "%s-federation-client" $clusterName }}
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  dnsNames:
+    - {{ printf "%s-federation-client" $clusterName }}
+    - {{ printf "client.%s.federation.ocr.local" $clusterName }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ $issuerName }}
+    kind: {{ $issuerKind }}
+    group: cert-manager.io
+{{- end }}

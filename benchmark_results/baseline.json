@@ -1,0 +1,8 @@
+{
+  "version": "1.0.0",
+  "thresholds": {
+    "simulate_ppm_min": 500,
+    "p95_latency_ms_max": 1500,
+    "peak_memory_mb_max": 512
+  }
+}

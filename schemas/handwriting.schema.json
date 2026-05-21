@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ocr-local.dev/schemas/handwriting.schema.json",
+  "title": "Handwriting Detection Output",
+  "description": "Handwriting analysis sidecar with confidence heuristics, geometry analysis, and image variance detection. Written to EXPORT/HANDWRITING/<subfolder>/<document_name>.handwriting.json.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for this output format."
+    },
+    "document_id": {
+      "type": "string",
+      "description": "Unique document identifier."
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Source document filename."
+    },
+    "processing": {
+      "type": "object",
+      "description": "Detection engine metadata.",
+      "properties": {
+        "detection_engine": {
+          "type": "string",
+          "description": "Detection engines used, joined by '+' (e.g. confidence_heuristic+geometry+image_variance)."
+        },
+        "pipeline_version": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["detection_engine", "pipeline_version", "timestamp"]
+    },
+    "document_summary": {
+      "type": "object",
+      "description": "Document-level handwriting summary.",
+      "properties": {
+        "total_handwritten_pages": { "type": "integer" },
+        "total_pages_with_mixed": { "type": "integer", "description": "Pages with both handwritten and printed content." },
+        "overall_handwriting_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "is_primarily_handwritten": { "type": "boolean" }
+      },
+      "required": ["total_handwritten_pages", "total_pages_with_mixed", "overall_handwriting_coverage", "is_primarily_handwritten"]
+    },
+    "pages": {
+      "type": "array",
+      "description": "Per-page handwriting analysis.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page_num": { "type": "integer" },
+          "has_handwriting": { "type": "boolean" },
+          "handwriting_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+          "handwriting_regions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "bbox": { "type": "array", "items": { "type": "number" } },
+                "confidence": { "type": "number" },
+                "text": { "type": "string" },
+                "ocr_confidence": { "type": "number" },
+                "detection_method": {
+                  "type": "string",
+                  "description": "Detection method: confidence_heuristic, geometry, or image_variance."
+                }
+              }
+            }
+          },
+          "printed_line_count": { "type": "integer" },
+          "handwritten_line_count": { "type": "integer" },
+          "detection_methods_used": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["page_num", "has_handwriting", "handwriting_coverage"]
+      }
+    }
+  },
+  "required": ["schema_version", "document_id", "source_file", "processing", "document_summary", "pages"]
+}

@@ -1,0 +1,258 @@
+# EDCOCR Python Dependencies
+# Production pipeline: ocr_gpu_async.py
+#
+# IMPORTANT: This file does NOT include system-level dependencies that must be
+# installed via apt-get in the Docker container or system package manager:
+#   - tesseract-ocr (Tesseract OCR engine)
+#   - poppler-utils (PDF rendering utilities for pdf2image)
+#   - ghostscript (PDF optimization for optimize_pdfs.py)
+#
+# These are already included in the Dockerfile.
+#
+# To update pinned versions from a running container:
+#   docker exec ocr_gpu_processor pip freeze > requirements.txt
+
+# ============================================================================
+# Core OCR Engines
+# ============================================================================
+
+# PaddlePaddle deep learning framework
+# Use 'paddlepaddle-gpu' for GPU support (production Docker uses base image with GPU)
+# Use 'paddlepaddle' for CPU-only (model downloads, testing)
+# UPGRADE-CONSTRAINT: Locked to 2.6.x (ABI-locked to numpy 1.x). Upgrading to
+# 3.x requires coordinated numpy 2.x + OpenCV + PaddleOCR + PaddleNLP migration.
+# Q2 2026 qualification sprint planned. See docs/architecture/adr-paddlepaddle-upgrade-path.md
+paddlepaddle==2.6.2
+
+# PaddleOCR - Advanced OCR engine with PP-OCRv4/PP-OCRv5 models
+# Primary OCR engine for the pipeline.
+paddleocr==2.9.1
+
+# Tesseract OCR - Fallback OCR engine
+# Python wrapper for Google's Tesseract
+pytesseract==0.3.13
+
+
+# ============================================================================
+# PDF and Image Processing
+# ============================================================================
+
+# PyMuPDF - Fast PDF manipulation and rendering
+# Imported as 'fitz' in the codebase
+# Version must match coordinator/requirements.txt.
+# Run scripts/check_deps_sync.py to verify sync.
+PyMuPDF==1.27.2.2
+
+# PDF to image conversion via Poppler
+# Requires system package: poppler-utils
+pdf2image==1.17.0
+
+# Python Imaging Library - Image processing
+# Version must match coordinator/requirements.txt.
+# Run scripts/check_deps_sync.py to verify sync.
+Pillow==12.2.0
+
+# OpenCV - Image preprocessing for enhanced OCR fallback
+# Headless variant (no GUI dependencies) for Docker compatibility.
+# 4.12+ flips to numpy>=2 on Python 3.9+, which conflicts with the current
+# PaddleOCR 2.9.1 / PaddlePaddle 2.6.2 stack pinned to numpy 1.26.4.
+# Keep the highest resolver-safe 4.x line for deterministic preprocessing.
+opencv-python-headless==4.11.0.86
+
+
+# ============================================================================
+# Language Detection
+# ============================================================================
+
+# Meta's fastText - Language identification
+# Uses lid.176.bin model for 176 language detection
+# Model downloaded separately via download_models.py
+# TECH-DEBT: Unmaintained upstream (Meta ended development 2023). C++ build
+# fragile on Python 3.12+. Docker pre-built wheels mitigate. Q3 2026 migration
+# candidate (fasttext-langdetect). See docs/architecture/adr-fasttext-assessment.md
+fasttext==0.9.3
+
+
+# ============================================================================
+# Data Processing
+# ============================================================================
+
+# NumPy - Array operations for image data
+numpy==1.26.4
+
+# Pandas - CSV reporting (used in OCR_GPU.py, optional for sync pipeline)
+pandas==2.3.3
+
+
+# ============================================================================
+# REST API Dependencies
+# ============================================================================
+
+# FastAPI - Modern web framework for building APIs
+fastapi==0.136.1
+
+# Uvicorn - ASGI server for FastAPI
+uvicorn[standard]>=0.42.0,<1.0.0
+
+# Multipart form data handling for file uploads
+python-multipart==0.0.29
+
+# SQLAlchemy - Database ORM
+sqlalchemy==2.0.49
+
+# Slowapi - Rate limiting for FastAPI
+slowapi==0.1.9
+
+# WebSocket support for real-time job progress streaming
+websockets>=16.0,<18.0
+
+# Prometheus client library for metrics exposition
+prometheus-client>=0.25.0,<1.0.0
+
+# Cryptography: Fernet encryption for webhook secrets at rest (SEC-001)
+# Also used by PyJWT[crypto] for RSA/EC JWT signature verification
+cryptography>=41.0
+
+# OAuth2 JWT validation
+# Optional: graceful degradation when not installed (API key auth still works)
+# PyJWT replaces python-jose (unmaintained since 2022, algorithm confusion CVEs)
+PyJWT[crypto]>=2.12.1
+
+# HTTP client for JWKS fetching
+httpx>=0.27
+
+# spaCy - Named Entity Recognition
+# Optional: graceful degradation if absent (custom regex patterns still work)
+# After installing, download the model: python -m spacy download en_core_web_sm
+spacy==3.8.14
+
+# PaddleNLP - Universal Information Extraction
+# Optional: graceful degradation to regex-only extraction if absent
+# UIE models (uie-base ~400MB, uie-micro ~25MB) run on CPU
+paddlenlp==2.8.1
+
+# Optional: LayoutLMv3 semantic extraction (token-level KIE)
+# Requires PyTorch. Uncomment to enable semantic extraction.
+# Set ENABLE_SEMANTIC_EXTRACTION=true to activate at runtime.
+# torch>=2.0
+# transformers>=4.30
+# timm>=0.9
+
+# ============================================================================
+# Optional: Handwriting Recognition
+# ============================================================================
+
+# TrOCR handwriting recognition requires PyTorch + Hugging Face transformers.
+# These are large dependencies (~2GB+) and are NOT installed by default.
+# Enable via ENABLE_TROCR=true environment variable.
+# Graceful degradation: if absent, PaddleOCR text is used unchanged.
+# torch>=2.0
+# transformers>=4.30
+
+# ============================================================================
+# Optional: RTL Text Support
+# ============================================================================
+
+# python-bidi provides Unicode Bidirectional Algorithm for RTL text reordering.
+# Graceful degradation: if absent, RTL text is returned in logical order.
+# python-bidi>=0.4
+
+# File System Watcher
+# ============================================================================
+
+# Watchdog - Cross-platform filesystem event monitoring
+# Used by file_watcher.py for hot-folder OCR submission
+watchdog>=4.0
+
+# PyYAML - YAML configuration file parsing
+# Used by file_watcher_config.py for watcher configuration
+PyYAML>=6.0
+
+# Pydantic - Data validation for watcher configuration
+# Also used by FastAPI (already a transitive dependency)
+pydantic>=2.13.4
+
+# Paramiko - Optional SFTP transport for watcher remote ingest
+paramiko>=3.4
+
+# ============================================================================
+# Optional: Extended Image Format Support
+# ============================================================================
+
+# pillow-heif - HEIC/HEIF image support (iPhone photos)
+# Optional: graceful degradation if absent (format_loaders.py)
+# pillow-heif>=0.16
+
+# rawpy - Camera RAW format support (CR2, NEF, ARW, DNG)
+# Optional: graceful degradation if absent (format_loaders.py)
+# rawpy>=0.19
+
+# pydicom - DICOM medical imaging support
+# Optional: graceful degradation if absent (format_loaders.py)
+# pydicom>=2.4
+
+# ML Document Classification (Optional)
+# ============================================================================
+
+# The following packages enable ML-based document classification via
+# LayoutLMv3. They are optional: when absent, CLASSIFICATION_MODE defaults
+# to "heuristic" and the pipeline operates identically to pre-ML behavior.
+# Uncomment and install to enable CLASSIFICATION_MODE="ml" or "ensemble".
+#
+# torch>=2.0.0          # PyTorch deep learning framework (~2 GB)
+# transformers>=4.30.0  # HuggingFace Transformers (LayoutLMv3 support)
+# timm>=0.9.0           # PyTorch Image Models (LayoutLMv3 vision backbone)
+# Optional: EasyOCR third engine for handwriting-optimized OCR
+# Requires PyTorch (~2GB Docker image increase). CPU-only by design.
+# Uncomment to enable: set ENABLE_EASYOCR=true at runtime.
+# easyocr>=1.7
+
+# ============================================================================
+# Optional: Barcode/QR Code Extraction
+# ============================================================================
+
+# pyzbar - Barcode and QR code reading via libzbar
+# Requires system package: libzbar0 (apt-get install libzbar0)
+# Optional: graceful degradation if absent (barcode_extraction.py)
+# Set ENABLE_SYMBOLOGY_EXTRACTION=true to activate at runtime.
+# pyzbar>=0.1.9
+
+# ============================================================================
+# Optional: OpenTelemetry (install for production distributed tracing)
+# ============================================================================
+
+# Core OTel API and SDK for span creation and export
+# opentelemetry-api>=1.20.0
+# opentelemetry-sdk>=1.20.0
+
+# OTLP gRPC exporter — connects to OTel Collector, Jaeger (1.35+ OTLP), Tempo
+# opentelemetry-exporter-otlp-proto-grpc>=1.20.0
+
+# FastAPI auto-instrumentation (request/response tracing)
+# opentelemetry-instrumentation-fastapi>=0.41b0
+
+# ============================================================================
+# Security: Explicit transitive dependency pins (CVE fixes)
+# ============================================================================
+
+# onnx is a transitive dependency (via paddleocr/onnxruntime).
+# Pin to >=1.21.0 to fix CVE-2026-34447, CVE-2026-34446, GHSA-q56x-g2fj-4rj6,
+# CVE-2026-27489, CVE-2026-34445, and CVE-2026-28500.
+onnx>=1.21.0
+
+# ============================================================================
+# Test dependencies
+# ============================================================================
+
+# Hypothesis - property-based testing for security-critical string handling
+hypothesis>=6.100.0
+
+# pytest-cov - Coverage reporting plugin for pytest
+# CI/test dependency -- needed for coverage reporting in GitHub Actions.
+# Excluded from production Docker images (not imported by runtime code).
+# Required by tests/test_coverage_config.py and .github/workflows/ci.yml.
+pytest-cov>=7.1.0
+
+# CVE exclusion notes for pip-audit (no upstream fix available):
+# - Pygments CVE-2026-4539: affects all versions through 2.19.2 (latest)
+# Excluded via --ignore-vuln in CI blocking audit steps.

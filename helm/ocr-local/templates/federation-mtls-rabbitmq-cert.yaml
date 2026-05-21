@@ -1,0 +1,42 @@
+{{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
+{{- /*
+  Federation mTLS — RabbitMQ server certificate (item C8).
+
+  Mounted into the RabbitMQ pod as the AMQPS / federation listener cert.
+  Used by federation upstream peers connecting in over 5671 / 25672 / 4369.
+*/}}
+{{- $issuerName := .Values.federation.mtls.caRef | default (printf "%s-federation-mtls-ca" .Release.Name) -}}
+{{- $issuerKind := ternary "ClusterIssuer" "Issuer" .Values.federation.mtls.clusterIssuer -}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-federation-mtls-rabbitmq
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-mtls
+spec:
+  secretName: {{ .Release.Name }}-federation-mtls-rabbitmq-tls
+  duration: {{ .Values.federation.mtls.certDuration | quote }}
+  renewBefore: {{ .Values.federation.mtls.certRenewBefore | quote }}
+  commonName: {{ .Release.Name }}-rabbitmq-federation
+  usages:
+    - server auth
+    - client auth
+    - digital signature
+    - key encipherment
+  dnsNames:
+    - {{ .Release.Name }}-rabbitmq
+    - {{ .Release.Name }}-rabbitmq.{{ .Release.Namespace }}
+    - {{ .Release.Name }}-rabbitmq.{{ .Release.Namespace }}.svc
+    - {{ .Release.Name }}-rabbitmq.{{ .Release.Namespace }}.svc.cluster.local
+    {{- if .Values.federation.mtls.rabbitmqSan }}
+    - {{ .Values.federation.mtls.rabbitmqSan | quote }}
+    {{- end }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ $issuerName }}
+    kind: {{ $issuerKind }}
+    group: cert-manager.io
+{{- end }}

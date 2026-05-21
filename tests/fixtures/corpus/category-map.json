@@ -1,0 +1,7 @@
+{
+  "sample-clean": "printed_text",
+  "sample-degraded": "degraded_scan",
+  "sample-cjk": "cjk_text",
+  "sample-signature": "signature_document",
+  "sample-lowres": "low_resource_language"
+}

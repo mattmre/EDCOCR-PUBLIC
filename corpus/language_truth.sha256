@@ -1,0 +1,233 @@
+{
+  "approval_env": "CORPUS_GOLDEN_SET_UPDATE_APPROVED",
+  "composite_sha256": "d2bb0da7-7b5f19b5-91e79c54-e2b6313b-03e157aa-72595bca-4391bca8-a19e3789",
+  "entries": [
+    {
+      "path": "corpus/language_fixtures/flores-en-001.txt",
+      "sha256": "154d2e59-164525d5-6ca2b2b4-9867ed97-156ac7a6-b9610351-15a84d37-fbe9ddf5"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-003.txt",
+      "sha256": "63a7c4af-bda6d459-d131cc03-5731b9b1-e44d171f-3ba5c3b8-9261a714-173263a6"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-005.txt",
+      "sha256": "87d44048-528f4fdf-5e781436-bb4ad251-5105eaf9-e9a9848f-9962e0b8-92ae7d04"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-007.txt",
+      "sha256": "ac76c57b-4d46e0ca-d7b91113-df445857-bfb56b8e-cad94209-d280bed4-048a12dc"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-009.txt",
+      "sha256": "4114459c-a4210072-861a6c66-d163a019-94633584-08e1517d-638e1ffd-7ea5a544"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-011.txt",
+      "sha256": "39e2bc09-2697f432-e83c57a1-c0077146-61423f40-412b6ea2-4b3b355c-76f6bde0"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-013.txt",
+      "sha256": "93db8338-7e4841a7-5f84cc08-a93ff85d-57bb2529-cb04cac0-acdd1cd6-3f4fbd76"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-015.txt",
+      "sha256": "88ac2cf7-aa430535-9e0fa902-51196d64-dfcc3259-33051f6f-85c760de-2e653f98"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-017.txt",
+      "sha256": "f163ae27-2de3c98f-d3272e49-0bb6688e-765d4582-a0157456-cfac062a-01648ad3"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-019.txt",
+      "sha256": "806a3bf0-8eacd819-385878d2-3d04dfa3-24f45e35-1a5a7042-dbe361c2-a9888cd2"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-021.txt",
+      "sha256": "167db236-e92a8fe8-144d8320-3c80e7df-130cedfb-23734c0b-d425997b-4cc02b4b"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-023.txt",
+      "sha256": "9a365dbd-bae068c0-16142cd0-7bc10d5c-f801ba06-e58aaccf-7546e0a9-ee356860"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-025.txt",
+      "sha256": "d3483c58-300855ca-9a690c64-cd4a62b0-b8ab4415-b318e8da-e4907202-0130fdb9"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-027.txt",
+      "sha256": "2079f3e2-ff0af250-f82b677a-12c5ad40-d7c2c702-f4d7f4e3-14cf25db-d0107d49"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-029.txt",
+      "sha256": "ec72b172-55f9a59e-3d744337-4cc1eed3-5d6708f4-9baa012d-53ffaf2e-d3a9ec6a"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-031.txt",
+      "sha256": "5d0fb0b6-08b52407-aca6a10c-00a584d0-318bf417-9e1a7861-b29bfea7-29eae396"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-033.txt",
+      "sha256": "29a03b24-225ed56b-f2806001-41941a93-a9b42f2b-e8fe11cb-4bbd2684-fa960ca1"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-035.txt",
+      "sha256": "cd291341-e9ead639-e3726608-b0c47b5a-1318c9ac-48cc615d-5df5a1ec-69493295"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-037.txt",
+      "sha256": "11141098-47bf3a95-576ac116-5f243b17-a9428046-9d9a3607-7271fe4d-091f9008"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-039.txt",
+      "sha256": "e71d1e6b-269b29e0-419a33d4-7f8ef721-d18583ff-a7ad46fb-626196c7-c00129c1"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-041.txt",
+      "sha256": "0199c74d-3f57bd80-429d8fd1-403d2911-35e2d280-b886f085-962b06e7-56d7fd01"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-043.txt",
+      "sha256": "1573c63d-9f82f773-24a7ae59-85f398d9-30ff0868-ee0e4ca9-5e60b78b-65ccf4c7"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-en-045.txt",
+      "sha256": "5f1ff849-d0544812-dd598184-e6c4d1f7-dd49e20f-412624ca-56e19432-f366bb56"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-es-032.txt",
+      "sha256": "583c69d6-c005f144-0ceeee65-9483b012-bee83d44-336dbd0a-6aab7050-03cf6132"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-es-034.txt",
+      "sha256": "c800bf3b-ab838a62-efb624e4-1d37aa94-4591089f-cbd624b1-ba062bb4-7ea4a6d5"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-es-036.txt",
+      "sha256": "f3fa78b6-de7bfc8b-e5c0c429-2ffe6fce-ffbe7a2f-9c88fe35-5f56d295-d5b318f8"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-es-038.txt",
+      "sha256": "7068c05b-12c4a0c4-b4b586b5-d9d54a1e-7fc9e282-57db87f0-3b5e2133-8cc31e19"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-es-040.txt",
+      "sha256": "a15ce47b-6148cf3f-090b4288-7ccf53c3-bbd9e142-42325f64-dc572d08-b7a7da49"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-es-042.txt",
+      "sha256": "699a8446-a302296c-ced16712-612a0149-35167c78-cbf4522b-247952e1-9894c2ec"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-es-044.txt",
+      "sha256": "a63b1033-7654191a-74a2c29c-7dab7b08-6201de5f-801ed416-cc6aa84f-778cd3f3"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-002.txt",
+      "sha256": "26ff247f-eaabec29-6a9b066d-16689e53-c30f5a90-c9e6fc53-0791d2df-1e2f760a"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-004.txt",
+      "sha256": "c695178d-08780139-7b7c511f-580c9e36-c51de906-a4da6762-9583e57e-ecba9960"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-006.txt",
+      "sha256": "e4196905-acf014e3-31fd94cd-0ad75789-452e50a0-4155ce4d-8146d215-ee54cd94"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-008.txt",
+      "sha256": "7add9dfa-51fa34e6-4891d6a8-2d4375e4-24d7a5e8-8c7733e3-f34c052c-ae88869a"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-010.txt",
+      "sha256": "505e8a5b-5ed9b5ab-869c9cab-266362d5-661850f0-ff8ecfde-4d033e88-ce8e66bd"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-012.txt",
+      "sha256": "fde782be-8dd60c05-b0a2e869-a2023f22-31b7bbc2-1d814b64-20b88af9-772b666f"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-014.txt",
+      "sha256": "a2a7e63c-685679ae-082c8448-d4cbf4cc-1413a708-68058330-d35a62be-7cf19711"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-016.txt",
+      "sha256": "24366066-29229b13-77e4cd6f-dde08b38-46165f21-c81f2be7-9bea6c0c-e9395114"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-018.txt",
+      "sha256": "96fc2d81-107201b0-a4634206-a213b88b-46d17094-c1c65d76-e30f1ae1-b941c64b"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-020.txt",
+      "sha256": "a3750c70-f4d5046e-69d4d5d2-aec57634-d1fcfc10-d723fdd0-50a2ea9b-ac8f3f4d"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-022.txt",
+      "sha256": "1ab3b1d2-652904b0-7a16d1d9-5b0d2d95-c5334553-f88e1810-2087c9c5-631d007f"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-024.txt",
+      "sha256": "2f52f782-ed5767bc-f1f9cbee-3e0ec2e2-6fb61953-43e0a87a-7e10eb4b-0cfba265"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-026.txt",
+      "sha256": "016d1377-4c0b7360-f1c76e7a-6eed3b1d-63200312-6ecbcf83-85b6873f-ae4a1e53"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-028.txt",
+      "sha256": "f5794c88-9cfc62ef-8fe20fc0-4f1dbf82-33f27d2a-de57dc52-fc1912d5-6d167d6d"
+    },
+    {
+      "path": "corpus/language_fixtures/flores-fr-030.txt",
+      "sha256": "22fdcfa0-64a30f45-47d1626f-00f64ec2-eddf7561-1a2f6512-c326313b-6a706e6d"
+    },
+    {
+      "path": "corpus/language_truth.json",
+      "sha256": "c339545a-f7212563-a9ee313a-9a1838b4-5d78dfd0-a18eb000-b04b59ef-6ac38387"
+    },
+    {
+      "path": "tests/fixtures/corpus/ground-truth/sample-cjk.gt.txt",
+      "sha256": "51943f0c-b818646f-6a25d984-fe04aeac-cd2c83f5-7aa088d8-601b9c71-01cfcdb4"
+    },
+    {
+      "path": "tests/fixtures/corpus/ground-truth/sample-clean.gt.txt",
+      "sha256": "9cafbb1f-d4fce9f9-f40dd8f6-4e3a5e63-56d4b8d7-95127f34-c10ed335-1212535e"
+    },
+    {
+      "path": "tests/fixtures/corpus/ground-truth/sample-degraded.gt.txt",
+      "sha256": "9cafbb1f-d4fce9f9-f40dd8f6-4e3a5e63-56d4b8d7-95127f34-c10ed335-1212535e"
+    },
+    {
+      "path": "tests/fixtures/corpus/ground-truth/sample-lowres.gt.txt",
+      "sha256": "7fc7eb91-05af37b0-3558a77a-a215e467-c8cf815b-49e74f48-e9d2543e-e9c3c2b4"
+    },
+    {
+      "path": "tests/fixtures/corpus/ground-truth/sample-signature.gt.txt",
+      "sha256": "dba85b76-f8c8f361-88f552bc-1c0348dd-d48ea4a3-c4a5e0df-f3c19492-c33f1ab3"
+    },
+    {
+      "path": "tests/fixtures/corpus/output/sample-cjk.txt",
+      "sha256": "51943f0c-b818646f-6a25d984-fe04aeac-cd2c83f5-7aa088d8-601b9c71-01cfcdb4"
+    },
+    {
+      "path": "tests/fixtures/corpus/output/sample-clean.txt",
+      "sha256": "6bee0006-64aa5c7c-7f607833-cfa836bc-0e5993f4-82444ec6-46e85c9f-316b8815"
+    },
+    {
+      "path": "tests/fixtures/corpus/output/sample-degraded.txt",
+      "sha256": "f857c41a-203d961e-977c91e8-6f7124f1-55939eb9-26b8b346-c6ff14cf-5420d0c9"
+    },
+    {
+      "path": "tests/fixtures/corpus/output/sample-lowres.txt",
+      "sha256": "7fc7eb91-05af37b0-3558a77a-a215e467-c8cf815b-49e74f48-e9d2543e-e9c3c2b4"
+    },
+    {
+      "path": "tests/fixtures/corpus/output/sample-signature.txt",
+      "sha256": "dba85b76-f8c8f361-88f552bc-1c0348dd-d48ea4a3-c4a5e0df-f3c19492-c33f1ab3"
+    }
+  ],
+  "gate": " E-A-010 frozen language corpus",
+  "schema_version": "1.0",
+  "truth_path": "corpus/language_truth.json"
+}

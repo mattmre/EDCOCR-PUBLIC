@@ -1,0 +1,115 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-coordinator
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coordinator
+spec:
+  replicas: {{ .Values.coordinator.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: coordinator
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.labels" . | nindent 8 }}
+        app.kubernetes.io/component: coordinator
+    spec:
+      serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.coordinatorTerminationGracePeriodSeconds | default 60 }}
+      {{- with .Values.coordinator.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: migrate
+          image: {{ include "ocr-local.coordinatorImage" . }}
+          imagePullPolicy: {{ .Values.image.coordinator.pullPolicy | default "IfNotPresent" }}
+          command: ["python", "manage.py", "migrate", "--noinput"]
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secret
+          {{- with .Values.coordinator.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      containers:
+        - name: coordinator
+          image: {{ include "ocr-local.coordinatorImage" . }}
+          imagePullPolicy: {{ .Values.image.coordinator.pullPolicy | default "IfNotPresent" }}
+          command:
+            - gunicorn
+            - coordinator.coordinator.wsgi:application
+            - --bind
+            - 0.0.0.0:8000
+            - --workers
+            - {{ .Values.coordinator.gunicorn.workers | quote }}
+            - --timeout
+            - {{ .Values.coordinator.gunicorn.timeout | quote }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secret
+            {{- if .Values.federation.enabled }}
+            - configMapRef:
+                name: {{ .Release.Name }}-federation-overlay
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /api/v1/metrics/
+              port: 8000
+              {{- if .Values.secrets.metricsApiKey }}
+              httpHeaders:
+                - name: X-Api-Key
+                  value: {{ .Values.secrets.metricsApiKey | quote }}
+              {{- end }}
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v1/metrics/
+              port: 8000
+              {{- if .Values.secrets.metricsApiKey }}
+              httpHeaders:
+                - name: X-Api-Key
+                  value: {{ .Values.secrets.metricsApiKey | quote }}
+              {{- end }}
+            periodSeconds: 30
+          startupProbe:
+            httpGet:
+              path: /api/v1/metrics/
+              port: 8000
+              {{- if .Values.secrets.metricsApiKey }}
+              httpHeaders:
+                - name: X-Api-Key
+                  value: {{ .Values.secrets.metricsApiKey | quote }}
+              {{- end }}
+            failureThreshold: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.coordinator.resources | nindent 12 }}
+          {{- with .Values.coordinator.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
+          volumeMounts:
+            - name: federation-mtls-client
+              mountPath: /etc/federation-mtls
+              readOnly: true
+          {{- end }}
+      {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
+      volumes:
+        - name: federation-mtls-client
+          secret:
+            secretName: {{ .Release.Name }}-federation-mtls-client-tls
+            defaultMode: 0440
+      {{- end }}

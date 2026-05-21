@@ -1,0 +1,57 @@
+{
+  "schema_version": "translation-bundle-v1",
+  "document_id": "doc-fixture-001",
+  "source_ocr_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "source_bundle_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "target_language": "fr",
+  "translated_spans": [
+    {
+      "span_id": "p1-s1",
+      "page_number": 1,
+      "source_text": "Hello world.",
+      "translated_text": "Hello world.",
+      "source_bbox": [10.0, 20.0, 150.0, 40.0],
+      "source_bboxes": [[10.0, 20.0, 150.0, 40.0]],
+      "source_language": "en",
+      "target_language": "fr",
+      "confidence": 1.0,
+      "quality_score": null,
+      "engine_id": "passthrough",
+      "glossary_hits": []
+    }
+  ],
+  "engine_provider": {
+    "id": "passthrough",
+    "family": "passthrough",
+    "is_local": true,
+    "is_cloud": false,
+    "license": "Apache-2.0",
+    "provider_retention_class": "local_only"
+  },
+  "model_provenance": {
+    "weights_sha256": "n/a",
+    "runtime": "ocr_local.translation",
+    "runtime_version": "builtin"
+  },
+  "quality_scores": {
+    "mean_score": null,
+    "below_threshold_count": 0,
+    "quality_class": "draft"
+  },
+  "certified": false,
+  "custody_chain_head": "custody-head-fixture-001",
+  "artifact_manifest": {
+    "artifacts": [
+      {
+        "artifact_id": "source_document_bundle",
+        "artifact_type": "document_bundle",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      {
+        "artifact_id": "translation_bundle",
+        "artifact_type": "translation_bundle"
+      }
+    ]
+  },
+  "glossary_hits": []
+}

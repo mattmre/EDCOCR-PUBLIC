@@ -1,0 +1,140 @@
+{{- if .Values.redis.enabled }}
+# =============================================================================
+# Redis Headless Service
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-redis
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  clusterIP: None
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+  selector:
+    {{- include "ocr-local.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+---
+# =============================================================================
+# Redis StatefulSet
+# =============================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-redis
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  serviceName: {{ .Release.Name }}-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      {{- with .Values.redis.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - >-
+              redis-server
+              --requirepass $(REDIS_PASSWORD)
+              --appendonly yes
+              --maxmemory {{ .Values.redis.maxmemory }}
+              --maxmemory-policy {{ .Values.redis.maxmemoryPolicy }}
+              {{- if .Values.tls.enabled }}
+              --tls-port 6380
+              --tls-cert-file /etc/tls/tls.crt
+              --tls-key-file /etc/tls/tls.key
+              --tls-ca-cert-file /etc/tls/ca.crt
+              --tls-auth-clients no
+              {{- end }}
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+            {{- if .Values.tls.enabled }}
+            - name: redis-tls
+              containerPort: 6380
+              protocol: TCP
+            {{- end }}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: REDIS_PASSWORD
+          {{- with .Values.redis.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.redis.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - REDISCLI_AUTH=$REDIS_PASSWORD redis-cli ping | grep -q PONG
+            periodSeconds: 10
+            initialDelaySeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - REDISCLI_AUTH=$REDIS_PASSWORD redis-cli ping | grep -q PONG
+            periodSeconds: 10
+            initialDelaySeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+            {{- if .Values.tls.enabled }}
+            - name: tls-certs
+              mountPath: /etc/tls
+              readOnly: true
+            {{- end }}
+      {{- if .Values.tls.enabled }}
+      volumes:
+        - name: tls-certs
+          secret:
+            secretName: {{ include "ocr-local.fullname" . }}-redis-tls
+            defaultMode: 0440
+      {{- else }}
+      volumes: []
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- if .Values.redis.storageClass }}
+        storageClassName: {{ .Values.redis.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.redis.storage }}
+{{- end }}

@@ -1,0 +1,89 @@
+# Local Docker/kind sandbox overlay.
+#
+# This file is intentionally development-only. It keeps external translation
+# disabled, avoids GPU scheduling, reduces storage, and disables optional
+# production services that make a local kind rehearsal noisy. It is not a
+# production, staging, residency, or operator approval values file.
+
+coordinator:
+  replicas: 1
+  env:
+    DJANGO_ALLOWED_HOSTS: "*"
+    DEPLOYMENT_ENV: development
+    PRODUCTION_READINESS_ACK: "false"
+
+externalTranslation:
+  preferExternal: "false"
+  url: ""
+  providerId: "passthrough"
+  timeoutSeconds: "30"
+  readinessPath: "/health"
+
+frontend:
+  enabled: true
+  replicas: 1
+
+gpuWorker:
+  replicas: 0
+  autoscaling:
+    enabled: false
+
+cpuOcrWorker:
+  enabled: true
+  replicas: 1
+  autoscaling:
+    enabled: false
+
+cpuWorker:
+  replicas: 1
+  autoscaling:
+    enabled: false
+
+layoutCpuWorker:
+  enabled: false
+
+nlpGpuWorker:
+  enabled: false
+
+layoutlmWorker:
+  enabled: false
+  gpu:
+    enabled: false
+
+postgresql:
+  storage: 1Gi
+  backup:
+    enabled: false
+
+rabbitmq:
+  replicas: 1
+  storage: 1Gi
+
+redis:
+  storage: 1Gi
+  sentinel:
+    enabled: false
+
+ingress:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+
+prometheus:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+  rules:
+    enabled: false
+  grafana:
+    enabled: false
+
+monitoring:
+  prometheus:
+    enabled: false
+  grafana:
+    enabled: false
+
+federation:
+  enabled: false

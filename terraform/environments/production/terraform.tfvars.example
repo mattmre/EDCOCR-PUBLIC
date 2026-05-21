@@ -1,0 +1,90 @@
+# =============================================================================
+# Production Environment -- terraform.tfvars Example
+# EDCOCR -- Cloud-Native Deployment
+#
+# Usage:
+#   1. Copy this file to terraform.tfvars
+#   2. Replace all values marked with "# REPLACE:" comments
+#   3. Uncomment the section for your target cloud provider
+#   4. Run: terraform init && terraform plan
+#   5. Review the plan carefully before applying to production
+#
+# NEVER commit terraform.tfvars to version control.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# General
+# ---------------------------------------------------------------------------
+
+# Cloud provider: "aws", "gcp", or "oracle"
+cloud_provider = "aws"
+cluster_name   = "ocr-local-production"
+environment    = "production"
+
+# ---------------------------------------------------------------------------
+# AWS Configuration (used when cloud_provider = "aws")
+# ---------------------------------------------------------------------------
+
+aws_region = "us-east-1"
+
+# Production: larger node pools with headroom for burst traffic
+# cpu_node_instance_types = ["m6i.2xlarge"]
+# cpu_node_min_size       = 2
+# cpu_node_max_size       = 20
+# cpu_node_desired_size   = 3
+
+# gpu_node_instance_types = ["g5.xlarge"]
+# gpu_node_min_size       = 1
+# gpu_node_max_size       = 16
+# gpu_node_desired_size   = 2
+# gpu_node_disk_size      = 200
+
+# ---------------------------------------------------------------------------
+# GCP Configuration (uncomment if cloud_provider = "gcp")
+# ---------------------------------------------------------------------------
+
+# REPLACE: Set your GCP project ID (required for GCP deployments)
+# gcp_project_id  = "my-gcp-project-id"
+# gcp_region      = "us-central1"
+# release_channel = "STABLE"
+
+# Production GPU settings
+# gpu_machine_type   = "n1-standard-8"
+# gpu_type           = "nvidia-tesla-t4"
+# gpu_node_min_count = 1
+# gpu_node_max_count = 16
+# gpu_disk_size_gb   = 200
+
+# ---------------------------------------------------------------------------
+# Oracle Configuration (uncomment if cloud_provider = "oracle")
+# ---------------------------------------------------------------------------
+
+# REPLACE: Set your OCI compartment OCID (required for Oracle deployments)
+# Find it: OCI Console > Identity > Compartments > Copy OCID
+# oci_compartment_id = "ocid1.compartment.oc1..aaaaaaaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# oci_region         = "us-ashburn-1"
+
+# REPLACE: Set the OKE node image OCID for your region
+# Find it: OCI Console > Compute > Images > filter "Oracle-Linux-8" > copy OCID
+# See also: docs/operations/terraform-deployment-guide.md
+# oci_node_image_id     = "ocid1.image.oc1.iad.aaaaaaaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# oci_gpu_node_image_id = "ocid1.image.oc1.iad.aaaaaaaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# Production: larger node pools
+# cpu_node_pool_size = 3
+# cpu_node_ocpus     = 8
+# cpu_node_memory_gb = 64
+# gpu_node_pool_size = 2
+# gpu_boot_volume_gb = 200
+
+# ---------------------------------------------------------------------------
+# Monitoring (REQUIRED for production)
+# ---------------------------------------------------------------------------
+
+# REPLACE: Set a strong password for the Grafana admin dashboard (required)
+# grafana_admin_password = "use-a-strong-generated-password-here"
+
+# Production monitoring defaults
+# prometheus_retention    = "30d"
+# prometheus_storage_size = "100Gi"
+# grafana_ingress_enabled = true

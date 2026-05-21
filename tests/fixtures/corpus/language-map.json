@@ -1,0 +1,7 @@
+{
+  "sample-clean": "en",
+  "sample-degraded": "en",
+  "sample-cjk": "multilingual",
+  "sample-signature": "en",
+  "sample-lowres": "multilingual"
+}

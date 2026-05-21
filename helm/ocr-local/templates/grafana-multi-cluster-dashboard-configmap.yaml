@@ -1,0 +1,191 @@
+{{- if and .Values.observability .Values.observability.federation .Values.observability.federation.enabled }}
+{{- if .Values.observability.grafana.multi_cluster_dashboard.enabled }}
+# =============================================================================
+#  -- C3 Federated Observability (multi-cluster Grafana)
+#
+# 12-panel dashboard for cross-cluster EDCOCR fleets. Variables:
+#   * cluster -- list of `external_labels.cluster` values
+#   * region  -- list of `external_labels.region` values (optional)
+#
+# All panels query the federated Prometheus datasource whose Grafana UID is
+# `observability.grafana.multi_cluster_dashboard.datasource_uid`. The
+# `grafana_dashboard: "1"` label triggers automatic import via the standard
+# Grafana sidecar pattern.
+#
+# Panel: "Cross-Cluster Federation Lag" consumes the `ocr_rabbitmq_federation_lag_seconds`
+# metric emitted by C2's federation reconciler. The dashboard tolerates the
+# metric being absent -- the panel will simply render "No data".
+# =============================================================================
+{{- $datasourceUid := .Values.observability.grafana.multi_cluster_dashboard.datasource_uid -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-grafana-multi-cluster-dashboard
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: observability-federation
+    {{ .Values.prometheus.grafana.dashboardLabel | default "grafana_dashboard" }}: {{ .Values.prometheus.grafana.dashboardLabelValue | default "1" | quote }}
+data:
+  ocr-multi-cluster.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "title": "EDCOCR -- Multi-Cluster Federation",
+      "uid": "ocr-multi-cluster",
+      "schemaVersion": 38,
+      "version": 1,
+      "refresh": "30s",
+      "time": { "from": "now-6h", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "cluster",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+            "query": "label_values(up, cluster)",
+            "refresh": 1,
+            "includeAll": true,
+            "multi": true,
+            "current": { "text": "All", "value": "$__all" }
+          },
+          {
+            "name": "region",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+            "query": "label_values(up, region)",
+            "refresh": 1,
+            "includeAll": true,
+            "multi": true,
+            "current": { "text": "All", "value": "$__all" }
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Cluster Heartbeat",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+          "gridPos": { "h": 6, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            { "expr": "count by (cluster) (up{cluster=~\"$cluster\"} == 1)", "legendFormat": "{{`{{cluster}}`}}" }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Per-Cluster Job Throughput",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            { "expr": "sum by (cluster) (rate(ocr_pages_processed_total{cluster=~\"$cluster\"}[5m]))", "legendFormat": "{{`{{cluster}}`}}" }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Per-Cluster Queue Depth",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+          "targets": [
+            { "expr": "sum by (cluster, queue) (rabbitmq_queue_messages{cluster=~\"$cluster\"})", "legendFormat": "{{`{{cluster}}/{{queue}}`}}" }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Per-Cluster GPU Utilization",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            { "expr": "avg by (cluster) (DCGM_FI_DEV_GPU_UTIL{cluster=~\"$cluster\"})", "legendFormat": "{{`{{cluster}}`}}" }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Per-Cluster GPU VRAM",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+          "targets": [
+            { "expr": "avg by (cluster) (DCGM_FI_DEV_FB_USED{cluster=~\"$cluster\"})", "legendFormat": "{{`{{cluster}}`}}" }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Per-Cluster Worker Count",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "targets": [
+            { "expr": "sum by (cluster) (ocr_workers_total{cluster=~\"$cluster\"})", "legendFormat": "{{`{{cluster}}`}}" }
+          ]
+        },
+        {
+          "id": 7,
+          "title": "Per-Cluster Failure Rate",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+          "targets": [
+            { "expr": "avg by (cluster) (ocr_job_error_rate_1h{cluster=~\"$cluster\"})", "legendFormat": "{{`{{cluster}}`}}" }
+          ]
+        },
+        {
+          "id": 8,
+          "title": "Per-Cluster Tail Latency p95",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+          "targets": [
+            { "expr": "avg by (cluster) (ocr_page_processing_time_p95_ms{cluster=~\"$cluster\"})", "legendFormat": "{{`{{cluster}}`}}" }
+          ]
+        },
+        {
+          "id": 9,
+          "title": "Per-Cluster Tail Latency p99",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
+          "targets": [
+            { "expr": "avg by (cluster) (ocr_page_processing_time_p99_ms{cluster=~\"$cluster\"})", "legendFormat": "{{`{{cluster}}`}}" }
+          ]
+        },
+        {
+          "id": 10,
+          "title": "Per-Cluster Active Tenants",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+          "targets": [
+            { "expr": "count by (cluster) (count by (cluster, tenant_id) (ocr_jobs_total{cluster=~\"$cluster\"}))", "legendFormat": "{{`{{cluster}}`}}" }
+          ]
+        },
+        {
+          "id": 11,
+          "title": "Cross-Cluster Federation Lag",
+          "type": "timeseries",
+          "description": "Rabbit federation lag emitted by C2 reconciler. May be empty if C2 not deployed.",
+          "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 38 },
+          "targets": [
+            { "expr": "max by (cluster, upstream) (ocr_rabbitmq_federation_lag_seconds{cluster=~\"$cluster\"})", "legendFormat": "{{`{{cluster}} <- {{upstream}}`}}" }
+          ]
+        },
+        {
+          "id": 12,
+          "title": "Cross-Cluster Translation Throughput",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "{{ $datasourceUid }}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+          "targets": [
+            { "expr": "sum by (cluster) (rate(ocr_translation_chars_total{cluster=~\"$cluster\"}[5m]))", "legendFormat": "{{`{{cluster}}`}}" }
+          ]
+        }
+      ]
+    }
+{{- end }}
+{{- end }}

@@ -1,0 +1,105 @@
+# =============================================================================
+# PodDisruptionBudget: GPU Worker
+# =============================================================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-gpu-worker-pdb
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gpu-worker
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gpu-worker
+---
+# =============================================================================
+# PodDisruptionBudget: Coordinator
+# =============================================================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-coordinator-pdb
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coordinator
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: coordinator
+---
+# =============================================================================
+# PodDisruptionBudget: PostgreSQL
+# =============================================================================
+{{- if .Values.postgresql.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-postgres-pdb
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres
+{{- end }}
+---
+# =============================================================================
+# PodDisruptionBudget: RabbitMQ
+# =============================================================================
+{{- if .Values.rabbitmq.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-rabbitmq-pdb
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rabbitmq
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: rabbitmq
+{{- end }}
+---
+# =============================================================================
+# PodDisruptionBudget: Redis
+# =============================================================================
+{{- if .Values.redis.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-redis-pdb
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+{{- end }}
+---
+# Celery Beat PDB — singleton; missed beats catch up on restart.
+# maxUnavailable: 1 allows eviction during node drain.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-celery-beat-pdb
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: celery-beat

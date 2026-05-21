@@ -1,0 +1,64 @@
+{{- if .Values.federation.enabled }}
+# =============================================================================
+# Federation Cluster Registry (item C2)
+#
+# Authoritative inventory of peer RabbitMQ clusters consumed by the
+# federation reconciler (see federation-reconciler-deployment.yaml). The
+# reconciler watches this ConfigMap, probes each peer's Management API for
+# liveness, and adds/removes federation Policy resources accordingly.
+#
+# Each entry in `.Values.federation.clusters` is rendered as one item in
+# `data.clusters.json`; the reconciler parses the JSON document on every
+# reconcile loop. Per-cluster credentials remain in their referenced
+# Secrets and are NEVER inlined here.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-federation-cluster-registry
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation
+    app.kubernetes.io/managed-by: Helm
+    federation.ocr-local.io/role: registry
+data:
+  clusters.json: |-
+    {
+      "version": 1,
+      "self": {
+        "name": {{ .Values.federation.clusterName | quote }},
+        "presigned_endpoint": {{ .Values.federation.presignedEndpoint | quote }}
+      },
+      "queue_classes": [
+        {{- $first := true }}
+        {{- range .Values.federation.queue_classes }}
+        {{- if $first }}{{ . | quote }}{{ $first = false }}{{ else }}, {{ . | quote }}{{ end }}
+        {{- end }}
+      ],
+      "healthcheck_interval_seconds": {{ .Values.federation.healthcheck_interval_seconds | int }},
+      "unhealthy_threshold_seconds": {{ .Values.federation.unhealthy_threshold_seconds | int }},
+      "clusters": [
+        {{- $clusterFirst := true }}
+        {{- range $idx, $c := .Values.federation.clusters }}
+        {{- if $clusterFirst }}{{ $clusterFirst = false }}{{ else }},{{ end }}
+        {
+          "name": {{ $c.name | quote }},
+          "region": {{ default "" $c.region | quote }},
+          "rabbitmq_uri": {{ $c.rabbitmq_uri | quote }},
+          "management_uri": {{ default "" $c.management_uri | quote }},
+          "priority": {{ default 10 $c.priority | int }},
+          "tags": [
+            {{- $tagFirst := true }}
+            {{- range (default (list) $c.tags) }}
+            {{- if $tagFirst }}{{ . | quote }}{{ $tagFirst = false }}{{ else }}, {{ . | quote }}{{ end }}
+            {{- end }}
+          ],
+          "tls": {
+            "enabled": {{ default false (((default (dict) $c.tls)).enabled) }},
+            "ca_secret_ref": {{ default "" (((default (dict) $c.tls)).ca_secret_ref) | quote }}
+          }
+        }
+        {{- end }}
+      ]
+    }
+{{- end }}

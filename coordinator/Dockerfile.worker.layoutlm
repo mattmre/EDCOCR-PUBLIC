@@ -1,0 +1,109 @@
+# LayoutLMv3 worker image for document understanding tasks.
+# Pre-downloads the LayoutLMv3 model at build time for air-gapped deployment.
+#
+# Build args:
+#   LAYOUTLM_MODEL    — HuggingFace model ID (default: microsoft/layoutlmv3-base)
+#   USE_GPU           — "1" to install torch+CUDA, "0" for CPU-only (default: 0)
+#
+# Usage:
+#   docker build -f coordinator/Dockerfile.worker.layoutlm -t ocr-local/worker-layoutlm .
+#   docker build -f coordinator/Dockerfile.worker.layoutlm --build-arg USE_GPU=1 -t ocr-local/worker-layoutlm:gpu .
+
+FROM python:3.11-slim-bookworm AS base
+
+# System dependencies (minimal — no OCR libs needed for LayoutLMv3)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    nfs-common \
+    curl \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ---------------------------------------------------------------------------
+# Install Python requirements
+# ---------------------------------------------------------------------------
+COPY coordinator/requirements.txt /app/coordinator-requirements.txt
+RUN pip install --no-cache-dir -r /app/coordinator-requirements.txt
+
+# ---------------------------------------------------------------------------
+# Install LayoutLMv3 dependencies (torch, transformers, timm)
+# GPU build installs torch+CUDA; CPU build installs torch CPU-only.
+# ---------------------------------------------------------------------------
+ARG USE_GPU=0
+RUN if [ "$USE_GPU" = "1" ]; then \
+        pip install --no-cache-dir \
+            torch torchvision \
+            transformers>=4.30.0 \
+            timm \
+            Pillow; \
+    else \
+        pip install --no-cache-dir \
+            torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+        pip install --no-cache-dir \
+            transformers>=4.30.0 \
+            timm \
+            Pillow; \
+    fi
+
+# ---------------------------------------------------------------------------
+# Pre-download LayoutLMv3 model weights at build time (air-gapped ready)
+# ---------------------------------------------------------------------------
+ARG LAYOUTLM_MODEL=microsoft/layoutlmv3-base
+ENV LAYOUTLM_MODEL_PATH=${LAYOUTLM_MODEL}
+ENV HF_HOME=/models/huggingface
+
+RUN python3 -c "\
+from transformers import AutoTokenizer, AutoModel; \
+import os; \
+model_id = os.environ.get('LAYOUTLM_MODEL_PATH', 'microsoft/layoutlmv3-base'); \
+print(f'Downloading LayoutLMv3 model: {model_id}'); \
+AutoTokenizer.from_pretrained(model_id); \
+AutoModel.from_pretrained(model_id); \
+print('Model download complete');\
+"
+
+# ---------------------------------------------------------------------------
+# Copy application code
+# ---------------------------------------------------------------------------
+COPY . /app/
+
+ENV PYTHONPATH=/app:/app/coordinator
+ENV DJANGO_SETTINGS_MODULE=coordinator.settings
+ENV ENABLE_LAYOUTLM=true
+
+# ---------------------------------------------------------------------------
+# Remove build-essential from runtime image ( / INFRA-002)
+# gcc/g++/make are only needed for compiling C extensions during pip install;
+# the compiled .so files remain but the toolchain is stripped to reduce
+# image size (~200MB) and CVE surface area.
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get purge -y --auto-remove build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Non-root runtime user (SEC-003)
+# ---------------------------------------------------------------------------
+RUN groupadd -r -g 1000 ocr && \
+    useradd -r -u 1000 -g ocr -d /home/ocr -s /sbin/nologin ocr && \
+    mkdir -p /home/ocr && \
+    chown -R ocr:ocr /models/huggingface /home/ocr
+
+USER ocr
+
+# ---------------------------------------------------------------------------
+# Docker HEALTHCHECK — Celery worker inspect ping
+# start-period=120s gives time for LayoutLMv3 model loading.
+# ---------------------------------------------------------------------------
+HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
+    CMD celery -A coordinator inspect ping --timeout=10 -d celery@$(hostname) || exit 1
+
+# Default: LayoutLMv3 worker listening on ocr_layoutlm queue
+CMD ["celery", "-A", "coordinator", "worker", \
+     "-Q", "ocr_layoutlm", \
+     "-c", "2", \
+     "--hostname", "worker-layoutlm@%h", \
+     "-l", "info"]

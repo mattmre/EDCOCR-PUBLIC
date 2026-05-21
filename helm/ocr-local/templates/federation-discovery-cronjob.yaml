@@ -1,0 +1,86 @@
+{{- if and .Values.federation.enabled .Values.federation.discovery.enabled }}
+# =============================================================================
+# Federation DNS-SD Discovery CronJob (item C7)
+#
+# Periodically queries DNS-SD (RFC 6763) for peer clusters advertising the
+# `_ocr-federation._tcp` service type, validates each record, and reconciles
+# the result into the federation cluster-registry ConfigMap consumed by
+# `coordinator.federation.cluster_router`.
+#
+# This sidecar does NOT participate in the Celery routing path; it only
+# writes to the same ConfigMap that ClusterRegistry reads on startup.
+# Default-OFF: enable via `federation.discovery.enabled=true`.
+# =============================================================================
+{{- $repo := default .Values.image.coordinator.repository .Values.federation.reconciler.image.repository -}}
+{{- $tag := default (default .Chart.AppVersion .Values.image.coordinator.tag) .Values.federation.reconciler.image.tag -}}
+{{- $pullPolicy := default (default "IfNotPresent" .Values.image.coordinator.pullPolicy) .Values.federation.reconciler.image.pullPolicy -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-federation-discovery
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-discovery
+    app.kubernetes.io/managed-by: Helm
+spec:
+  schedule: {{ .Values.federation.discovery.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "ocr-local.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: federation-discovery
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ .Release.Name }}-federation-discovery
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: discovery
+              image: "{{ $repo }}:{{ $tag }}"
+              imagePullPolicy: {{ $pullPolicy }}
+              command:
+                - python
+                - -m
+                - federation.discovery
+              env:
+                - name: OCR_FEDERATION_DISCOVERY_ENABLED
+                  value: "true"
+                - name: OCR_FEDERATION_DISCOVERY_DOMAIN
+                  value: {{ .Values.federation.discovery.domain | quote }}
+                - name: OCR_FEDERATION_DISCOVERY_SERVICE_TYPE
+                  value: {{ .Values.federation.discovery.serviceType | quote }}
+                - name: OCR_FEDERATION_DISCOVERY_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: OCR_FEDERATION_DISCOVERY_CONFIGMAP
+                  value: {{ .Values.federation.discovery.configmapName | quote }}
+                - name: OCR_FEDERATION_DISCOVERY_DRY_RUN
+                  value: {{ .Values.federation.discovery.dryRun | quote }}
+                - name: OCR_FEDERATION_DISCOVERY_LOG_LEVEL
+                  value: "INFO"
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+{{- end }}

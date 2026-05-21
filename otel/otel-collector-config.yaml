@@ -1,0 +1,127 @@
+# OpenTelemetry Collector configuration for EDCOCR
+# Production-ready with receivers, processors, exporters, and pipelines.
+#
+# Environment variables (set in docker-compose or shell):
+#   OTEL_ENVIRONMENT      - deployment environment label (default: development)
+#   OTEL_MEMORY_LIMIT_MIB - memory limiter hard cap in MiB (default: 512)
+#   OTEL_MEMORY_SPIKE_MIB - memory limiter spike limit in MiB (default: 128)
+#   OTEL_BATCH_TIMEOUT    - batch processor send interval (default: 5s)
+#   OTEL_BATCH_SIZE       - max batch export size (default: 512)
+#   OTEL_JAEGER_ENDPOINT  - Jaeger/Tempo OTLP gRPC endpoint (default: jaeger:4317)
+
+# --- Extensions ---
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+  pprof:
+    endpoint: 0.0.0.0:1777
+
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+# --- Receivers ---
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+# --- Processors ---
+processors:
+  batch:
+    timeout: ${env:OTEL_BATCH_TIMEOUT:-5s}
+    send_batch_size: ${env:OTEL_BATCH_SIZE:-512}
+    send_batch_max_size: 1024
+
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: ${env:OTEL_MEMORY_LIMIT_MIB:-512}
+    spike_limit_mib: ${env:OTEL_MEMORY_SPIKE_MIB:-128}
+
+  attributes:
+    actions:
+      - key: service.namespace
+        value: ocr-local
+        action: upsert
+      - key: deployment.environment
+        value: ${env:OTEL_ENVIRONMENT:-development}
+        action: upsert
+
+  resource:
+    attributes:
+      - key: service.version
+        value: "4.1.0"
+        action: upsert
+
+# --- Exporters ---
+exporters:
+  # OTLP exporter for traces — sends to Jaeger, Tempo, or any OTLP-compatible backend
+  otlp/traces:
+    endpoint: ${env:OTEL_JAEGER_ENDPOINT:-jaeger:4317}
+    tls:
+      insecure: true
+
+  # Prometheus exporter for metrics — scrape on :8889/metrics
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: ocr_local
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Debug exporter for development (stdout)
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+# --- Service / Pipelines ---
+service:
+  extensions:
+    - health_check
+    - pprof
+    - zpages
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888
+
+  pipelines:
+    traces:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - attributes
+        - resource
+        - batch
+      exporters:
+        - otlp/traces
+        - debug
+
+    metrics:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - attributes
+        - resource
+        - batch
+      exporters:
+        - prometheus
+        - debug
+
+    logs:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - attributes
+        - resource
+        - batch
+      exporters:
+        - debug

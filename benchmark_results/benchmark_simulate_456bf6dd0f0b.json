@@ -1,0 +1,32 @@
+{
+  "run_id": "456bf6dd0f0b",
+  "timestamp": "2026-02-11T01:50:54.367287+00:00",
+  "mode": "simulate",
+  "pipeline_version": "0.3.1",
+  "config": {
+    "NUM_EXTRACTORS": 8,
+    "NUM_WORKERS": 12,
+    "NUM_COMPRESSORS": 8,
+    "IMAGE_QUEUE_SIZE": 200,
+    "CHUNK_QUEUE_SIZE": 50,
+    "RESULT_QUEUE_SIZE": 5000,
+    "COMPRESSION_QUEUE_SIZE": 5000,
+    "DPI": 300
+  },
+  "total_duration_seconds": 38.39732676201125,
+  "pages_processed": 500,
+  "pages_per_minute": 781.3043909525696,
+  "avg_time_per_page_ms": 558.4041004332403,
+  "p50_time_per_page_ms": 555.619882439667,
+  "p95_time_per_page_ms": 726.7670752889279,
+  "p99_time_per_page_ms": 753.0545790328633,
+  "peak_memory_mb": 404.79962171081297,
+  "avg_memory_mb": 403.2037739894063,
+  "extraction_avg_ms": 55.341562917430664,
+  "ocr_avg_ms": 351.96267829272017,
+  "assembly_avg_ms": 24.75343150331139,
+  "compression_avg_ms": 126.34642771977812,
+  "extraction_queue_throughput": 13.021739849209494,
+  "ocr_queue_throughput": 13.021739849209494,
+  "assembly_queue_throughput": 13.021739849209494
+}

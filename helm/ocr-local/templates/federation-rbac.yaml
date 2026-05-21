@@ -1,0 +1,57 @@
+{{- if and .Values.federation.enabled .Values.federation.reconciler.enabled }}
+# =============================================================================
+# Federation Reconciler RBAC (item C2)
+#
+# Minimal namespace-scoped RBAC for the federation reconciler. The reconciler
+# only needs read access to its own ConfigMap registry and any per-peer
+# Secrets it references; it must NEVER create or delete cluster-scoped
+# resources or escalate beyond the install namespace.
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-federation-reconciler
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation
+    app.kubernetes.io/managed-by: Helm
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-federation-reconciler
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  # The reconciler may patch federation Policy CRs to remove unhealthy
+  # peers (and re-create them on recovery). It MUST NOT touch Federation
+  # CRs, queues, or any non-federation resources.
+  - apiGroups: ["rabbitmq.com"]
+    resources: ["policies"]
+    verbs: ["get", "list", "watch", "patch", "update", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-federation-reconciler
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation
+    app.kubernetes.io/managed-by: Helm
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-federation-reconciler
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ .Release.Name }}-federation-reconciler
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

@@ -1,0 +1,111 @@
+{{- if and .Values.postgresql.enabled .Values.postgresql.backup.enabled }}
+# =============================================================================
+# PostgreSQL Backup CronJob
+# Runs pg_dump on schedule and stores compressed backups in a PVC or S3
+# =============================================================================
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-postgres-backup
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-backup
+spec:
+  schedule: {{ .Values.postgresql.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.postgresql.backup.historyLimit }}
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: {{ .Values.postgresql.backup.timeoutSeconds }}
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "ocr-local.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: postgres-backup
+        spec:
+          restartPolicy: OnFailure
+          {{- with .Values.postgresql.podSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: pg-backup
+              image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+              imagePullPolicy: IfNotPresent
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+                  BACKUP_FILE="/backups/ocr-coordinator-${TIMESTAMP}.sql.gz"
+                  _BACKUP_OK=false
+                  trap 'if ! ${_BACKUP_OK}; then rm -f "${BACKUP_FILE}"; fi' EXIT
+                  echo "Starting PostgreSQL backup at ${TIMESTAMP}..."
+                  pg_dump \
+                    -h {{ .Release.Name }}-postgres \
+                    -U ocr \
+                    -d ocr_coordinator \
+                    --no-password \
+                    --format=custom \
+                    --compress=6 \
+                    -f "${BACKUP_FILE}"
+                  _BACKUP_OK=true
+                  FILESIZE=$(stat -c%s "${BACKUP_FILE}" 2>/dev/null || stat -f%z "${BACKUP_FILE}")
+                  echo "Backup complete: ${BACKUP_FILE} (${FILESIZE} bytes)"
+                  # Prune old backups beyond retention
+                  RETENTION={{ .Values.postgresql.backup.retentionCount }}
+                  BACKUP_COUNT=$(ls -1 /backups/ocr-coordinator-*.sql.gz 2>/dev/null | wc -l)
+                  if [ "${BACKUP_COUNT}" -gt "${RETENTION}" ]; then
+                    PRUNE_COUNT=$((BACKUP_COUNT - RETENTION))
+                    echo "Pruning ${PRUNE_COUNT} old backup(s)..."
+                    ls -1t /backups/ocr-coordinator-*.sql.gz | tail -n "${PRUNE_COUNT}" | xargs rm -f
+                  fi
+                  echo "Backup job finished successfully."
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Release.Name }}-secret
+                      key: POSTGRES_PASSWORD
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              {{- with .Values.postgresql.containerSecurityContext }}
+              securityContext:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: {{ .Release.Name }}-postgres-backup
+---
+# =============================================================================
+# Backup PVC
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-postgres-backup
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.postgresql.backup.storageClass }}
+  storageClassName: {{ .Values.postgresql.backup.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.postgresql.backup.storage }}
+{{- end }}

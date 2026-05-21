@@ -1,0 +1,56 @@
+{{- if and .Values.federation.enabled .Values.federation.discovery.enabled }}
+# =============================================================================
+# Federation Discovery RBAC (item C7)
+#
+# Minimal namespace-scoped RBAC for the DNS-SD discovery CronJob. The job
+# only needs `get`, `update`, and `patch` on the federation cluster-registry
+# ConfigMap; it must NEVER create or delete cluster-scoped resources or
+# escalate beyond the install namespace. This is a strictly tighter grant
+# than the federation-reconciler Role (which also handles RabbitMQ Policy
+# CRs) -- discovery only ever touches one ConfigMap.
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-federation-discovery
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-discovery
+    app.kubernetes.io/managed-by: Helm
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-federation-discovery
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-discovery
+    app.kubernetes.io/managed-by: Helm
+rules:
+  # Discovery reads the existing registry ConfigMap, computes a diff, and
+  # patches the merged document back. `list`/`watch` are intentionally
+  # withheld -- the discovery loop only ever operates on one named
+  # ConfigMap whose name is supplied via env var.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames:
+      - {{ .Values.federation.discovery.configmapName | quote }}
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-federation-discovery
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-discovery
+    app.kubernetes.io/managed-by: Helm
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-federation-discovery
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ .Release.Name }}-federation-discovery
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

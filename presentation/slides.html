@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EDCOCR — Slide Deck</title>
+  <link rel="stylesheet" href="assets/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    /* Slide-specific helpers */
+    .slide:nth-child(odd) { background: var(--bg); }
+    .slide:nth-child(even) { background: var(--bg-elev); }
+    .slide-content ul { list-style: none; padding: 0; }
+    .slide-content ul li {
+      padding: 12px 0 12px 32px;
+      border-bottom: 1px solid var(--border);
+      position: relative;
+      text-align: left;
+      font-size: 1.1rem;
+    }
+    .slide-content ul li:last-child { border-bottom: none; }
+    .slide-content ul li::before {
+      content: "—";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-weight: bold;
+    }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; text-align: left; }
+    .big-stat {
+      font-size: clamp(3rem, 8vw, 6rem);
+      font-weight: 800;
+      color: var(--accent);
+      line-height: 1;
+    }
+    .big-stat-label {
+      color: var(--text-dim);
+      font-size: 1.1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    @media print {
+      .slide { page-break-after: always; min-height: 95vh; }
+      .slide-controls { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Slide 1: Title -->
+<section class="slide">
+  <span class="slide-num">01 / 16</span>
+  <div class="slide-content">
+    <div class="logo" style="font-size: 1.5rem; margin-bottom: 32px;">EDC<span class="accent">OCR</span></div>
+    <h1>Forensic-Grade OCR.<br><span class="text-accent">Built for Evidence.</span></h1>
+    <p class="lead text-center" style="margin: 32px auto;">
+      A document understanding pipeline that doesn't make things up,
+      remembers what it did, and never throws evidence away.
+    </p>
+    <div class="badges" style="justify-content: center;">
+      <span class="badge">Version 4.1.0</span>
+      <span class="badge">Apache 2.0</span>
+      <span class="badge">PaddleOCR 2.9.1</span>
+    </div>
+  </div>
+</section>
+
+<!-- Slide 2: The Problem -->
+<section class="slide">
+  <span class="slide-num">02 / 16</span>
+  <div class="slide-content left">
+    <h2>The Problem</h2>
+    <p class="lead">Most OCR pipelines fail at the questions that matter for legal, medical, and regulated work.</p>
+    <ul>
+      <li>Generative models hallucinate text that was never on the page.</li>
+      <li>"Good enough" OCR silently drops images, low-confidence runs, and unreadable scans.</li>
+      <li>There's rarely a trustworthy log of which page got which model, at which DPI, when.</li>
+      <li>Language detection is one-shot — multilingual documents come out garbled.</li>
+      <li>Cloud APIs are non-starters for SCIF, HIPAA-adjacent, or classified environments.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- Slide 3: The Solution -->
+<section class="slide">
+  <span class="slide-num">03 / 16</span>
+  <div class="slide-content left">
+    <h2>The Approach</h2>
+    <p class="lead">Engineered around three load-bearing decisions.</p>
+    <div class="two-col" style="margin-top: 32px;">
+      <div>
+        <h3 class="text-accent">CTC Decoding</h3>
+        <p>PaddleOCR with CTC heads. No generative tokens, no synthesized characters. The recognizer can refuse, but it cannot invent.</p>
+      </div>
+      <div>
+        <h3 class="text-accent-2">Hash-Chained Custody</h3>
+        <p>Every document, page, and transform is recorded in a SHA-256 hash-chained JSONL log. Tampering one entry breaks the chain.</p>
+      </div>
+      <div>
+        <h3 class="text-accent-3">Forensic Preservation</h3>
+        <p>OCR failure never deletes the page. Failed pages embed the rasterized original so nothing is lost between source and deliverable.</p>
+      </div>
+      <div>
+        <h3 class="text-accent-5">Air-Gap Ready</h3>
+        <p>All models pre-baked into Docker images. No runtime calls to external services. Bundle scripts produce SCIF-deployable artifacts.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Slide 4: Pipeline Overview -->
+<section class="slide">
+  <span class="slide-num">04 / 16</span>
+  <div class="slide-content">
+    <h2>Pipeline Overview</h2>
+    <p class="lead text-center">Six stages, thirty-one threads, producer-consumer queues throughout.</p>
+    <div class="pipeline" style="margin-top: 48px;">
+      <div class="pipeline-stage">
+        <div class="stage-num">01</div>
+        <div class="stage-name">Scheduler</div>
+        <div class="stage-threads">1 thread</div>
+      </div>
+      <div class="pipeline-arrow">&rarr;</div>
+      <div class="pipeline-stage">
+        <div class="stage-num">02</div>
+        <div class="stage-name">Extractors</div>
+        <div class="stage-threads">8 threads</div>
+      </div>
+      <div class="pipeline-arrow">&rarr;</div>
+      <div class="pipeline-stage">
+        <div class="stage-num">03</div>
+        <div class="stage-name">GPU Workers</div>
+        <div class="stage-threads">12 threads</div>
+      </div>
+      <div class="pipeline-arrow">&rarr;</div>
+      <div class="pipeline-stage">
+        <div class="stage-num">04</div>
+        <div class="stage-name">Assembler</div>
+        <div class="stage-threads">1 thread</div>
+      </div>
+      <div class="pipeline-arrow">&rarr;</div>
+      <div class="pipeline-stage">
+        <div class="stage-num">05</div>
+        <div class="stage-name">Compressors</div>
+        <div class="stage-threads">8 threads</div>
+      </div>
+      <div class="pipeline-arrow">&rarr;</div>
+      <div class="pipeline-stage">
+        <div class="stage-num">06</div>
+        <div class="stage-name">Monitor</div>
+        <div class="stage-threads">1 daemon</div>
+      </div>
+    </div>
+    <p class="text-dim text-center" style="margin-top: 32px;">
+      Queue-bounded throughout. Backpressure is a feature, not a bug.
+    </p>
+  </div>
+</section>
+
+<!-- Slide 5: Data Flow -->
+<section class="slide">
+  <span class="slide-num">05 / 16</span>
+  <div class="slide-content">
+    <h2>Data Flow</h2>
+    <div class="diagram" style="text-align: left;">
+      <div class="mermaid">
+sequenceDiagram
+  participant W as Watcher
+  participant S as Scheduler
+  participant E as Extractor
+  participant G as GPU Worker
+  participant A as Assembler
+  participant C as Compressor
+  participant O as Output
+
+  W->>S: New file detected
+  S->>S: Hash path -> doc_id
+  S->>E: Chunk task (page range)
+  E->>E: Rasterize PDF @ 300 DPI
+  E->>G: Image batch
+  G->>G: PaddleOCR (or Tesseract fallback)
+  G->>G: NER, classify, extract
+  G->>A: Page result + custody event
+  A->>A: Merge into final PDF
+  A->>C: Output PDF
+  C->>C: Ghostscript optimization
+  C->>O: Final deliverable
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Slide 6: Language Handling -->
+<section class="slide">
+  <span class="slide-num">06 / 16</span>
+  <div class="slide-content left">
+    <h2>45 Languages, Adaptive</h2>
+    <div class="two-col">
+      <div>
+        <h3 class="text-accent">Two-pass detection</h3>
+        <ul>
+          <li>FastText runs first on a quick sample.</li>
+          <li>Best-matching PaddleOCR model is loaded.</li>
+          <li>Detection re-runs on extracted text to catch mixed-script pages.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="text-accent-2">Tiered registry</h3>
+        <ul>
+          <li><strong>Core (34):</strong> EN, FR, DE, ES, IT, PT, NL, RU, AR, FA, HI, CH, JP, KO, and 20 more.</li>
+          <li><strong>Extended (+11):</strong> TH, BN, MR, NE, HR, SK, NO, LT, LV, ET, RS_LATIN.</li>
+          <li>Toggle via <code>OCR_LANGUAGE_TIERS=core,extended</code>.</li>
+        </ul>
+      </div>
+    </div>
+    <div style="margin-top: 32px; padding: 24px; background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border);">
+      <p class="text-dim" style="margin: 0;">
+        Per-span language detection is opt-in (<code>ENABLE_PER_SPAN_LANGUAGE=true</code>). Emits a <code>.language.json</code> sidecar with BCP-47 tags per line, page, and document.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- Slide 7: Output Schemas -->
+<section class="slide">
+  <span class="slide-num">07 / 16</span>
+  <div class="slide-content">
+    <h2>What Comes Out</h2>
+    <p class="lead text-center">14 output schemas. Pick what you need; ignore the rest.</p>
+    <table style="margin-top: 32px;">
+      <thead>
+        <tr><th>Family</th><th>Examples</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Core OCR</td><td><code>EXPORT/PDF/</code>, <code>EXPORT/TEXT/</code></td></tr>
+        <tr><td>Layout</td><td><code>EXPORT/STRUCTURE/</code> &mdash; regions, tables (HTML), figures</td></tr>
+        <tr><td>Entities</td><td><code>EXPORT/NER/</code>, <code>EXPORT/ENTITIES/</code> &mdash; CASE_NUMBER, BATES_NUMBER, PERSON, ORG</td></tr>
+        <tr><td>Structured</td><td><code>EXPORT/EXTRACTION/</code> &mdash; dates, amounts, addresses</td></tr>
+        <tr><td>Classification</td><td><code>EXPORT/CLASSIFICATION/</code> &mdash; doc type + confidence</td></tr>
+        <tr><td>Specialty</td><td><code>EXPORT/HANDWRITING/</code>, <code>EXPORT/SIGNATURE/</code>, <code>EXPORT/VERTICAL/</code></td></tr>
+        <tr><td>Quality</td><td><code>EXPORT/VALIDATION/</code> &mdash; per-page confidence, quality class</td></tr>
+        <tr><td>Retrieval</td><td><code>EXPORT/RETRIEVAL/</code> &mdash; JSON + Markdown unified</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Slide 8: REST API -->
+<section class="slide">
+  <span class="slide-num">08 / 16</span>
+  <div class="slide-content left">
+    <h2>REST API</h2>
+    <p class="lead">FastAPI server with auth, rate limiting, WebSocket and SSE.</p>
+    <div class="two-col">
+      <div>
+        <h3 class="text-accent">Endpoints</h3>
+        <ul>
+          <li><code>POST /api/v1/jobs</code> &mdash; submit a job</li>
+          <li><code>GET /api/v1/jobs/{id}</code> &mdash; status</li>
+          <li><code>GET /api/v1/jobs/{id}/outputs</code> &mdash; download</li>
+          <li><code>POST /api/v1/jobs/{id}/retry</code> &mdash; retry failed</li>
+          <li><code>GET /api/v1/health</code> &mdash; liveness</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="text-accent-2">Real-time</h3>
+        <ul>
+          <li><code>GET /ws/jobs/{id}</code> &mdash; WebSocket progress</li>
+          <li><code>GET /api/v1/events</code> &mdash; SSE stream</li>
+          <li><code>POST /api/v1/webhooks</code> &mdash; HMAC-signed delivery</li>
+        </ul>
+      </div>
+    </div>
+    <div style="margin-top: 32px;">
+      <span class="code-label">curl</span>
+      <pre><code>curl -X POST https://edcocr.example.com/api/v1/jobs \
+  -H "X-API-Key: $API_KEY" \
+  -F "file=@contract.pdf" \
+  -F "tenant_id=team-alpha" \
+  -F "priority=high"</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- Slide 9: Deployment -->
+<section class="slide">
+  <span class="slide-num">09 / 16</span>
+  <div class="slide-content">
+    <h2>Deployment Topologies</h2>
+    <p class="lead text-center">Same image. Three places to run it.</p>
+    <div class="grid grid-3" style="margin-top: 32px;">
+      <div class="card">
+        <h3 class="text-accent">Single Machine</h3>
+        <p><code>docker compose up</code></p>
+        <p class="text-dim">
+          GPU or CPU. Watch a folder, drop documents in, results land in <code>ocr_output/</code>.
+          Designed to fit on a workstation.
+        </p>
+      </div>
+      <div class="card">
+        <h3 class="text-accent-2">Distributed</h3>
+        <p><code>helm install edcocr</code></p>
+        <p class="text-dim">
+          Django coordinator + Celery + Postgres + RabbitMQ + Redis. KEDA autoscaling
+          on queue depth. Per-GPU queue affinity.
+        </p>
+      </div>
+      <div class="card">
+        <h3 class="text-accent-3">Air-Gapped</h3>
+        <p><code>./airgap-bundle.sh</code></p>
+        <p class="text-dim">
+          Pre-baked models, bundled images, zero outbound. Tar -&gt; sneakernet -&gt;
+          <code>airgap-deploy.sh</code> on the isolated side.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Slide 10: Observability -->
+<section class="slide">
+  <span class="slide-num">10 / 16</span>
+  <div class="slide-content left">
+    <h2>Observability</h2>
+    <p class="lead">If you can't see it, you can't ship it.</p>
+    <div class="two-col">
+      <div>
+        <h3 class="text-accent">Prometheus</h3>
+        <ul>
+          <li>7 metric families exposed</li>
+          <li>Per-tenant cost gauges</li>
+          <li>SLA breach counters</li>
+          <li>GPU/CPU utilization</li>
+          <li>5 alert rules included</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="text-accent-2">Grafana</h3>
+        <ul>
+          <li>53-panel default dashboard</li>
+          <li>Queue depth, throughput</li>
+          <li>P50/P95/P99 latency</li>
+          <li>Worker fleet status</li>
+          <li>Canary deployment view</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Slide 11: Security -->
+<section class="slide">
+  <span class="slide-num">11 / 16</span>
+  <div class="slide-content left">
+    <h2>Security Posture</h2>
+    <ul>
+      <li><strong>Non-root containers.</strong> All 6 Dockerfiles run as UID 1000, capabilities dropped, seccomp default.</li>
+      <li><strong>Per-tenant isolation.</strong> Tenant ID flows through every API, DB filter, and output path.</li>
+      <li><strong>API key auth + rate limiting.</strong> X-API-Key header, slowapi limits per endpoint.</li>
+      <li><strong>Webhook secrets encrypted at rest.</strong> Fernet, key derived from <code>WEBHOOK_SECRET_KEY</code>.</li>
+      <li><strong>SSRF protection.</strong> Outbound URL fetches are allowlisted; metadata IPs blocked.</li>
+      <li><strong>Audit logging.</strong> Hash-chained custody log; tamper-evident.</li>
+      <li><strong>Subprocess timeouts.</strong> Ghostscript 300s, Tesseract 120s, Poppler 300s.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- Slide 12: Performance -->
+<section class="slide">
+  <span class="slide-num">12 / 16</span>
+  <div class="slide-content">
+    <h2>Performance Profile</h2>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value">12</div>
+        <div class="stat-label">GPU Workers @ 16GB VRAM</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">24</div>
+        <div class="stat-label">GPU Workers @ 48GB VRAM</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">300</div>
+        <div class="stat-label">DPI Default</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">4-7&times;</div>
+        <div class="stat-label">CPU Speedup (ONNX)</div>
+      </div>
+    </div>
+    <p class="text-dim text-center" style="margin-top: 32px;">
+      Adaptive DPI escalation auto-retries low-confidence pages at 450 and 600 DPI.
+      Adaptive batch sizing tunes batch size to page complexity.
+    </p>
+  </div>
+</section>
+
+<!-- Slide 13: Chain of Custody -->
+<section class="slide">
+  <span class="slide-num">13 / 16</span>
+  <div class="slide-content">
+    <h2>Chain of Custody</h2>
+    <p class="lead text-center">Every action emits a custody event. Each event hashes the previous one.</p>
+    <div class="diagram" style="text-align: left;">
+      <div class="mermaid">
+flowchart LR
+  E1[Event 1<br>FILE_INGESTED<br>hash: a4b...] -->|prev_hash| E2[Event 2<br>PAGE_OCR_OK<br>hash: 7c9...]
+  E2 -->|prev_hash| E3[Event 3<br>LANGUAGE_DETECTED<br>hash: 3e1...]
+  E3 -->|prev_hash| E4[Event 4<br>DOCUMENT_FINALIZED<br>hash: f82...]
+
+  style E1 fill:#0ea5e9,color:#fff
+  style E4 fill:#10b981,color:#fff
+      </div>
+    </div>
+    <p class="text-dim text-center" style="margin-top: 32px;">
+      Tampering with any entry breaks the hash chain at that point and every entry after.
+    </p>
+  </div>
+</section>
+
+<!-- Slide 14: Translation -->
+<section class="slide">
+  <span class="slide-num">14 / 16</span>
+  <div class="slide-content left">
+    <h2>Translation (Opt-In)</h2>
+    <p class="lead">Pluggable engine adapters with license-aware routing.</p>
+    <div class="two-col">
+      <div>
+        <h3 class="text-accent">Engines</h3>
+        <ul>
+          <li>OPUS-MT (Apache 2.0) &mdash; default</li>
+          <li>NLLB-200 (CC-BY-NC-4.0) &mdash; opt-in</li>
+          <li>MADLAD-400 (Apache 2.0)</li>
+          <li>Generative LLM tier (Ollama, vLLM, OpenAI-compatible) &mdash; opt-in</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="text-accent-2">Policy</h3>
+        <ul>
+          <li>Per-tenant <code>allow_nc_licensed</code> flag</li>
+          <li>Privilege-blocked content never routes to cloud generative</li>
+          <li>Custody event on engine selection + every translation</li>
+          <li>Certification gated behind strong-auth review</li>
+        </ul>
+      </div>
+    </div>
+    <p class="text-dim" style="margin-top: 32px;">
+      All translation flags default OFF. <code>ENABLE_TRANSLATION=true</code> to opt in.
+    </p>
+  </div>
+</section>
+
+<!-- Slide 15: Integrations -->
+<section class="slide">
+  <span class="slide-num">15 / 16</span>
+  <div class="slide-content">
+    <h2>Integrations</h2>
+    <div class="grid grid-3">
+      <div class="card">
+        <h3 class="text-accent">Storage</h3>
+        <p>NFS, S3, MinIO, Azure Blob, Google Cloud Storage. Presigned URLs for credential-free workers.</p>
+      </div>
+      <div class="card">
+        <h3 class="text-accent-2">Messaging</h3>
+        <p>Kafka producers, SNS/SQS publishers, RabbitMQ quorum queues, Redis Streams for context windowing.</p>
+      </div>
+      <div class="card">
+        <h3 class="text-accent-3">Ingestion</h3>
+        <p>File watcher (local + network shares), SFTP poller, batch API, webhook push.</p>
+      </div>
+      <div class="card">
+        <h3 class="text-accent-5">SDKs</h3>
+        <p>Python (<code>edcocr-sdk</code>), TypeScript (<code>@edcocr/sdk</code>). Zero dependencies in the TS SDK.</p>
+      </div>
+      <div class="card">
+        <h3 class="text-accent">Auth</h3>
+        <p>API keys, optional OIDC, PIV/CAC custody escalation, hardware token support for certification.</p>
+      </div>
+      <div class="card">
+        <h3 class="text-accent-2">Observability</h3>
+        <p>Prometheus, Grafana, OpenTelemetry tracing, structured JSON logs, masked-key audit log.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Slide 16: Get Started -->
+<section class="slide">
+  <span class="slide-num">16 / 16</span>
+  <div class="slide-content">
+    <h1 class="text-accent">Get Started.</h1>
+    <p class="lead text-center" style="margin: 32px auto;">
+      One command. Real OCR running in fifteen minutes.
+    </p>
+    <div style="max-width: 720px; margin: 32px auto; text-align: left;">
+      <span class="code-label">terminal</span>
+      <pre><code>git clone https://github.com/mattmre/EDCOCR-PUBLIC.git
+cd EDCOCR-PUBLIC
+./scripts/docker-quickstart.sh
+
+# Then drop documents into ocr_source/
+# Results land in ocr_output/EXPORT/</code></pre>
+    </div>
+    <div class="btn-group" style="justify-content: center; margin-top: 32px;">
+      <a href="index.html" class="btn btn-primary">Back to Overview</a>
+      <a href="architecture.html" class="btn btn-secondary">Architecture Deck</a>
+      <a href="../INSTALL.md" class="btn btn-secondary">Install Guide</a>
+    </div>
+  </div>
+</section>
+
+<!-- Slide controls -->
+<div class="slide-controls">
+  <button class="btn btn-secondary" onclick="prevSlide()">&larr;</button>
+  <button class="btn btn-secondary" onclick="nextSlide()">&rarr;</button>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      primaryColor: '#1a2236',
+      primaryTextColor: '#e6edf3',
+      primaryBorderColor: '#2a3654',
+      lineColor: '#0ea5e9',
+      secondaryColor: '#121829',
+      tertiaryColor: '#0d1424',
+      background: '#0a0e1a',
+      mainBkg: '#1a2236',
+      secondBkg: '#121829',
+      fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif'
+    }
+  });
+
+  // Keyboard + button navigation between slides
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  let current = 0;
+
+  function scrollToSlide(idx) {
+    if (idx < 0) idx = 0;
+    if (idx >= slides.length) idx = slides.length - 1;
+    current = idx;
+    slides[idx].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function nextSlide() { scrollToSlide(current + 1); }
+  function prevSlide() { scrollToSlide(current - 1); }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+      e.preventDefault();
+      nextSlide();
+    } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+      e.preventDefault();
+      prevSlide();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      scrollToSlide(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      scrollToSlide(slides.length - 1);
+    }
+  });
+
+  // Track which slide is in view
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        current = slides.indexOf(entry.target);
+      }
+    });
+  }, { threshold: 0.5 });
+  slides.forEach((s) => observer.observe(s));
+</script>
+
+</body>
+</html>

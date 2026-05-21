@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EDCOCR — Technical Brief</title>
+  <meta name="description" content="Technical brief for EDCOCR: architecture, pipeline, tech stack, deployment topologies, and performance characteristics.">
+  <link rel="stylesheet" href="assets/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    .tb-hero {
+      padding: 80px 0 48px;
+      background: linear-gradient(180deg, rgba(139, 92, 246, 0.08) 0%, transparent 100%);
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+    }
+    .tb-hero h1 {
+      font-size: clamp(2.25rem, 5vw, 3.75rem);
+      max-width: 1000px;
+      margin: 0 auto 16px;
+    }
+    .toc {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin: 32px 0;
+    }
+    .toc-title {
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      margin-bottom: 12px;
+    }
+    .toc-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 8px 24px;
+    }
+    .toc-grid a {
+      color: var(--text);
+      padding: 4px 0;
+      border-bottom: 1px dashed transparent;
+    }
+    .toc-grid a:hover {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      opacity: 1;
+    }
+    .toc-num {
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      margin-right: 8px;
+    }
+    section.tb {
+      padding: 56px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    section.tb:last-of-type { border-bottom: none; }
+    .tb h2 {
+      font-size: clamp(1.5rem, 2.8vw, 2rem);
+      margin-bottom: 8px;
+    }
+    .tb h2 .num {
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 0.85em;
+      margin-right: 12px;
+    }
+    .tb h3 {
+      font-size: 1.25rem;
+      margin: 24px 0 8px;
+      color: var(--accent);
+    }
+    .tb p { margin-bottom: 12px; color: var(--text); }
+    .tb ul, .tb ol {
+      margin: 0 0 16px 24px;
+      color: var(--text);
+    }
+    .tb li { margin-bottom: 6px; }
+    .stage-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin: 24px 0;
+    }
+    .stage-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .stage-card .stage-id {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+    .stage-card h4 {
+      margin: 6px 0 6px;
+      font-size: 1.1rem;
+    }
+    .stage-card .stage-count {
+      color: var(--accent);
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .stage-card p {
+      color: var(--text-dim);
+      font-size: 0.9rem;
+      margin: 8px 0 0;
+    }
+    .stage-card:nth-child(2) { border-left-color: var(--accent-2); }
+    .stage-card:nth-child(2) .stage-count { color: var(--accent-2); }
+    .stage-card:nth-child(3) { border-left-color: var(--accent-3); }
+    .stage-card:nth-child(3) .stage-count { color: var(--accent-3); }
+    .stage-card:nth-child(4) { border-left-color: var(--accent-4); }
+    .stage-card:nth-child(4) .stage-count { color: var(--accent-4); }
+    .stage-card:nth-child(5) { border-left-color: var(--accent-5); }
+    .stage-card:nth-child(5) .stage-count { color: var(--accent-5); }
+    .stage-card:nth-child(6) { border-left-color: var(--accent); }
+    .perf-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin: 24px 0;
+    }
+    .perf-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+    }
+    .perf-card .v {
+      font-size: 2.2rem;
+      font-weight: 800;
+      color: var(--accent-2);
+      line-height: 1;
+    }
+    .perf-card .l {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-top: 8px;
+    }
+    .perf-card .d {
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      margin-top: 8px;
+    }
+    .stack-row {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 24px;
+      padding: 18px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .stack-row:last-child { border-bottom: none; }
+    .stack-key {
+      color: var(--accent);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 0.85rem;
+    }
+    .stack-val { color: var(--text); }
+    .stack-val code {
+      font-size: 0.85rem;
+    }
+    .callout {
+      background: var(--bg-card);
+      border-left: 4px solid var(--accent-3);
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin: 24px 0;
+      color: var(--text-dim);
+      font-size: 0.95rem;
+    }
+    .callout strong { color: var(--accent-3); }
+    .deploy-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-top: 24px;
+    }
+    .deploy-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .deploy-card h4 { margin-bottom: 4px; color: var(--text); }
+    .deploy-card .topology-id {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+    .deploy-card ul {
+      margin: 8px 0 0 20px;
+      color: var(--text-dim);
+      font-size: 0.9rem;
+    }
+    .deploy-card li { margin-bottom: 4px; }
+    .anchor-offset { scroll-margin-top: 80px; }
+    @media print {
+      .header, .nav, .footer { display: none; }
+      section.tb { page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+<header class="header">
+  <div class="container header-inner">
+    <div class="logo">EDC<span class="accent">OCR</span></div>
+    <nav class="nav">
+      <a href="index.html">Overview</a>
+      <a href="executive-summary.html">Exec Summary</a>
+      <a href="technical-brief.html" style="color: var(--text);">Tech Brief</a>
+      <a href="white-paper.html">White Paper</a>
+      <a href="use-cases.html">Use Cases</a>
+      <a href="https://github.com/mattmre/EDCOCR-PUBLIC" class="hidden-mobile">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="tb-hero">
+  <div class="container">
+    <h1>Technical Brief</h1>
+    <p class="lead" style="margin: 0 auto;">
+      For engineers and architects. The pipeline, the stack, the trade-offs,
+      and where the bytes go.
+    </p>
+    <div class="badges" style="margin-top: 24px;">
+      <span class="badge">v4.1.0</span>
+      <span class="badge">12 min read</span>
+      <span class="badge">Apache 2.0</span>
+    </div>
+  </div>
+</section>
+
+<div class="container">
+  <nav class="toc">
+    <div class="toc-title">Contents</div>
+    <div class="toc-grid">
+      <a href="#overview"><span class="toc-num">01</span>Overview</a>
+      <a href="#pipeline"><span class="toc-num">02</span>Pipeline architecture</a>
+      <a href="#stack"><span class="toc-num">03</span>Tech stack</a>
+      <a href="#languages"><span class="toc-num">04</span>Language handling</a>
+      <a href="#outputs"><span class="toc-num">05</span>Output families</a>
+      <a href="#custody"><span class="toc-num">06</span>Custody log</a>
+      <a href="#distributed"><span class="toc-num">07</span>Distributed mode</a>
+      <a href="#deployment"><span class="toc-num">08</span>Deployment topologies</a>
+      <a href="#performance"><span class="toc-num">09</span>Performance</a>
+      <a href="#api"><span class="toc-num">10</span>API + SDK</a>
+      <a href="#observability"><span class="toc-num">11</span>Observability</a>
+      <a href="#security"><span class="toc-num">12</span>Security posture</a>
+    </div>
+  </nav>
+</div>
+
+<section class="tb anchor-offset" id="overview">
+  <div class="container">
+    <h2><span class="num">01</span>Overview</h2>
+    <p>
+      EDCOCR is a GPU-accelerated OCR platform built around a six-stage producer-consumer pipeline.
+      The runtime never makes outbound network calls — all models ship pre-baked into the Docker image.
+      The output of every job is byte-deterministic given the same input, model versions, and configuration.
+    </p>
+    <p>
+      The platform is structured as three concentric layers:
+    </p>
+    <ol>
+      <li><strong>Forensic core</strong> — Deterministic OCR (PaddleOCR CTC), image preservation, hash-chained custody, language detection. Boundary-validated against AI substitution.</li>
+      <li><strong>AI-adjacent</strong> — NER, classification, structured extraction, translation. Feature-gated, custody-aware, and explicitly separated from the forensic core.</li>
+      <li><strong>Operational</strong> — REST API, WebSocket/SSE streaming, Prometheus metrics, Grafana dashboards, distributed coordinator, KEDA autoscaling.</li>
+    </ol>
+    <div class="callout">
+      <strong>Boundary contract:</strong> A drift-guard script
+      (<code>scripts/validate_feature_boundary.py</code>) enforces the forensic-core / AI-adjacent
+      separation in CI. Generative models cannot be substituted into the OCR loop without
+      tripping the validator.
+    </div>
+  </div>
+</section>
+
+<section class="tb anchor-offset" id="pipeline" style="background: var(--bg-elev);">
+  <div class="container">
+    <h2><span class="num">02</span>Pipeline architecture</h2>
+    <p>
+      The monolithic pipeline (<code>ocr_gpu_async.py</code>) runs six stages concurrently across
+      31 threads. Bounded queues sit between every stage; when a downstream stage falls behind,
+      upstream stages block rather than dropping work.
+    </p>
+
+    <div class="stage-grid">
+      <div class="stage-card">
+        <div class="stage-id">Stage 1</div>
+        <h4>Scheduler</h4>
+        <div class="stage-count">1 thread</div>
+        <p>Scans <code>ocr_source/</code>, creates chunk tasks, handles page-level resume from temp directory.</p>
+      </div>
+      <div class="stage-card">
+        <div class="stage-id">Stage 2</div>
+        <h4>CPU Extractors</h4>
+        <div class="stage-count">8 threads</div>
+        <p>PDF/image to PIL images at 300 DPI. Adaptive DPI escalation on low confidence.</p>
+      </div>
+      <div class="stage-card">
+        <div class="stage-id">Stage 3</div>
+        <h4>GPU Workers</h4>
+        <div class="stage-count">12 threads</div>
+        <p>PaddleOCR (CTC) → Tesseract → image-only fallback. Optional PP-StructureV3 layout.</p>
+      </div>
+      <div class="stage-card">
+        <div class="stage-id">Stage 4</div>
+        <h4>Assembler</h4>
+        <div class="stage-count">1 thread</div>
+        <p>Collects pages via document registry, merges into final PDF, emits sidecars.</p>
+      </div>
+      <div class="stage-card">
+        <div class="stage-id">Stage 5</div>
+        <h4>Compressors</h4>
+        <div class="stage-count">8 threads</div>
+        <p>Ghostscript optimization with integrity validation. 300s subprocess timeout.</p>
+      </div>
+      <div class="stage-card">
+        <div class="stage-id">Stage 6</div>
+        <h4>Monitor</h4>
+        <div class="stage-count">1 daemon</div>
+        <p>Real-time PPM, docs/hour, registry size. Docker healthcheck heartbeat.</p>
+      </div>
+    </div>
+
+    <div class="diagram">
+      <div class="diagram-title">Pipeline data flow</div>
+      <div class="mermaid">
+flowchart LR
+  src[ocr_source/] --> sched[Scheduler]
+  sched --> cq[chunk_queue]
+  cq --> ext[CPU Extractors x8]
+  ext --> iq[image_queue<br>size 200]
+  iq --> gpu[GPU Workers x12<br>PaddleOCR → Tesseract → Image]
+  gpu --> aq[assembly_queue]
+  aq --> asm[Assembler]
+  asm --> cpq[compression_queue]
+  cpq --> comp[Compressors x8]
+  comp --> out[ocr_output/EXPORT/]
+  asm -.-> custody[(JSONL audit log)]
+  monitor[Monitor daemon] -.metrics.-> heartbeat[(healthcheck)]
+  style src fill:#0ea5e9,color:#fff
+  style out fill:#10b981,color:#fff
+  style custody fill:#f59e0b,color:#fff
+      </div>
+    </div>
+
+    <h3>Why threading, not asyncio?</h3>
+    <p>
+      The workload is CPU-bound (image decoding), GPU-bound (OCR inference), and subprocess-bound
+      (Ghostscript). asyncio's main advantage — cheap context switching across many I/O-waits —
+      doesn't help here. Threading with bounded queues gives explicit backpressure and easier
+      reasoning about shutdown.
+    </p>
+
+    <h3>Crash resume</h3>
+    <p>
+      Per-page PDFs land in <code>ocr_temp/&lt;doc_hash&gt;/</code> as they complete. A SIGTERM
+      mid-batch leaves the temp directory intact; the next run picks up at the first missing page.
+      <code>compute_resume_gap_chunks()</code> performs the set-difference deterministically.
+    </p>
+  </div>
+</section>
+
+<section class="tb anchor-offset" id="stack">
+  <div class="container">
+    <h2><span class="num">03</span>Tech stack</h2>
+
+    <div class="stack-row">
+      <div class="stack-key">OCR engine</div>
+      <div class="stack-val">
+        <strong>PaddleOCR 2.9.1</strong> with CTC decoding. Per-language model swap driven by FastText detection.
+        Fallback chain: <code>PaddleOCR → Tesseract → image-only</code>. Optional <code>use_onnx=True</code>
+        for CPU acceleration (4–7×).
+      </div>
+    </div>
+    <div class="stack-row">
+      <div class="stack-key">PDF I/O</div>
+      <div class="stack-val">
+        <code>PyMuPDF (fitz)</code> for read/write, <code>pdf2image</code> + Poppler for rasterization,
+        <code>Ghostscript</code> for compression with integrity verification.
+      </div>
+    </div>
+    <div class="stack-row">
+      <div class="stack-key">Language detection</div>
+      <div class="stack-val">
+        <strong>FastText</strong> with <code>lid.176.bin</code> model. Two-pass: pre-OCR sample
+        for engine selection, post-OCR full text for sidecar emission. Per-span detection optional.
+      </div>
+    </div>
+    <div class="stack-row">
+      <div class="stack-key">API server</div>
+      <div class="stack-val">
+        <code>FastAPI 0.135+</code> + <code>Uvicorn</code> + <code>slowapi</code> for rate limiting +
+        <code>SQLAlchemy 2.x</code> for the job DB. WebSocket + SSE both supported.
+      </div>
+    </div>
+    <div class="stack-row">
+      <div class="stack-key">Coordinator</div>
+      <div class="stack-val">
+        <code>Django 5.2</code> + <code>Celery 5.6</code> + <code>RabbitMQ</code> (quorum queues) +
+        <code>Redis</code> (cache + Streams + Sentinel) + <code>PostgreSQL</code> (job state).
+      </div>
+    </div>
+    <div class="stack-row">
+      <div class="stack-key">NLP / Extraction</div>
+      <div class="stack-val">
+        <code>spaCy 3.8</code> for NER (with custom forensic types), <code>PaddleNLP UIE</code>
+        for structured extraction, regex fallback for offline / air-gapped operation.
+      </div>
+    </div>
+    <div class="stack-row">
+      <div class="stack-key">Layout intelligence</div>
+      <div class="stack-val">
+        <code>PP-StructureV3</code> for layout + tables. Optional <code>LayoutLMv3</code> fine-tuned
+        adapter for domain-specific document understanding.
+      </div>
+    </div>
+    <div class="stack-row">
+      <div class="stack-key">Container runtime</div>
+      <div class="stack-val">
+        Multi-stage <code>Dockerfile</code> with non-root user (UID 1000), capabilities dropped,
+        seccomp default. CUDA 12 base for GPU workers; <code>python:3.11-slim</code> for CPU workers.
+      </div>
+    </div>
+    <div class="stack-row">
+      <div class="stack-key">Orchestration</div>
+      <div class="stack-val">
+        Docker Compose (single host), <strong>Helm chart</strong> with 26 templates (Kubernetes),
+        Terraform modules for EKS / GKE / OKE.
+      </div>
+    </div>
+    <div class="stack-row">
+      <div class="stack-key">Observability</div>
+      <div class="stack-val">
+        <strong>Prometheus</strong> custom collector (7 metric families) + <strong>Grafana</strong>
+        53-panel dashboard + 5 alert rules. <strong>OpenTelemetry</strong> traces. Hash-chained JSONL
+        audit log.
+      </div>
+    </div>
+    <div class="stack-row">
+      <div class="stack-key">SDKs</div>
+      <div class="stack-val">
+        <code>edcocr-sdk</code> (Python 3.10+) and <code>@edcocr/sdk</code> (TypeScript, zero deps).
+        Versioned in lockstep with the server.
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="tb anchor-offset" id="languages" style="background: var(--bg-elev);">
+  <div class="container">
+    <h2><span class="num">04</span>Language handling</h2>
+    <p>
+      45 languages across two tiers, controlled by <code>OCR_LANGUAGE_TIERS=core[,extended]</code>:
+    </p>
+
+    <h3>Core tier — 34 languages (default)</h3>
+    <ul>
+      <li><strong>Latin:</strong> en, fr, de, es, it, pt, nl, sv, da, fi, ro, pl, cs, hu, tr, vi</li>
+      <li><strong>Cyrillic:</strong> ru, uk, be, bg</li>
+      <li><strong>CJK:</strong> ch (Simplified), chinese_cht (Traditional), japan, korean</li>
+      <li><strong>Arabic / RTL:</strong> ar, fa, ur, ug</li>
+      <li><strong>Indic:</strong> hi, ta, te, kn</li>
+      <li><strong>Other:</strong> el (Greek), ka (Georgian)</li>
+    </ul>
+
+    <h3>Extended tier — +11 languages (opt-in)</h3>
+    <ul>
+      <li><strong>Latin:</strong> hr, sk, no, lt, lv, et, rs_latin</li>
+      <li><strong>Indic:</strong> bn (Bengali), mr (Marathi), ne (Nepali)</li>
+      <li><strong>Southeast Asian:</strong> th (Thai)</li>
+    </ul>
+
+    <h3>Per-span detection</h3>
+    <p>
+      Opt-in via <code>ENABLE_PER_SPAN_LANGUAGE=true</code>. Emits
+      <code>EXPORT/LANGUAGE/&lt;doc&gt;.language.json</code> with BCP-47 tags at line, page, and
+      document levels. Re-detect endpoint (<code>POST /api/v1/jobs/{id}/redetect-language</code>)
+      reruns detection on the embedded text layer without re-running OCR.
+    </p>
+  </div>
+</section>
+
+<section class="tb anchor-offset" id="outputs">
+  <div class="container">
+    <h2><span class="num">05</span>Output families</h2>
+    <p>
+      Every job produces a structured set of artifacts under <code>ocr_output/EXPORT/&lt;family&gt;/</code>.
+      Each family has a JSON Schema definition in <code>schemas/</code>.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Family</th>
+          <th>Format</th>
+          <th>Contents</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>PDF/</code></td><td>PDF</td><td>Searchable PDF with embedded OCR text layer</td></tr>
+        <tr><td><code>TEXT/</code></td><td>.txt</td><td>Plain text extraction</td></tr>
+        <tr><td><code>STRUCTURE/</code></td><td>JSON</td><td>Layout regions, table cells (HTML), figure positions</td></tr>
+        <tr><td><code>NER/</code></td><td>JSON</td><td>Named entities — CASE_NUMBER, BATES_NUMBER, PERSON, ORG</td></tr>
+        <tr><td><code>ENTITIES/</code></td><td>JSON</td><td>Consolidated entity index across pages</td></tr>
+        <tr><td><code>CLASSIFICATION/</code></td><td>JSON</td><td>Document type with confidence</td></tr>
+        <tr><td><code>EXTRACTION/</code></td><td>JSON</td><td>Structured fields — dates, amounts, addresses</td></tr>
+        <tr><td><code>HANDWRITING/</code></td><td>JSON</td><td>Handwriting regions with confidence</td></tr>
+        <tr><td><code>SIGNATURE/</code></td><td>JSON</td><td>Signature detection (advisory only)</td></tr>
+        <tr><td><code>VERTICAL/</code></td><td>JSON</td><td>CJK vertical text reading order</td></tr>
+        <tr><td><code>LANGUAGE/</code></td><td>JSON</td><td>Per-span language with BCP-47 tags</td></tr>
+        <tr><td><code>VALIDATION/</code></td><td>JSON</td><td>Per-page confidence + quality classification</td></tr>
+        <tr><td><code>RETRIEVAL/</code></td><td>JSON + MD</td><td>Unified retrieval format for downstream search</td></tr>
+        <tr><td>Custody log</td><td>JSONL</td><td>Hash-chained audit events</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="tb anchor-offset" id="custody" style="background: var(--bg-elev);">
+  <div class="container">
+    <h2><span class="num">06</span>Custody log</h2>
+    <p>
+      Every operation emits a custody event to a hash-chained JSONL log. Each event records
+      the operation type, ISO 8601 timestamp, job ID, page index, tenant ID, operation-specific
+      payload, and the SHA-256 hash of the previous event.
+    </p>
+
+    <div class="diagram">
+      <div class="diagram-title">Chain of custody linkage</div>
+      <div class="mermaid">
+flowchart LR
+  e1[Event 1<br>FILE_INGESTED<br>prev_hash: 0x0] --> h1((SHA-256))
+  h1 -.hash.-> e2[Event 2<br>PAGE_OCR_OK<br>prev_hash: h1]
+  e2 --> h2((SHA-256))
+  h2 -.hash.-> e3[Event 3<br>LANGUAGE_DETECTED<br>prev_hash: h2]
+  e3 --> h3((SHA-256))
+  h3 -.hash.-> e4[Event 4<br>BATES_STAMP_APPLIED<br>prev_hash: h3]
+  e4 --> h4((SHA-256))
+  h4 -.hash.-> e5[Event 5<br>JOB_COMPLETED<br>prev_hash: h4]
+  style e1 fill:#0ea5e9,color:#fff
+  style e5 fill:#10b981,color:#fff
+  style h1 fill:#f59e0b,color:#fff
+  style h2 fill:#f59e0b,color:#fff
+  style h3 fill:#f59e0b,color:#fff
+  style h4 fill:#f59e0b,color:#fff
+      </div>
+    </div>
+
+    <p>
+      The log is append-only, easy to ship to external SIEM, and trivially diffable.
+      Tampering with any event breaks the chain at that point and every event afterward.
+    </p>
+
+    <h3>Sample event types</h3>
+    <ul>
+      <li><code>FILE_INGESTED</code> — source file hash recorded</li>
+      <li><code>PAGE_OCR_OK</code> / <code>PAGE_OCR_FAIL</code> — per-page outcome with confidence</li>
+      <li><code>LANGUAGE_DETECTED</code> / <code>LANGUAGE_MIXED_SCRIPT</code> / <code>LANGUAGE_REDETECTED</code></li>
+      <li><code>BATES_STAMP_APPLIED</code> / <code>DESIGNATION_STAMP_APPLIED</code> / <code>REDACTION_APPLIED</code></li>
+      <li><code>MODEL_SELECTED</code> / <code>TRANSLATION_COMPLETED</code> / <code>TRANSLATION_REJECTED</code></li>
+      <li><code>JOB_COMPLETED</code> / <code>JOB_FAILED</code></li>
+    </ul>
+  </div>
+</section>
+
+<section class="tb anchor-offset" id="distributed">
+  <div class="container">
+    <h2><span class="num">07</span>Distributed mode</h2>
+    <p>
+      For horizontal scale, EDCOCR runs as a Django coordinator plus a Celery worker fleet.
+      Workers register their capabilities on startup; the coordinator routes tasks based on
+      registered capability. KEDA scales worker replica counts based on queue depth.
+    </p>
+
+    <div class="diagram">
+      <div class="diagram-title">Distributed topology</div>
+      <div class="mermaid">
+flowchart TB
+  subgraph Edge
+    api[FastAPI<br>job submission]
+    coord[Django Coordinator<br>job state + WS/SSE]
+  end
+  subgraph Infrastructure
+    rmq[(RabbitMQ<br>quorum queues)]
+    redis[(Redis Sentinel<br>cache + streams)]
+    pg[(PostgreSQL<br>job state)]
+  end
+  subgraph Workers
+    gpu1[GPU OCR Worker]
+    gpu2[GPU OCR Worker]
+    cpu1[CPU OCR Worker<br>ONNX]
+    nlp1[NLP Worker<br>NER + Classify]
+  end
+  api --> coord
+  coord --> rmq
+  coord --> redis
+  coord --> pg
+  rmq -- ocr_gpu --> gpu1
+  rmq -- ocr_gpu --> gpu2
+  rmq -- ocr_cpu --> cpu1
+  rmq -- ocr_nlp --> nlp1
+  gpu1 -.heartbeat.-> coord
+  gpu2 -.heartbeat.-> coord
+  cpu1 -.heartbeat.-> coord
+  nlp1 -.heartbeat.-> coord
+  style api fill:#0ea5e9,color:#fff
+  style coord fill:#0ea5e9,color:#fff
+      </div>
+    </div>
+
+    <h3>Multi-GPU affinity</h3>
+    <p>
+      With <code>ENABLE_PER_GPU_QUEUES=true</code> and <code>GPU_COUNT=N</code>, the router
+      creates round-robin <code>ocr_gpu_{0..N-1}</code> queues so workers pin to specific GPUs
+      with no cross-card thrash.
+    </p>
+
+    <h3>Storage backends</h3>
+    <p>
+      Workers can read source files via direct path (local), shared mount (NFS), or presigned
+      URL (S3 / MinIO). In S3 mode, workers never see AWS credentials — the coordinator generates
+      presigned URLs per task.
+    </p>
+  </div>
+</section>
+
+<section class="tb anchor-offset" id="deployment" style="background: var(--bg-elev);">
+  <div class="container">
+    <h2><span class="num">08</span>Deployment topologies</h2>
+    <p>
+      Seven topology IDs, each documented with its own decision criteria.
+      See <a href="../docs/DEPLOYMENT-DECISION-GUIDE.md">DEPLOYMENT-DECISION-GUIDE.md</a> for the full tree.
+    </p>
+
+    <div class="deploy-grid">
+      <div class="deploy-card">
+        <span class="topology-id">T1</span>
+        <h4>Single GPU host</h4>
+        <ul>
+          <li>1 GPU, 16+ GB VRAM</li>
+          <li>Docker Compose</li>
+          <li>≤ 5k pages/day</li>
+          <li>Lab / pilot / small team</li>
+        </ul>
+      </div>
+      <div class="deploy-card">
+        <span class="topology-id">T2</span>
+        <h4>Single CPU host</h4>
+        <ul>
+          <li>No GPU, ONNX backend</li>
+          <li>Docker Compose</li>
+          <li>≤ 2k pages/day</li>
+          <li>Budget-constrained pilots</li>
+        </ul>
+      </div>
+      <div class="deploy-card">
+        <span class="topology-id">T3</span>
+        <h4>Multi-GPU host</h4>
+        <ul>
+          <li>2–8 GPUs, per-GPU queues</li>
+          <li>Docker Compose</li>
+          <li>≤ 50k pages/day</li>
+          <li>Single-server power-user</li>
+        </ul>
+      </div>
+      <div class="deploy-card">
+        <span class="topology-id">T4</span>
+        <h4>Distributed Celery</h4>
+        <ul>
+          <li>Coordinator + N workers</li>
+          <li>NFS or S3 storage</li>
+          <li>≤ 500k pages/day</li>
+          <li>Department / mid-market</li>
+        </ul>
+      </div>
+      <div class="deploy-card">
+        <span class="topology-id">T6</span>
+        <h4>Kubernetes</h4>
+        <ul>
+          <li>Helm chart (26 templates)</li>
+          <li>KEDA autoscaling + HA</li>
+          <li>500k+ pages/day</li>
+          <li>Enterprise / SaaS</li>
+        </ul>
+      </div>
+      <div class="deploy-card">
+        <span class="topology-id">T7</span>
+        <h4>Air-gapped</h4>
+        <ul>
+          <li>Pre-baked bundle</li>
+          <li>No outbound calls</li>
+          <li>SCIF / classified</li>
+          <li>airgap-bundle.sh + airgap-deploy.sh</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="tb anchor-offset" id="performance">
+  <div class="container">
+    <h2><span class="num">09</span>Performance</h2>
+
+    <div class="perf-grid">
+      <div class="perf-card">
+        <div class="v">~120</div>
+        <div class="l">pg/min</div>
+        <div class="d">Sustained on RTX 4080, mixed-language PDFs</div>
+      </div>
+      <div class="perf-card">
+        <div class="v">4–7×</div>
+        <div class="l">ONNX speedup</div>
+        <div class="d">vs default Python backend on CPU</div>
+      </div>
+      <div class="perf-card">
+        <div class="v">300</div>
+        <div class="l">default DPI</div>
+        <div class="d">450 / 600 auto-escalation on low confidence</div>
+      </div>
+      <div class="perf-card">
+        <div class="v">~4 GB</div>
+        <div class="l">RAM ceiling</div>
+        <div class="d">Image queue bounded at 200 × ~20 MB</div>
+      </div>
+    </div>
+
+    <h3>Tuning by VRAM</h3>
+    <table>
+      <thead>
+        <tr><th>VRAM</th><th>GPU workers</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>16 GB</td><td>8–12</td><td>RTX 4080 / A5000 — default profile</td></tr>
+        <tr><td>24 GB</td><td>12–16</td><td>RTX 4090 / A6000 — sweet spot</td></tr>
+        <tr><td>48 GB</td><td>16–24</td><td>A100 / H100 — maximum density</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Throughput levers</h3>
+    <ul>
+      <li><strong>NUM_WORKERS</strong> — match to VRAM; oversubscription causes OOM</li>
+      <li><strong>Adaptive batching</strong> — complexity-aware dynamic batch sizing</li>
+      <li><strong>Page cache</strong> — memory-mapped LRU for repeated reads</li>
+      <li><strong>Engine selection</strong> — quality-based routing to Tesseract for clean print (faster) and Paddle for complex layouts</li>
+    </ul>
+  </div>
+</section>
+
+<section class="tb anchor-offset" id="api" style="background: var(--bg-elev);">
+  <div class="container">
+    <h2><span class="num">10</span>API + SDK</h2>
+
+    <h3>REST surface (FastAPI)</h3>
+    <table>
+      <thead>
+        <tr><th>Endpoint</th><th>Method</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>/api/v1/jobs</code></td><td>POST</td><td>Submit a job (multipart or JSON)</td></tr>
+        <tr><td><code>/api/v1/jobs/{id}</code></td><td>GET</td><td>Job state + progress</td></tr>
+        <tr><td><code>/api/v1/jobs/{id}/outputs</code></td><td>GET</td><td>Manifest of output artifacts</td></tr>
+        <tr><td><code>/api/v1/jobs/{id}/retry</code></td><td>POST</td><td>Retry failed pages</td></tr>
+        <tr><td><code>/api/v1/jobs/{id}/redetect-language</code></td><td>POST</td><td>Re-run language detection on existing OCR</td></tr>
+        <tr><td><code>/api/v1/jobs/batch</code></td><td>POST</td><td>Submit multiple jobs (413 on oversize)</td></tr>
+        <tr><td><code>/ws/jobs/{id}</code></td><td>WS</td><td>Real-time progress stream</td></tr>
+        <tr><td><code>/api/v1/jobs/{id}/events</code></td><td>SSE</td><td>Server-sent events progress stream</td></tr>
+        <tr><td><code>/api/v1/health/detailed</code></td><td>GET</td><td>Component health + version</td></tr>
+        <tr><td><code>/api/v1/prometheus/</code></td><td>GET</td><td>Prometheus metrics endpoint</td></tr>
+        <tr><td><code>/api/v1/review/*</code></td><td>—</td><td>Human review queue (5 routes)</td></tr>
+        <tr><td><code>/api/v1/recall/*</code></td><td>—</td><td>Entity + extraction recall index (3 routes)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Python SDK</h3>
+    <span class="code-label">edcocr-sdk</span>
+<pre><code>from edcocr_sdk import EDCOCRClient
+
+c = EDCOCRClient(base_url="https://ocr.example.com", api_key="<KEY>")
+job = c.submit_job(path="contract.pdf")
+for ev in c.watch(job.id):
+    print(ev.progress_pct, ev.stage)
+result = c.fetch_outputs(job.id)</code></pre>
+
+    <h3>TypeScript SDK</h3>
+    <span class="code-label">@edcocr/sdk</span>
+<pre><code>import { EDCOCRClient } from "@edcocr/sdk";
+
+const c = new EDCOCRClient({
+  baseUrl: "https://ocr.example.com",
+  apiKey: process.env.EDCOCR_API_KEY!,
+});
+const job = await c.submitJob({ file: "contract.pdf" });
+for await (const ev of c.watch(job.id)) {
+  console.log(ev.progress_pct, ev.stage);
+}
+const outputs = await c.fetchOutputs(job.id);</code></pre>
+  </div>
+</section>
+
+<section class="tb anchor-offset" id="observability">
+  <div class="container">
+    <h2><span class="num">11</span>Observability</h2>
+
+    <table>
+      <thead>
+        <tr><th>Layer</th><th>Component</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Metrics</td><td>Prometheus custom collector</td><td>7 metric families, per-tenant cost/SLA gauges</td></tr>
+        <tr><td>Dashboards</td><td>Grafana, 53 panels</td><td>Queue depth, throughput, p50/95/99, GPU/CPU, fleet</td></tr>
+        <tr><td>Alerts</td><td>PrometheusRule, 5 rules</td><td>Queue saturation, error rate, worker offline</td></tr>
+        <tr><td>Traces</td><td>OpenTelemetry</td><td>End-to-end job span propagation</td></tr>
+        <tr><td>Logs</td><td>Structured JSON</td><td>Stdout (Docker) + per-job NDJSON</td></tr>
+        <tr><td>Audit</td><td>Hash-chained JSONL</td><td>Custody events, immutable</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Sample alert rules</h3>
+    <ul>
+      <li><code>OCRQueueDepthHigh</code> — queue depth above threshold for 5+ minutes</li>
+      <li><code>OCRWorkerOffline</code> — worker heartbeat missed for 2+ minutes</li>
+      <li><code>OCRPageErrorRateHigh</code> — page failure rate above 5%</li>
+      <li><code>OCRWebhookDeliveryFailing</code> — webhook delivery failures sustained</li>
+      <li><code>OCRStorageBackendUnreachable</code> — S3/NFS backend unreachable</li>
+    </ul>
+  </div>
+</section>
+
+<section class="tb anchor-offset" id="security" style="background: var(--bg-elev);">
+  <div class="container">
+    <h2><span class="num">12</span>Security posture</h2>
+
+    <table>
+      <thead>
+        <tr><th>Control</th><th>Implementation</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Container hardening</td><td>All 6 Dockerfiles non-root (UID 1000), capabilities dropped, seccomp default</td></tr>
+        <tr><td>Authentication</td><td>X-API-Key header (default), optional OIDC Bearer</td></tr>
+        <tr><td>Rate limiting</td><td>slowapi per-endpoint, per-tenant limits</td></tr>
+        <tr><td>Per-tenant isolation</td><td>Tenant ID flows through every API, DB filter, and output path</td></tr>
+        <tr><td>Webhook secrets</td><td>Fernet-encrypted at rest, key from WEBHOOK_SECRET_KEY</td></tr>
+        <tr><td>SSRF protection</td><td>Outbound URL allowlist; metadata IPs blocked</td></tr>
+        <tr><td>Subprocess timeouts</td><td>Ghostscript 300s, Tesseract 120s, Poppler 300s</td></tr>
+        <tr><td>OpenAPI docs gating</td><td>EXPOSE_API_DOCS=false by default; prevents endpoint enumeration</td></tr>
+        <tr><td>Audit logging</td><td>Hash-chained JSONL; masked API key in request audit log</td></tr>
+        <tr><td>Database security</td><td>SQLite 0o600 perms; PostgreSQL backup CronJob; Redis Sentinel HA</td></tr>
+        <tr><td>Request size limit</td><td>413 on oversized non-multipart bodies, configurable</td></tr>
+        <tr><td>WS idle timeout</td><td>Idle connection close; max connection age cap</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <strong>Compliance readiness:</strong> Detailed readiness matrices for SOC 2, HIPAA, and FedRAMP
+      live under <code>docs/compliance/</code>. EDCOCR is the OCR engine — compliance certification
+      is achieved at the deployment level, not the software level.
+    </div>
+  </div>
+</section>
+
+<section class="section" style="background: var(--bg);">
+  <div class="container text-center">
+    <h2>Go deeper</h2>
+    <p class="lead" style="margin: 0 auto 32px;">Three rabbit holes worth a longer read.</p>
+    <div class="btn-group" style="justify-content: center;">
+      <a href="white-paper.html" class="btn btn-primary">Technical White Paper</a>
+      <a href="architecture.html" class="btn btn-secondary">Architecture Deck</a>
+      <a href="../docs/DEPLOYMENT-DECISION-GUIDE.md" class="btn btn-secondary">Deployment Decision Guide</a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-links">
+      <a href="index.html">Overview</a>
+      <a href="executive-summary.html">Executive Summary</a>
+      <a href="use-cases.html">Use Cases</a>
+      <a href="white-paper.html">White Paper</a>
+      <a href="https://github.com/mattmre/EDCOCR-PUBLIC">GitHub</a>
+    </div>
+    <p>EDCOCR v4.1.0 &middot; Apache 2.0 &middot; Built for evidence.</p>
+  </div>
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      primaryColor: '#1a2236',
+      primaryTextColor: '#e6edf3',
+      primaryBorderColor: '#2a3654',
+      lineColor: '#0ea5e9',
+      secondaryColor: '#121829',
+      tertiaryColor: '#0d1424',
+      background: '#0a0e1a',
+      mainBkg: '#1a2236',
+      secondBkg: '#121829',
+      fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif'
+    }
+  });
+</script>
+
+</body>
+</html>

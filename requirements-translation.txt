@@ -1,0 +1,7 @@
+# Translation pipeline optional dependencies
+# Install with: pip install -r requirements-translation.txt
+#
+# NLLB-200 is CC-BY-NC-4.0 -- commercial use requires separate licensing
+ctranslate2>=4.5,<5
+sentencepiece>=0.2,<0.3
+pysbd>=0.3.4,<0.4

@@ -1,0 +1,64 @@
+{{- if and .Values.observability .Values.observability.federation .Values.observability.federation.enabled }}
+{{- if .Values.observability.networkPolicy.enabled }}
+# =============================================================================
+#  -- C3 Federated Observability NetworkPolicy
+#
+# Restricts who may reach the Thanos sidecar's gRPC StoreAPI and what egress
+# is permitted from observability components. The policy is opt-in
+# (`observability.networkPolicy.enabled=true`) and additive on top of any
+# baseline `templates/networkpolicy.yaml` policy already in the namespace.
+#
+# Ingress: only pods in the Prometheus operator namespace
+# (label-matched on `prometheusNamespaceLabel == prometheusNamespace`) may
+# reach the Thanos sidecar's gRPC port (10901).
+#
+# Egress: opens TCP egress to the supplied `egressCidrs` list (object-storage
+# endpoints and remote_write Prometheus targets), plus DNS.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-observability-fed
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: observability-federation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: thanos-sidecar
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{ .Values.observability.networkPolicy.prometheusNamespaceLabel | default "kubernetes.io/metadata.name" }}: {{ .Values.observability.networkPolicy.prometheusNamespace | quote }}
+      ports:
+        - protocol: TCP
+          port: 10901
+        - protocol: TCP
+          port: 10902
+  egress:
+    {{- if .Values.observability.networkPolicy.egressCidrs }}
+    - to:
+        {{- range .Values.observability.networkPolicy.egressCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 9090
+        - protocol: TCP
+          port: 9091
+    {{- end }}
+    # DNS for object-storage / remote_write hostname resolution
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}
+{{- end }}

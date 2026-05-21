@@ -1,0 +1,38 @@
+# =============================================================================
+# EDCOCR Operations Dashboard - Docker Compose
+#
+# Usage:
+#   docker-compose -f dashboard/docker-compose.dashboard.yml up -d
+#
+# Connect to coordinator stack:
+#   docker-compose -f coordinator/docker-compose.coordinator.yml \
+#                  -f dashboard/docker-compose.dashboard.yml up -d
+# =============================================================================
+
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "${API_URL:-http://coordinator:8000}"
+    image: ocr-local-dashboard:latest
+    container_name: ocr_dashboard
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    environment:
+      - API_URL=${API_URL:-http://coordinator:8000}
+      - API_KEY=${OCR_API_KEY:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - ocr-network
+
+networks:
+  ocr-network:
+    external: true
+    name: ${OCR_NETWORK:-coordinator_default}

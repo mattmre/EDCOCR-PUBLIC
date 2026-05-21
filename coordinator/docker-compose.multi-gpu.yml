@@ -1,0 +1,78 @@
+# Multi-GPU worker deployment template
+#
+# Usage:
+#   docker compose -f docker-compose.multi-gpu.yml up -d --build
+#
+# Pattern:
+# - one container per GPU
+# - each worker pinned via CUDA_VISIBLE_DEVICES and device_ids
+# - queues/capabilities stay unchanged (ocr_gpu,cpu_general)
+
+services:
+  ocr-worker-gpu0:
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile.worker
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:?Set CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:?Set CELERY_RESULT_BACKEND}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY}
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-development}
+      PRODUCTION_READINESS_ACK: ${PRODUCTION_READINESS_ACK:-false}
+      NFS_ROOT: ${NFS_ROOT:-/shared}
+      WORKER_QUEUES: ${WORKER_QUEUES:-ocr_gpu,cpu_general}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      FASTTEXT_MODEL_PATH: ${FASTTEXT_MODEL_PATH:-/app/models/lid.176.bin}
+      CUDA_VISIBLE_DEVICES: "0"
+    command: >
+      celery -A coordinator.coordinator worker
+      -Q ${WORKER_QUEUES:-ocr_gpu,cpu_general}
+      -c ${WORKER_CONCURRENCY:-4}
+      --hostname worker-gpu0@%h
+      -l info
+      --max-tasks-per-child 50
+    volumes:
+      - ${NFS_ROOT:-/shared}:/shared
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  ocr-worker-gpu1:
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile.worker
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:?Set CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:?Set CELERY_RESULT_BACKEND}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY}
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-development}
+      PRODUCTION_READINESS_ACK: ${PRODUCTION_READINESS_ACK:-false}
+      NFS_ROOT: ${NFS_ROOT:-/shared}
+      WORKER_QUEUES: ${WORKER_QUEUES:-ocr_gpu,cpu_general}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      FASTTEXT_MODEL_PATH: ${FASTTEXT_MODEL_PATH:-/app/models/lid.176.bin}
+      CUDA_VISIBLE_DEVICES: "1"
+    command: >
+      celery -A coordinator.coordinator worker
+      -Q ${WORKER_QUEUES:-ocr_gpu,cpu_general}
+      -c ${WORKER_CONCURRENCY:-4}
+      --hostname worker-gpu1@%h
+      -l info
+      --max-tasks-per-child 50
+    volumes:
+      - ${NFS_ROOT:-/shared}:/shared
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    restart: unless-stopped

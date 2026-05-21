@@ -1,0 +1,182 @@
+{{- if and .Values.prometheus.enabled .Values.prometheus.rules.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-alerts
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+    {{- with .Values.prometheus.rules.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: ocr-pipeline
+      rules:
+        - alert: OCRHighJobErrorRate
+          expr: ocr_job_error_rate_1h > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "OCR job error rate is above 10%"
+            description: "Job failure rate is {{ "{{ $value | humanizePercentage }}" }} over the last hour."
+
+        - alert: OCRNoGPUWorkersAvailable
+          expr: ocr_gpu_workers_available == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No GPU workers available"
+            description: "Zero GPU workers have been online/busy for 2 minutes. OCR processing is stalled."
+
+        - alert: OCRWorkersDrained
+          expr: ocr_workers_total{status="online"} + ocr_workers_total{status="busy"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "All workers offline"
+            description: "No workers are online or busy. The pipeline cannot process jobs."
+
+        - alert: OCRSlowPageProcessing
+          expr: ocr_page_processing_time_avg_ms > 30000
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Average page processing time is high"
+            description: "Average page processing time is {{ "{{ $value }}" }}ms (threshold: 30000ms)."
+
+        - alert: OCRJobsStuck
+          expr: ocr_jobs_total{status="processing"} > 0 and increase(ocr_pages_processed_total[30m]) == 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Jobs stuck in processing"
+            description: "Jobs are in processing state but no pages have been completed in 30 minutes."
+
+        - alert: OCRCustodyChainViolation
+          expr: ocr_custody_violations_total > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Custody chain integrity violation detected"
+            description: "{{ "{{ $value }}" }} custody chain hash violation(s) detected in the last hour. Immediate forensic investigation required."
+
+        - alert: OCRHighS3ErrorRate
+          expr: ocr_s3_job_error_rate_1h > 0.15
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "S3-backed job error rate is high"
+            description: "S3 job failure rate is {{ "{{ $value | humanizePercentage }}" }} over the last hour (threshold: 15%)."
+
+        - alert: OCRLowCompletionRate
+          expr: ocr_job_completion_rate_1h < 0.85
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Job completion rate is below 85%"
+            description: "Job completion rate is {{ "{{ $value | humanizePercentage }}" }} over the last hour."
+
+        - alert: OCRJobTimeout
+          expr: ocr_jobs_stuck_total > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Jobs stuck in processing for over 1 hour"
+            description: "{{ "{{ $value }}" }} job(s) have been in processing/ingesting state for over 1 hour."
+
+        - alert: OCRSLABreachRate
+          expr: |
+            (
+              histogram_quantile(0.95, sum(rate(ocr_processing_duration_seconds_bucket[5m])) by (le))
+              > 30
+            )
+            or
+            (
+              ocr_job_error_rate_1h > 0.01
+            )
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "SLA breach detected"
+            description: "P95 latency exceeds 30s or error rate exceeds 1% SLO target."
+
+    # ------------------------------------------------------------------
+    # Recording rules for production baseline monitoring
+    # ------------------------------------------------------------------
+    - name: ocr-recording-rules
+      interval: 30s
+      rules:
+        # --- Rate smoothing (error rate) ---
+        - record: ocr:error_rate:avg5m
+          expr: avg_over_time(ocr_job_error_rate_1h[5m])
+        - record: ocr:error_rate:avg15m
+          expr: avg_over_time(ocr_job_error_rate_1h[15m])
+        - record: ocr:error_rate:avg1h
+          expr: avg_over_time(ocr_job_error_rate_1h[1h])
+
+        # --- Rate smoothing (completion rate) ---
+        - record: ocr:completion_rate:avg5m
+          expr: avg_over_time(ocr_job_completion_rate_1h[5m])
+        - record: ocr:completion_rate:avg15m
+          expr: avg_over_time(ocr_job_completion_rate_1h[15m])
+        - record: ocr:completion_rate:avg1h
+          expr: avg_over_time(ocr_job_completion_rate_1h[1h])
+
+        # --- Rate smoothing (S3 error rate) ---
+        - record: ocr:s3_error_rate:avg5m
+          expr: avg_over_time(ocr_s3_job_error_rate_1h[5m])
+        - record: ocr:s3_error_rate:avg15m
+          expr: avg_over_time(ocr_s3_job_error_rate_1h[15m])
+
+        # --- Worker utilization ---
+        - record: ocr:worker_utilization_ratio
+          expr: sum(ocr_workers_total{status="busy"}) / clamp_min(sum(ocr_workers_total), 1)
+        - record: ocr:gpu_worker_availability_ratio
+          expr: ocr_gpu_workers_available / clamp_min(sum(ocr_workers_total{status="online"}) + sum(ocr_workers_total{status="busy"}), 1)
+
+        # --- Processing time smoothing ---
+        - record: ocr:processing_time_avg:avg5m
+          expr: avg_over_time(ocr_page_processing_time_avg_ms[5m])
+        - record: ocr:processing_time_avg:avg15m
+          expr: avg_over_time(ocr_page_processing_time_avg_ms[15m])
+
+        # --- SLA error-budget burn rate (99% SLO) ---
+        - record: ocr:error_budget_burn_rate_1h
+          expr: avg_over_time(ocr_job_error_rate_1h[1h]) / 0.01
+        - record: ocr:error_budget_burn_rate_6h
+          expr: avg_over_time(ocr_job_error_rate_1h[6h]) / 0.01
+        - record: ocr:error_budget_burn_rate_24h
+          expr: avg_over_time(ocr_job_error_rate_1h[24h]) / 0.01
+        - record: ocr:error_budget_consumed_1h
+          expr: 1 - ((1 - avg_over_time(ocr_job_error_rate_1h[1h])) / (1 - 0.99))
+
+        # --- Processing time percentile smoothing ---
+        - record: ocr:processing_time_p95:avg5m
+          expr: avg_over_time(ocr_page_processing_time_p95_ms[5m])
+        - record: ocr:processing_time_p95:avg15m
+          expr: avg_over_time(ocr_page_processing_time_p95_ms[15m])
+        - record: ocr:processing_time_p99:avg5m
+          expr: avg_over_time(ocr_page_processing_time_p99_ms[5m])
+        - record: ocr:processing_time_p99:avg15m
+          expr: avg_over_time(ocr_page_processing_time_p99_ms[15m])
+
+        # --- SLA compliance rate (combined latency + error SLO) ---
+        - record: ocr:sla_compliance_rate
+          expr: |
+            1 - (
+              (histogram_quantile(0.95, sum(rate(ocr_processing_duration_seconds_bucket[1h])) by (le)) > bool 30)
+              +
+              (ocr_job_error_rate_1h > bool 0.01)
+            ) / 2
+{{- end }}

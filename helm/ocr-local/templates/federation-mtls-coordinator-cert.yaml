@@ -1,0 +1,52 @@
+{{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
+{{- /*
+  Federation mTLS — coordinator server certificate (item C8).
+
+  When `caRef` is set, the cert is signed by an externally-managed Issuer
+  named `<caRef>` (operator must provision it). Otherwise the chart-managed
+  `<release>-federation-mtls-ca` Issuer is used.
+
+  SAN list always includes the in-cluster service DNS for the coordinator;
+  optional `coordinatorSan` and `federation.externalHostname` are appended
+  when set so that peer clusters can validate the cert against the public
+  federation hostname.
+*/}}
+{{- $issuerName := .Values.federation.mtls.caRef | default (printf "%s-federation-mtls-ca" .Release.Name) -}}
+{{- $issuerKind := ternary "ClusterIssuer" "Issuer" .Values.federation.mtls.clusterIssuer -}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-federation-mtls-coordinator
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: federation-mtls
+spec:
+  secretName: {{ .Release.Name }}-federation-mtls-coordinator-tls
+  duration: {{ .Values.federation.mtls.certDuration | quote }}
+  renewBefore: {{ .Values.federation.mtls.certRenewBefore | quote }}
+  commonName: {{ .Release.Name }}-coordinator
+  usages:
+    - server auth
+    - client auth
+    - digital signature
+    - key encipherment
+  dnsNames:
+    - {{ .Release.Name }}-coordinator
+    - {{ .Release.Name }}-coordinator.{{ .Release.Namespace }}
+    - {{ .Release.Name }}-coordinator.{{ .Release.Namespace }}.svc
+    - {{ .Release.Name }}-coordinator.{{ .Release.Namespace }}.svc.cluster.local
+    - coordinator.{{ .Release.Namespace }}.svc.cluster.local
+    {{- if .Values.federation.mtls.coordinatorSan }}
+    - {{ .Values.federation.mtls.coordinatorSan | quote }}
+    {{- end }}
+    {{- if .Values.federation.externalHostname }}
+    - {{ .Values.federation.externalHostname | quote }}
+    {{- end }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ $issuerName }}
+    kind: {{ $issuerKind }}
+    group: cert-manager.io
+{{- end }}

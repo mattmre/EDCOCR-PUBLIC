@@ -1,0 +1,82 @@
+# Kafka topic definitions for EDCOCR event bus
+#
+# Each topic maps to an EventType in api/event_bus.py.
+# Partition counts are tuned for typical OCR pipeline throughput;
+# increase for higher concurrency in production.
+#
+# Env var overrides:
+#   KAFKA_TOPIC_PREFIX  — default "ocr" (e.g. "staging.ocr")
+#   KAFKA_REPLICATION_FACTOR — default 1 (set to 3 for production)
+
+topics:
+  # Job lifecycle events
+  - name: ocr.jobs.submitted
+    partitions: 3
+    replication_factor: 1
+    description: "Emitted when a new OCR job is submitted via API or watcher"
+    key: job_id
+    retention_ms: 604800000        # 7 days
+    config:
+      cleanup.policy: delete
+      retention.ms: "604800000"
+      segment.bytes: "536870912"   # 512 MB
+
+  - name: ocr.jobs.completed
+    partitions: 3
+    replication_factor: 1
+    description: "Emitted when a job finishes successfully with all pages processed"
+    key: job_id
+    retention_ms: 604800000        # 7 days
+    config:
+      cleanup.policy: delete
+      retention.ms: "604800000"
+      segment.bytes: "536870912"
+
+  - name: ocr.jobs.failed
+    partitions: 3
+    replication_factor: 1
+    description: "Emitted when a job fails permanently (after all retries exhausted)"
+    key: job_id
+    retention_ms: 2592000000       # 30 days
+    config:
+      cleanup.policy: delete
+      retention.ms: "2592000000"
+      segment.bytes: "536870912"
+
+  # Page-level events (higher throughput)
+  - name: ocr.pages.processed
+    partitions: 6
+    replication_factor: 1
+    description: "Emitted for each page after OCR completes (text + confidence)"
+    key: job_id
+    retention_ms: 259200000        # 3 days
+    config:
+      cleanup.policy: delete
+      retention.ms: "259200000"
+      segment.bytes: "268435456"   # 256 MB
+
+  # Entity extraction events
+  - name: ocr.entities.extracted
+    partitions: 3
+    replication_factor: 1
+    description: "Emitted when NER/extraction completes for a document"
+    key: job_id
+    retention_ms: 2592000000       # 30 days
+    config:
+      cleanup.policy: delete
+      retention.ms: "2592000000"
+      segment.bytes: "536870912"
+
+  # Forensic audit trail (compacted for long-term retention)
+  - name: ocr.custody.events
+    partitions: 3
+    replication_factor: 1
+    description: "Chain-of-custody events for forensic audit trail"
+    key: job_id
+    retention_ms: 7776000000       # 90 days
+    config:
+      cleanup.policy: compact,delete
+      retention.ms: "7776000000"
+      min.compaction.lag.ms: "86400000"  # 1 day compaction lag
+      segment.bytes: "536870912"
+      min.cleanable.dirty.ratio: "0.5"

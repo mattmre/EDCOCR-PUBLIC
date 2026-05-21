@@ -1,0 +1,58 @@
+# ---------------------------------------------------------------------------
+# Stage 1: Builder — compile Python packages with C extensions
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade "pip>=25.3,<26" "setuptools>=82,<83" "wheel>=0.46.3,<0.47"
+
+# ---------------------------------------------------------------------------
+# Stage 2: Runtime — production image without build tools
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim
+
+# Runtime-only system dependency (no build-essential)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy compiled Python packages from builder
+COPY --from=builder /usr/local /usr/local
+
+WORKDIR /app/coordinator
+
+# Copy coordinator project
+COPY . .
+
+# Collect static files
+RUN python manage.py collectstatic --noinput 2>/dev/null || true
+
+EXPOSE 8000
+
+# ---------------------------------------------------------------------------
+# Non-root runtime user (SEC-003)
+# ---------------------------------------------------------------------------
+RUN groupadd -r -g 1000 ocr && \
+    useradd -r -u 1000 -g ocr -d /home/ocr -s /sbin/nologin ocr && \
+    mkdir -p /app/coordinator/staticfiles /home/ocr && \
+    chown -R ocr:ocr /app/coordinator/staticfiles /home/ocr
+
+USER ocr
+
+# ---------------------------------------------------------------------------
+# Docker HEALTHCHECK — Django/Gunicorn HTTP probe
+# ---------------------------------------------------------------------------
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')" || exit 1
+
+# Default command (overridden per service)
+CMD ["gunicorn", "coordinator.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120"]

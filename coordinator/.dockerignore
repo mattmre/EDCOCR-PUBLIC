@@ -1,0 +1,36 @@
+# =============================================================================
+# .dockerignore - Coordinator build context
+# =============================================================================
+# Applies to: coordinator/Dockerfile.coordinator
+# Build context is coordinator/ directory (docker-compose.coordinator.yml).
+# The Dockerfile uses COPY . . so exclusions here directly prevent bloat.
+# =============================================================================
+
+# -- Version control ----------------------------------------------------------
+.git/
+.gitignore
+
+# -- Tests / dev fixtures -----------------------------------------------------
+conftest.py
+pytest.ini
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+coverage.xml
+
+# -- Docker build files (already consumed, not needed in image) ---------------
+Dockerfile.*
+docker-compose*.yml
+
+# -- Secrets / environment (must not be baked into images) --------------------
+.env
+
+# -- Editor / IDE -------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# -- Documentation ------------------------------------------------------------
+*.md

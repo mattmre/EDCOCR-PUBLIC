@@ -1,0 +1,195 @@
+{{- if .Values.rabbitmq.enabled }}
+# =============================================================================
+# RabbitMQ Headless Service
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-rabbitmq
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rabbitmq
+spec:
+  clusterIP: None
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: amqp
+      protocol: TCP
+    - name: management
+      port: 15672
+      targetPort: management
+      protocol: TCP
+    - name: epmd
+      port: 4369
+      targetPort: epmd
+      protocol: TCP
+  selector:
+    {{- include "ocr-local.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rabbitmq
+---
+# =============================================================================
+# RabbitMQ StatefulSet
+# =============================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-rabbitmq
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rabbitmq
+spec:
+  serviceName: {{ .Release.Name }}-rabbitmq
+  replicas: {{ .Values.rabbitmq.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: rabbitmq
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: rabbitmq
+    spec:
+      {{- with .Values.rabbitmq.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if gt (int .Values.rabbitmq.replicas) 1 }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "ocr-local.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: rabbitmq
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
+      containers:
+        - name: rabbitmq
+          image: "{{ .Values.rabbitmq.image.repository }}:{{ .Values.rabbitmq.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: amqp
+              containerPort: 5672
+              protocol: TCP
+            {{- if .Values.tls.enabled }}
+            - name: amqps
+              containerPort: 5671
+              protocol: TCP
+            {{- end }}
+            - name: management
+              containerPort: 15672
+              protocol: TCP
+            - name: epmd
+              containerPort: 4369
+              protocol: TCP
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: RABBITMQ_USER
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: RABBITMQ_PASSWORD
+            - name: RABBITMQ_ERLANG_COOKIE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: RABBITMQ_ERLANG_COOKIE
+            - name: RABBITMQ_VM_MEMORY_HIGH_WATERMARK
+              value: {{ .Values.rabbitmq.memoryHighWatermark | quote }}
+            {{- if .Values.tls.enabled }}
+            - name: RABBITMQ_SSL_CERTFILE
+              value: /etc/tls/tls.crt
+            - name: RABBITMQ_SSL_KEYFILE
+              value: /etc/tls/tls.key
+            - name: RABBITMQ_SSL_CACERTFILE
+              value: /etc/tls/ca.crt
+            {{- end }}
+            {{- /* , item C8 -- federation mTLS amqps listener.
+                  When the federation mTLS overlay is on, RabbitMQ runs an
+                  additional amqps listener on 5671 (for cross-cluster
+                  federation peers) backed by the federation CA. */}}
+            {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
+            - name: RABBITMQ_FEDERATION_MTLS_ENABLED
+              value: "true"
+            - name: RABBITMQ_FEDERATION_SSL_CERTFILE
+              value: /etc/federation-mtls/tls.crt
+            - name: RABBITMQ_FEDERATION_SSL_KEYFILE
+              value: /etc/federation-mtls/tls.key
+            - name: RABBITMQ_FEDERATION_SSL_CACERTFILE
+              value: /etc/federation-mtls/ca.crt
+            - name: RABBITMQ_FEDERATION_AMQPS_PORT
+              value: "5671"
+            {{- end }}
+          {{- with .Values.rabbitmq.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.rabbitmq.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            exec:
+              command:
+                - rabbitmq-diagnostics
+                - -q
+                - ping
+            periodSeconds: 10
+            initialDelaySeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - rabbitmq-diagnostics
+                - -q
+                - ping
+            periodSeconds: 10
+            initialDelaySeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: rabbitmq-data
+              mountPath: /var/lib/rabbitmq
+            {{- if .Values.tls.enabled }}
+            - name: tls-certs
+              mountPath: /etc/tls
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
+            - name: federation-mtls-certs
+              mountPath: /etc/federation-mtls
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- if .Values.tls.enabled }}
+        - name: tls-certs
+          secret:
+            secretName: {{ include "ocr-local.fullname" . }}-rabbitmq-tls
+            defaultMode: 0440
+        {{- end }}
+        {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
+        - name: federation-mtls-certs
+          secret:
+            secretName: {{ .Release.Name }}-federation-mtls-rabbitmq-tls
+            defaultMode: 0440
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: rabbitmq-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- if .Values.rabbitmq.storageClass }}
+        storageClassName: {{ .Values.rabbitmq.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.rabbitmq.storage }}
+{{- end }}

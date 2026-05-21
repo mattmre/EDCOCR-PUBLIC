@@ -1,0 +1,49 @@
+# Worker deployment template
+# Deploy on VPS nodes with GPU access and NFS mount
+#
+# Usage:
+#   docker-compose -f docker-compose.worker.yml up -d
+#   # For one-worker-per-GPU deployments:
+#   # docker-compose -f docker-compose.multi-gpu.yml up -d
+#
+# Prerequisites:
+#   - NFS mount at /shared (or configure NFS_ROOT)
+#   - NVIDIA GPU drivers + nvidia-container-toolkit (for GPU workers)
+#   - Network access to coordinator's RabbitMQ and Redis
+
+services:
+  ocr-worker:
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile.worker
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:?Set CELERY_BROKER_URL to coordinator RabbitMQ}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:?Set CELERY_RESULT_BACKEND to coordinator Redis}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to coordinator PostgreSQL}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
+      DJANGO_SETTINGS_MODULE: coordinator.settings
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-development}
+      PRODUCTION_READINESS_ACK: ${PRODUCTION_READINESS_ACK:-false}
+      NFS_ROOT: ${NFS_ROOT:-/shared}
+      PYTHONPATH: /app:/app/coordinator
+      WORKER_QUEUES: ${WORKER_QUEUES:-ocr_gpu,cpu_general}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      # OCR settings (models pre-baked in Docker image for air-gapped deployment)
+      FASTTEXT_MODEL_PATH: ${FASTTEXT_MODEL_PATH:-/app/models/lid.176.bin}
+    command: >
+      celery -A coordinator worker
+      -Q ${WORKER_QUEUES:-ocr_gpu,cpu_general}
+      -c ${WORKER_CONCURRENCY:-4}
+      --hostname worker@%h
+      -l info
+      --max-tasks-per-child 50
+    volumes:
+      - ${NFS_HOST_PATH:-./shared}:/shared
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

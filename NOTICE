@@ -1,0 +1,14 @@
+EDCOCR
+Copyright 2026 EDCOCR Contributors
+
+This product includes software developed by:
+- PaddleOCR (https://github.com/PaddlePaddle/PaddleOCR) — Apache 2.0
+- FastAPI (https://github.com/tiangolo/fastapi) — MIT
+- Tesseract OCR (https://github.com/tesseract-ocr/tesseract) — Apache 2.0
+- PyMuPDF (https://github.com/pymupdf/PyMuPDF) — AGPL/Commercial dual-license
+- fastText (https://github.com/facebookresearch/fastText) — MIT
+- spaCy (https://github.com/explosion/spaCy) — MIT
+- Django (https://www.djangoproject.com) — BSD-3-Clause
+- Celery (https://github.com/celery/celery) — BSD-3-Clause
+- OpenCV (https://github.com/opencv/opencv) — Apache 2.0
+- Pillow (https://github.com/python-pillow/Pillow) — HPND

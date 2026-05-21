@@ -1,0 +1,22 @@
+# Next.js
+.next/
+out/
+
+# Dependencies
+node_modules/
+
+# Local env
+.env
+.env.local
+.env*.local
+
+# Editor / OS
+.DS_Store
+*.log
+
+# Test artifacts
+coverage/
+
+# TS / build
+*.tsbuildinfo
+next-env.d.ts

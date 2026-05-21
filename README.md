@@ -466,11 +466,18 @@ EDCOCR ships pre-built integrations with several third-party OCR, NLP, and ML li
 
 ---
 
-## Contributing
+## Community
 
-Pull requests are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contribution workflow, coding conventions, and testing expectations.
+EDCOCR is an open, community-driven project. The fastest path forward is more eyes, more deployments, and more contributions from people outside the original team.
 
-For security disclosures, see [`SECURITY.md`](SECURITY.md). Please do **not** open public issues for security vulnerabilities.
+**Ways to participate:**
+
+- **File a public issue.** Bugs, unexpected behavior, feature ideas, documentation gaps — open an issue from the [Issues tab](https://github.com/mattmre/EDCOCR-PUBLIC/issues). Templates guide you through what to include.
+- **Start a discussion.** Open-ended questions, design ideas, "how are you running this in production?" — those belong in [Discussions](https://github.com/mattmre/EDCOCR-PUBLIC/discussions). It's the lowest-friction surface for community Q&A.
+- **Send a pull request.** See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contribution workflow, coding conventions, and testing expectations.
+- **Report a security issue privately.** Use [GitHub Security Advisories](https://github.com/mattmre/EDCOCR-PUBLIC/security/advisories/new) — do **not** file a public issue. See [`SECURITY.md`](SECURITY.md) for the full disclosure policy.
+
+**Want to join the team as a regular contributor?** Send a direct message to [**@mattmre**](https://github.com/mattmre) on GitHub. There is no application form — just tell us what you want to work on and roughly how much time you have. See [§10 "Joining the Team"](CONTRIBUTING.md#10-joining-the-team) in `CONTRIBUTING.md` for what to include.
 
 ---
 

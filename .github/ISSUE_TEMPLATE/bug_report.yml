@@ -1,0 +1,95 @@
+name: Bug report
+description: Report a defect, regression, or unexpected behavior in EDCOCR.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+
+        **Before filing**, please confirm:
+        - You are using a supported release (see `CHANGELOG.md` for the active version).
+        - This is not a security vulnerability — security issues must go through `SECURITY.md`, **not** public issues.
+        - You have searched existing issues and Discussions and have not found a duplicate.
+
+  - type: input
+    id: version
+    attributes:
+      label: EDCOCR version
+      description: Output of `python -c "import version; print(version.__version__)"` or the Helm chart `appVersion`.
+      placeholder: "e.g. 4.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment method
+      description: How are you running EDCOCR?
+      options:
+        - Docker Compose (single-node)
+        - Helm / Kubernetes
+        - Bare-metal Python (no container)
+        - REST API client only (SDK / curl)
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear, factual description of the unexpected behavior.
+      placeholder: "When I submit a 200-page PDF via POST /api/v1/jobs, the job stays in PENDING for 60s before processing starts."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: "Job should transition to RUNNING within ~5s of submission."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Step-by-step instructions, with commands and example files where possible. The more concrete, the faster the fix.
+      placeholder: |
+        1. Start the stack with `docker compose up -d`
+        2. Submit a job: `curl -X POST ... -F "file=@sample.pdf"`
+        3. Poll GET /api/v1/jobs/{id} — observe PENDING for 60s
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / output
+      description: Paste the relevant slice of `ocr_output/logs/ocr_pipeline_*.log`, container logs, or API responses. Redact any sensitive content (paths, names, document text) before posting.
+      render: shell
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details
+      description: OS, Python version, GPU (if any), container runtime, anything else that might matter.
+      placeholder: |
+        - OS: Ubuntu 22.04
+        - Python: 3.11.7
+        - GPU: NVIDIA RTX 4090 (24GB)
+        - Docker: 24.0.7
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have **not** included any sensitive document content, real names, or PII in this report.
+          required: true
+        - label: This is not a security vulnerability. (Security issues go to `SECURITY.md`.)
+          required: true

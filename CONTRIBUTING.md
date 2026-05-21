@@ -15,6 +15,7 @@ This document covers how to file issues, how to propose changes, and what we exp
 7. [Pull Request Process](#7-pull-request-process)
 8. [Documentation Expectations](#8-documentation-expectations)
 9. [Security Disclosures](#9-security-disclosures)
+10. [Joining the Team](#10-joining-the-team)
 
 ---
 
@@ -236,12 +237,36 @@ See [`SECURITY.md`](SECURITY.md) for the full disclosure policy.
 
 ---
 
+## 10. Joining the Team
+
+EDCOCR is built as a community-driven project. Drive-by patches, bug reports, and Discussions posts are all valuable — but if you want to do more than that, we want to hear from you.
+
+**If you want to join the team as a regular contributor**, send a direct message to [**@mattmre**](https://github.com/mattmre) on GitHub. Tell us:
+
+- What you want to work on (a specific area, a roadmap item, or "wherever I'm useful").
+- A few links to prior work — open source contributions, your own projects, a blog post, anything that shows how you think.
+- How much time per week you realistically have. We respect "a few hours on weekends" as much as full-time.
+
+There is no application form, no resume screen, and no NDA. We pair new contributors with an existing maintainer on a small first issue and grow scope from there.
+
+Areas where extra hands are most useful right now:
+
+- **Pipeline performance** — ONNX/OpenVINO tuning, batch sizing, GPU memory profiling.
+- **Translation suite** — adapter coverage, glossary tooling, quality estimators.
+- **Document Intelligence** — layout analysis, form extraction, table accuracy.
+- **Operations / SRE** — Helm chart improvements, observability, multi-cluster topologies.
+- **Docs and examples** — the fastest way to help someone the next time they hit the same wall.
+
+If you would rather contribute publicly first and see how it goes, that's also fine — open a PR or a Discussion and we'll meet you there.
+
+---
+
 ## Recognition
 
 Contributors are credited in:
 
 - The Git commit log (your authored commits)
 - Release notes for releases that include your contributions
-- A `CONTRIBUTORS.md` file (planned for v2.3)
+- A `CONTRIBUTORS.md` file (in flight — opened on first external merge)
 
 Thank you for making EDCOCR better.

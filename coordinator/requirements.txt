@@ -20,7 +20,7 @@ Pillow==12.2.0
 prometheus-client>=0.25.0,<1.0.0
 
 # Must match root requirements.txt (authoritative source).
-PyMuPDF==1.27.2.2
+PyMuPDF==1.27.2.3
 
 PyYAML==6.0.3
 cryptography>=48.0.0

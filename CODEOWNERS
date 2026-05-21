@@ -1,2 +1,32 @@
-# All files require review from the repo owner
-* @mattmre
+# EDCOCR code owners
+#
+# This file routes pull-request review notifications. Owners listed here
+# are automatically requested for review on PRs that touch matching paths.
+#
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+*                                @mattmre
+
+# High-risk pipeline file — coordinate before changing
+/ocr_gpu_async.py                @mattmre
+
+# Translation suite — feature-flagged with compliance requirements
+/ocr_local/translation/          @mattmre
+
+# Helm chart — every deployment depends on this
+/helm/ocr-local/                 @mattmre
+
+# Coordinator settings — affects every distributed deployment
+/coordinator/coordinator/        @mattmre
+
+# CI / release workflows
+/.github/workflows/              @mattmre
+
+# Security policy and disclosure
+/SECURITY.md                     @mattmre
+
+# Repository governance
+/CODE_OF_CONDUCT.md              @mattmre
+/CONTRIBUTING.md                 @mattmre
+/CODEOWNERS                      @mattmre

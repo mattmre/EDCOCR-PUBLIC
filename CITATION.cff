@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+title: "EDCOCR: Forensic-Grade OCR Platform for Electronic Discovery and Document Processing"
+message: "If you use this software in research, citation, or evidentiary work, please cite it as below."
+type: software
+authors:
+  - name: "EDCOCR Contributors"
+    website: "https://github.com/mattmre/EDCOCR-PUBLIC"
+repository-code: "https://github.com/mattmre/EDCOCR-PUBLIC"
+url: "https://github.com/mattmre/EDCOCR-PUBLIC"
+abstract: >-
+  EDCOCR is a forensic-grade Optical Character Recognition platform purpose-built
+  for electronic discovery, legal review, and high-volume document processing.
+  It combines a zero-hallucination CTC-only recognition pipeline (PaddleOCR 2.9.1),
+  adaptive multi-language detection across 45 languages, SHA-256 hash-chained
+  chain-of-custody audit logging, page-level crash resume, and a distributed
+  Celery / RabbitMQ / Redis / PostgreSQL coordinator with multi-capability workers.
+  The platform ships REST and SDK access (Python, TypeScript), a production Helm
+  chart with KEDA autoscaling, and full air-gapped deployment support.
+keywords:
+  - "optical character recognition"
+  - "ocr"
+  - "electronic discovery"
+  - "ediscovery"
+  - "forensic computing"
+  - "document processing"
+  - "chain of custody"
+  - "paddleocr"
+  - "distributed systems"
+  - "legal technology"
+license: Apache-2.0
+version: 4.1.0
+date-released: 2026-05-21

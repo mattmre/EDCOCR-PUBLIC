@@ -1,17 +1,23 @@
 <div align="center">
 
+<img src=".github/social-preview.png" alt="EDCOCR — Forensic-Grade OCR" width="820">
+
 # EDCOCR
 
 ### Forensic-Grade OCR Platform for Electronic Discovery &amp; Document Processing
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-4.1.0-green.svg)](CHANGELOG.md)
+[![CI](https://github.com/mattmre/EDCOCR-PUBLIC/actions/workflows/ci.yml/badge.svg)](https://github.com/mattmre/EDCOCR-PUBLIC/actions/workflows/ci.yml)
+[![Container Scan](https://github.com/mattmre/EDCOCR-PUBLIC/actions/workflows/container-scan.yml/badge.svg)](https://github.com/mattmre/EDCOCR-PUBLIC/actions/workflows/container-scan.yml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/runtime-Docker-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 [![Kubernetes](https://img.shields.io/badge/orchestration-Kubernetes-326CE5?logo=kubernetes&logoColor=white)](https://kubernetes.io/)
 [![PaddleOCR](https://img.shields.io/badge/engine-PaddleOCR%202.9.1-0A6EBD)](https://github.com/PaddlePaddle/PaddleOCR)
 [![FastAPI](https://img.shields.io/badge/api-FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Django](https://img.shields.io/badge/coordinator-Django%205.2-0C4B33?logo=django&logoColor=white)](https://www.djangoproject.com/)
+[![Discussions](https://img.shields.io/github/discussions/mattmre/EDCOCR-PUBLIC?logo=github&color=2ea043)](https://github.com/mattmre/EDCOCR-PUBLIC/discussions)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 #### Zero-hallucination OCR &middot; 45 languages &middot; GPU + CPU &middot; Chain of custody &middot; Distributed at scale
 
@@ -91,6 +97,122 @@ flowchart LR
     style F fill:#f59e0b,color:#fff
     style G fill:#ef4444,color:#fff
 ```
+
+---
+
+## Try It in 30 Seconds
+
+Spin up the full stack with Docker (GPU optional — CPU works too):
+
+```bash
+git clone https://github.com/mattmre/EDCOCR-PUBLIC.git
+cd EDCOCR-PUBLIC
+cp .env.example .env                # set OCR_API_KEY before starting
+docker compose up -d
+```
+
+Drop a PDF into `ocr_source/` and watch it appear under `ocr_output/EXPORT/PDF/`.
+
+**Or call the REST API directly:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/jobs \
+  -H "X-API-Key: $OCR_API_KEY" \
+  -F "file=@/path/to/document.pdf"
+```
+
+**Or use the Python SDK:**
+
+```python
+from edcocr_sdk import Client
+
+client = Client(base_url="http://localhost:8000", api_key="...")
+job = client.submit_job("/path/to/document.pdf")
+job.wait_until_complete()
+print(job.text)                     # OCR'd plain text
+print(job.searchable_pdf_path)      # Path to the rendered PDF
+```
+
+**Or use the TypeScript SDK:**
+
+```typescript
+import { Client } from "@edcocr/sdk";
+
+const client = new Client({ baseUrl: "http://localhost:8000", apiKey: "..." });
+const job = await client.submitJob("/path/to/document.pdf");
+await job.waitUntilComplete();
+console.log(job.text);
+```
+
+For the full installation walkthrough, see [`INSTALL.md`](INSTALL.md). For the 5-minute getting-started guide, see [`docs/02-QUICKSTART-5-MINUTE-SUCCESS.md`](docs/02-QUICKSTART-5-MINUTE-SUCCESS.md).
+
+---
+
+## System Overview
+
+EDCOCR is a layered system. Clients talk to a thin FastAPI ingress that delegates to a Django coordinator; workers are pulled in capability-based from a RabbitMQ broker; outputs land in PDF, plain text, and 14 structured sidecar formats backed by a tamper-evident custody log.
+
+```mermaid
+flowchart TB
+    subgraph Clients["Clients"]
+        C1[Python SDK]
+        C2[TypeScript SDK]
+        C3[REST API direct]
+        C4[Webhook consumers]
+    end
+
+    subgraph Ingestion["Ingestion Layer"]
+        API[FastAPI<br/>REST + WebSocket + SSE]
+        Watcher[File Watcher<br/>local + FTP/SFTP]
+        Object[Object Storage<br/>S3 · MinIO · Azure · GCS]
+    end
+
+    subgraph Coordination["Coordination Layer"]
+        Coord[Django Coordinator]
+        DB[(PostgreSQL)]
+        Broker[(RabbitMQ)]
+        Redis[(Redis<br/>Sentinel HA)]
+    end
+
+    subgraph Workers["Worker Layer"]
+        WG[GPU OCR Workers]
+        WC[CPU OCR Workers<br/>ONNX]
+        WN[NLP Workers<br/>NER · UIE]
+        WX[Compression Workers]
+    end
+
+    subgraph Output["Output Layer"]
+        OutPDF[Searchable PDFs]
+        OutTxt[Plain Text]
+        OutSide[14 Sidecar JSONs<br/>NER · Tables · Classification ·<br/>Handwriting · Language · ...]
+        Custody[Custody Log<br/>JSONL hash chain]
+    end
+
+    C1 --> API
+    C2 --> API
+    C3 --> API
+    Watcher --> API
+    Object --> API
+    API --> Coord
+    Coord <--> DB
+    Coord <--> Broker
+    Coord <--> Redis
+    Broker --> WG
+    Broker --> WC
+    Broker --> WN
+    Broker --> WX
+    WG --> Output
+    WC --> Output
+    WN --> Output
+    WX --> OutPDF
+    Output -->|completion| C4
+
+    style Workers fill:#10b981,stroke:#065f46,color:#fff
+    style Output fill:#f59e0b,stroke:#92400e,color:#fff
+    style Custody fill:#ef4444,stroke:#7f1d1d,color:#fff
+```
+
+For the full architecture walkthrough — deployment topologies (T1 single-host through T7 air-gap), failure modes, security model, and the custody hash-chain design — see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ---
 
@@ -481,9 +603,31 @@ EDCOCR is an open, community-driven project. The fastest path forward is more ey
 
 ---
 
+## Contributors
+
+<a href="https://github.com/mattmre/EDCOCR-PUBLIC/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=mattmre/EDCOCR-PUBLIC" alt="Contributors to EDCOCR-PUBLIC" />
+</a>
+
+Every commit, issue, review, and Discussion thread makes the project better. Thank you.
+
+---
+
+## Star History
+
+<a href="https://star-history.com/#mattmre/EDCOCR-PUBLIC&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=mattmre/EDCOCR-PUBLIC&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=mattmre/EDCOCR-PUBLIC&type=Date" />
+    <img alt="EDCOCR star history" src="https://api.star-history.com/svg?repos=mattmre/EDCOCR-PUBLIC&type=Date" />
+  </picture>
+</a>
+
+---
+
 <div align="center">
 
-**[Documentation](docs/)** &nbsp;&middot;&nbsp; **[API Reference](docs/API-REFERENCE.md)** &nbsp;&middot;&nbsp; **[Architecture](ARCHITECTURE.md)** &nbsp;&middot;&nbsp; **[Changelog](CHANGELOG.md)** &nbsp;&middot;&nbsp; **[Presentation Suite](presentation/index.html)**
+**[Documentation](docs/)** &nbsp;&middot;&nbsp; **[API Reference](docs/API-REFERENCE.md)** &nbsp;&middot;&nbsp; **[Architecture](ARCHITECTURE.md)** &nbsp;&middot;&nbsp; **[Changelog](CHANGELOG.md)** &nbsp;&middot;&nbsp; **[Presentation Suite](presentation/index.html)** &nbsp;&middot;&nbsp; **[Discussions](https://github.com/mattmre/EDCOCR-PUBLIC/discussions)**
 
 <sub>EDCOCR v4.1.0 &middot; Apache License 2.0 &middot; Forensic-grade OCR for the day someone asks <em>"prove it"</em></sub>
 

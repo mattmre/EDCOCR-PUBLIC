@@ -1,0 +1,22 @@
+# EDCOCR funding configuration
+#
+# GitHub uses this file to render the "Sponsor" button on the repository
+# header. Uncomment the channels you want to surface. Each value must
+# point at a real account that exists on the named platform.
+#
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+github: [mattmre]
+# patreon:        # username only
+# open_collective:# username only
+# ko_fi:          # username only
+# tidelift:       # platform-name/package-name
+# community_bridge:  # project name
+# liberapay:      # username only
+# issuehunt:      # username only
+# otechie:        # username only
+# lfx_crowdfunding: # project name
+# polar:          # username only
+# buy_me_a_coffee: # username only
+# thanks_dev:     # username only
+# custom:         # array of custom URLs

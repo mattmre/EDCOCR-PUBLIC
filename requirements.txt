@@ -89,7 +89,7 @@ pandas==2.3.3
 # ============================================================================
 
 # FastAPI - Modern web framework for building APIs
-fastapi==0.136.1
+fastapi==0.136.3
 
 # Uvicorn - ASGI server for FastAPI
 uvicorn[standard]>=0.42.0,<1.0.0
@@ -98,7 +98,7 @@ uvicorn[standard]>=0.42.0,<1.0.0
 python-multipart==0.0.29
 
 # SQLAlchemy - Database ORM
-sqlalchemy==2.0.49
+sqlalchemy==2.0.50
 
 # Slowapi - Rate limiting for FastAPI
 slowapi==0.1.9

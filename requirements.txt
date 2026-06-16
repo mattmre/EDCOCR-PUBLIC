@@ -162,7 +162,7 @@ paddlenlp==2.8.1
 
 # Watchdog - Cross-platform filesystem event monitoring
 # Used by file_watcher.py for hot-folder OCR submission
-watchdog>=4.0
+watchdog>=6.0.0
 
 # PyYAML - YAML configuration file parsing
 # Used by file_watcher_config.py for watcher configuration

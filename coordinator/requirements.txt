@@ -30,5 +30,5 @@ qrcode>=7.4
 # , item C7 -- DNS-SD federation cluster auto-discovery.
 # Both deps are *optional* at import time; the discovery module imports
 # cleanly without them and surfaces a clear error only when used.
-dnspython>=2.0,<3.0
+dnspython>=2.8.0,<3.0
 kubernetes>=28.0,<32.0

@@ -24,7 +24,7 @@ PyMuPDF==1.27.2.2
 
 PyYAML==6.0.3
 cryptography>=48.0.0
-django-otp>=1.5
+django-otp>=1.7.0
 qrcode>=7.4
 
 # , item C7 -- DNS-SD federation cluster auto-discovery.

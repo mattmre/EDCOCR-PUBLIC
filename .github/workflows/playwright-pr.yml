@@ -59,7 +59,7 @@ jobs:
       PLAYWRIGHT_FEATURE_OUTPUT_DIR: ${{ vars.PLAYWRIGHT_FEATURE_OUTPUT_DIR }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Node
         uses: actions/setup-node@v6

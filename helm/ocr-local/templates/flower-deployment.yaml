@@ -19,9 +19,14 @@ spec:
         app.kubernetes.io/component: flower
     spec:
       serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      {{- include "ocr-local.imagePullSecrets" . | nindent 6 }}
       {{- with .Values.flower.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if eq (include "ocr-local.hasClientCaVolumes" .) "true" }}
+      volumes:
+        {{- include "ocr-local.tlsCaVolume" . | nindent 8 }}
       {{- end }}
       containers:
         - name: flower
@@ -33,29 +38,45 @@ spec:
             - coordinator.coordinator
             - flower
             - --port=5555
-            # require basic auth for the Flower REST API, not just the UI
+            # maintenance review: require basic auth for the Flower REST API, not just the UI
             - --unauthenticated_api=false
           ports:
             - name: http
               containerPort: 5555
               protocol: TCP
+          # S2-01 / C04: do NOT envFrom the full release Secret (Postgres,
+          # Django, S3 keys). Flower only needs broker URL + UI password.
           envFrom:
             - configMapRef:
                 name: {{ .Release.Name }}-config
-            - secretRef:
-                name: {{ .Release.Name }}-secret
           env:
+            - name: CELERY_BROKER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: CELERY_BROKER_URL
+            - name: FLOWER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: FLOWER_PASSWORD
             - name: FLOWER_BASIC_AUTH
               value: "admin:$(FLOWER_PASSWORD)"
-            # ensure REST API refuses unauthenticated calls even if a
+            # maintenance review: ensure REST API refuses unauthenticated calls even if a
             # reverse proxy later strips the UI basic-auth layer.
             - name: FLOWER_UNAUTHENTICATED_API
               value: "false"
+          {{- if eq (include "ocr-local.hasClientCaVolumes" .) "true" }}
+          volumeMounts:
+            {{- include "ocr-local.tlsCaVolumeMount" . | nindent 12 }}
+          {{- end }}
+          # S1-A16: Flower UI is basic-auth protected; unauth httpGet never
+          # becomes Ready. TCP probe only checks the process is listening.
           readinessProbe:
-            httpGet:
-              path: /
+            tcpSocket:
               port: 5555
             periodSeconds: 10
+            failureThreshold: 6
           resources:
             {{- toYaml .Values.flower.resources | nindent 12 }}
           {{- with .Values.flower.containerSecurityContext }}

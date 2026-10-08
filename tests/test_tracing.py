@@ -172,8 +172,17 @@ class TestLocalSpanToDict:
         span = LocalSpan(name="op")
         d = span.to_dict()
         expected = {
-            "name", "span_id", "trace_id", "parent_id", "start_time",
-            "end_time", "duration_ms", "attributes", "events", "status", "kind",
+            "name",
+            "span_id",
+            "trace_id",
+            "parent_id",
+            "start_time",
+            "end_time",
+            "duration_ms",
+            "attributes",
+            "events",
+            "status",
+            "kind",
         }
         assert set(d.keys()) == expected
 
@@ -469,9 +478,10 @@ class TestLocalTracerThreadSafety:
 class TestTracingConfigDefaults:
     """Tests for TracingConfig default values."""
 
-    def test_enabled_default_true(self):
+    def test_enabled_default_false(self):
+        """R3-RC-07: OTEL defaults OFF (opt-in only)."""
         cfg = TracingConfig()
-        assert cfg.enabled is True
+        assert cfg.enabled is False
 
     def test_service_name_default(self):
         cfg = TracingConfig()
@@ -514,7 +524,9 @@ class TestTracingConfigFromEnv:
         assert cfg.exporter == "otlp"
 
     def test_from_env_reads_endpoint(self):
-        with patch.dict("os.environ", {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://otel:4318"}):
+        with patch.dict(
+            "os.environ", {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://otel:4318"}
+        ):
             cfg = TracingConfig.from_env()
         assert cfg.endpoint == "http://otel:4318"
 
@@ -525,12 +537,14 @@ class TestTracingConfigFromEnv:
 
     def test_from_env_defaults_when_vars_absent(self):
         env = {
-            k: v for k, v in __import__("os").environ.items()
+            k: v
+            for k, v in __import__("os").environ.items()
             if not k.startswith("OTEL_")
         }
         with patch.dict("os.environ", env, clear=True):
             cfg = TracingConfig.from_env()
-        assert cfg.enabled is True
+        # R3-RC-07: OTEL_ENABLED defaults false (opt-in)
+        assert cfg.enabled is False
         assert cfg.service_name == "ocr-local-api"
         assert cfg.exporter == "console"
         assert cfg.endpoint == "http://localhost:4317"

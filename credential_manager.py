@@ -4,7 +4,7 @@ Provides a unified interface for retrieving secrets from multiple sources:
 - Environment variables (default, always available)
 - HashiCorp Vault (optional, requires ``hvac``)
 - AWS Secrets Manager / KMS (optional, requires ``boto3``)
-- Encrypted credential files (for air-gapped deployments)
+- Local credential files with optional base64 transport encoding
 
 Usage::
 
@@ -236,7 +236,9 @@ class VaultBackend(CredentialBackend):
             else:
                 self._load_kv_v2(client, path)
         except Exception:
-            logger.warning("Failed to read secrets from Vault path %s", path, exc_info=True)
+            logger.warning(
+                "Failed to read secrets from Vault path %s", path, exc_info=True
+            )
 
     def _load_kv_v1(self, client: Any, path: str) -> None:
         """Load secrets from a KV v1 engine."""
@@ -313,12 +315,17 @@ class AWSSecretsBackend(CredentialBackend):
         if self._loaded:
             return
         self._loaded = True
+        secret_name = os.environ.get("AWS_SECRET_NAME", "").strip()
+        if not secret_name:
+            logger.debug(
+                "AWS_SECRET_NAME not set; AWS Secrets Manager backend unavailable"
+            )
+            return
         try:
             import boto3  # type: ignore[import-untyped]
         except ImportError:
             logger.debug("boto3 not installed; AWS Secrets Manager backend unavailable")
             return
-        secret_name = os.environ.get("AWS_SECRET_NAME", "ocr-local/credentials")
         region = os.environ.get("AWS_REGION_NAME", "us-east-1")
         try:
             client = boto3.client("secretsmanager", region_name=region)
@@ -335,7 +342,9 @@ class AWSSecretsBackend(CredentialBackend):
                     )
         except Exception:
             logger.warning(
-                "Failed to read from AWS Secrets Manager (%s)", secret_name, exc_info=True
+                "Failed to read from AWS Secrets Manager (%s)",
+                secret_name,
+                exc_info=True,
             )
 
     def get(self, key: str) -> Optional[str]:
@@ -379,6 +388,14 @@ class AWSKMSBackend(CredentialBackend):
         if self._loaded:
             return
         self._loaded = True
+        encrypted = {
+            key: value
+            for key, value in os.environ.items()
+            if key.startswith(self.KMS_PREFIX) and key[len(self.KMS_PREFIX) :]
+        }
+        if not encrypted:
+            logger.debug("No KMS_ENC_* values set; AWS KMS backend unavailable")
+            return
         try:
             import boto3  # type: ignore[import-untyped]
             from botocore.exceptions import ClientError  # type: ignore[import-untyped]
@@ -389,12 +406,8 @@ class AWSKMSBackend(CredentialBackend):
         region = os.environ.get("AWS_KMS_REGION", "us-east-1")
         kms_client = boto3.client("kms", region_name=region)
 
-        for env_key, env_val in os.environ.items():
-            if not env_key.startswith(self.KMS_PREFIX):
-                continue
+        for env_key, env_val in encrypted.items():
             cred_name = env_key[len(self.KMS_PREFIX) :]
-            if not cred_name:
-                continue
             try:
                 plaintext = self._decrypt_with_retry(
                     kms_client, env_val, cred_name, ClientError
@@ -404,9 +417,7 @@ class AWSKMSBackend(CredentialBackend):
             except CredentialError:
                 raise
             except Exception:
-                logger.warning(
-                    "KMS decryption failed for %s", cred_name, exc_info=True
-                )
+                logger.warning("KMS decryption failed for %s", cred_name, exc_info=True)
 
     def _decrypt_with_retry(
         self,
@@ -513,9 +524,15 @@ class FileBackend(CredentialBackend):
             data = json.loads(raw)
             if isinstance(data, dict):
                 self._cache = {k: str(v) for k, v in data.items()}
-                logger.info("Loaded %d secrets from credential file %s", len(self._cache), file_path)
+                logger.info(
+                    "Loaded %d secrets from credential file %s",
+                    len(self._cache),
+                    file_path,
+                )
         except Exception:
-            logger.warning("Failed to read credential file %s", file_path, exc_info=True)
+            logger.warning(
+                "Failed to read credential file %s", file_path, exc_info=True
+            )
 
     def get(self, key: str) -> Optional[str]:
         self._load_secrets()
@@ -537,7 +554,7 @@ def is_placeholder(value: str) -> bool:
     Checks against:
     - Exact known-insecure values (``minioadmin``, ``password``, etc.)
     - Substring patterns (``change-me``, ``example``, ``your_``, etc.)
-    - URL-embedded credentials (``amqp://user:password@host``)
+    - URL-embedded credentials (example pattern only)  # pragma: allowlist secret
     """
     if not value or not value.strip():
         return True
@@ -777,9 +794,7 @@ class CredentialManager:
                                 exc_info=True,
                             )
             except Exception:
-                logger.warning(
-                    "Failed to refresh credential %s", key, exc_info=True
-                )
+                logger.warning("Failed to refresh credential %s", key, exc_info=True)
 
     def stop_refresh(self) -> None:
         """Stop the background credential refresh thread (if running)."""
@@ -793,19 +808,39 @@ class CredentialManager:
     def _default_backends() -> list[CredentialBackend]:
         """Build the default backend chain.
 
-        Order: env -> vault -> aws-secrets -> aws-kms -> file
-        Only includes backends whose optional dependencies are importable.
+        S1-A09 / R3-RC-03: when Vault (or AWS) is the declared production
+        source, non-env backends are ordered **before** EnvVarBackend so
+        env-only dual-path cannot mask rotated secrets. Lab/dev keeps
+        env-first for operator convenience.
+
+        Prefer vault/aws when:
+        - ``CREDENTIAL_PREFER_VAULT=true``, or
+        - ``DEPLOYMENT_ENV=production`` and ``VAULT_ADDR`` / AWS secret env set.
         """
-        backends: list[CredentialBackend] = [EnvVarBackend()]
-        # Vault backend (lazy: only attempts import when get() is called)
-        backends.append(VaultBackend())
-        # AWS Secrets Manager backend
-        backends.append(AWSSecretsBackend())
-        # AWS KMS backend (for individually-encrypted credentials)
-        backends.append(AWSKMSBackend())
-        # File backend
-        backends.append(FileBackend())
-        return backends
+        env_backend = EnvVarBackend()
+        remote: list[CredentialBackend] = [
+            VaultBackend(),
+            AWSSecretsBackend(),
+            AWSKMSBackend(),
+            FileBackend(),
+        ]
+        prefer_remote = os.environ.get(
+            "CREDENTIAL_PREFER_VAULT", ""
+        ).strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if not prefer_remote:
+            dep = os.environ.get("DEPLOYMENT_ENV", "development").strip().lower()
+            if dep == "production" and (
+                os.environ.get("VAULT_ADDR", "").strip()
+                or os.environ.get("AWS_SECRET_NAME", "").strip()
+            ):
+                prefer_remote = True
+        if prefer_remote:
+            return [*remote, env_backend]
+        return [env_backend, *remote]
 
     def _fetch_from_backends(self, key: str) -> Optional[str]:
         """Fetch a credential value from the backend chain (no caching)."""
@@ -867,6 +902,38 @@ class CredentialManager:
 
 # Lazily initialized singleton
 _default_manager: Optional[CredentialManager] = None
+
+
+def apply_runtime_credentials_to_environ(
+    keys: Optional[list[str]] = None,
+) -> dict[str, str]:
+    """Materialize resolved credentials into ``os.environ`` (S1-A09).
+
+    Django/Celery still read ``DATABASE_URL`` / ``CELERY_BROKER_URL`` from the
+    environment; this helper is the single-path bridge so Vault/file values
+    win when ``CREDENTIAL_PREFER_VAULT`` or production Vault is configured.
+    Returns map of keys that were injected (values redacted from logs).
+    """
+    critical = keys or [
+        "DATABASE_URL",
+        "CELERY_BROKER_URL",
+        "REDIS_URL",
+        "POSTGRES_PASSWORD",
+        "RABBITMQ_PASSWORD",
+        "DJANGO_SECRET_KEY",
+    ]
+    injected: dict[str, str] = {}
+    for key in critical:
+        value = get_credential(key)
+        if value:
+            os.environ[key] = value
+            injected[key] = "(set)"
+    if injected:
+        logger.info(
+            "Applied runtime credentials to environ for keys: %s",
+            sorted(injected.keys()),
+        )
+    return injected
 
 
 def get_credential(name: str, default: Optional[str] = None) -> Optional[str]:

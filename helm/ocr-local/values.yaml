@@ -1,13 +1,26 @@
 # =============================================================================
-# EDCOCR Helm Chart — values.yaml
-# EDCOCR — Forensic-Grade OCR Platform for Electronic Discovery & Document Processing
+# OCR-Local Helm Chart — values.yaml
+# Industrial Adaptive OCR — Forensic Grade Document Processing
 # =============================================================================
+
+# Production values opt into fail-closed topology checks for incomplete
+# high-availability modes such as bundled Redis Sentinel.
+productionMode: false
 
 # ---------------------------------------------------------------------------
 # Graceful shutdown — must exceed SHUTDOWN_DRAIN_TIMEOUT_SECONDS (default 300)
 # ---------------------------------------------------------------------------
 workerTerminationGracePeriodSeconds: 360   # 300s drain + 60s buffer
 coordinatorTerminationGracePeriodSeconds: 60
+
+# Kubernetes DNS suffix used by broker clients outside the release namespace
+# (notably KEDA's operator namespace).
+clusterDomain: cluster.local
+
+haScheduling:
+  enabled: true
+  hostnameWhenUnsatisfiable: ScheduleAnyway
+  zoneWhenUnsatisfiable: ScheduleAnyway
 
 # ---------------------------------------------------------------------------
 # RBAC — ServiceAccount for pod identity separation
@@ -19,25 +32,50 @@ rbac:
 # Container images
 # ---------------------------------------------------------------------------
 image:
+  # Set true in production overlays to fail closed unless every rendered
+  # application/infrastructure image is pinned by digest.
+  requireDigest: false
   coordinator:
     repository: ocr-local/coordinator
     tag: ""          # defaults to Chart.appVersion
+    digest: ""       # sha256:<64 hex chars>; preferred for releases
     pullPolicy: IfNotPresent
   worker:
     repository: ocr-local/worker
     tag: ""          # defaults to Chart.appVersion
+    digest: ""
+    pullPolicy: IfNotPresent
+  cpuOcrWorker:
+    repository: ocr-local/worker-cpu
+    tag: ""          # defaults to Chart.appVersion
+    digest: ""
+    pullPolicy: IfNotPresent
+  tesseractWorker:
+    repository: ocr-local/worker-tesseract
+    tag: ""
+    digest: ""
     pullPolicy: IfNotPresent
   nlpWorker:
     repository: ocr-local/worker-nlp
     tag: ""          # defaults to Chart.appVersion
+    digest: ""
     pullPolicy: IfNotPresent
   layoutlmWorker:
     repository: ocr-local/worker-layoutlm
     tag: ""          # defaults to Chart.appVersion
+    digest: ""
     pullPolicy: IfNotPresent
   frontend:
     repository: ocr-local/frontend
     tag: ""          # defaults to Chart.appVersion
+    digest: ""
+    pullPolicy: IfNotPresent
+  # FastAPI surface used by the operator console.  This is a separate image
+  # from the Django coordinator; routing /api to the coordinator is invalid.
+  api:
+    repository: ocr-local/api
+    tag: ""          # defaults to Chart.appVersion
+    digest: ""
     pullPolicy: IfNotPresent
   imagePullSecrets: []
 
@@ -51,6 +89,15 @@ workerSecurity:
     enabled: true
     annotation: "sidecar.istio.io/inject"
     annotationValue: "true"
+
+  # S2-02 / R2 residual / S1-05: do NOT envFrom the full release Secret into
+  # workers, coordinator, celery-beat, or celery-coordinator.
+  # When true (default), those pods get configMap + explicit secretKeyRef for
+  # broker/DB/Redis/Django (plus metrics/S3 for coordinator path); S3 on
+  # workers only when storage.backend=s3 and storage.workerInjectS3Credentials.
+  # Flower already uses a selective pattern. Set false only for legacy full
+  # secretRef envFrom.
+  leastSecretEnv: true
 
   # Configure encrypted volumes for the worker temp staging
   # Mandates encrypted storage classes or in-memory emptyDir for staging.
@@ -70,6 +117,7 @@ workerSecurity:
 # ---------------------------------------------------------------------------
 coordinator:
   replicas: 2
+  healthTenantId: "health"
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 1000
@@ -97,16 +145,67 @@ coordinator:
     DJANGO_ALLOWED_HOSTS: ""
     DEPLOYMENT_ENV: production
     PRODUCTION_READINESS_ACK: "true"
+    ENABLE_TRANSLATION: "false"
+    ENABLE_TRANSLATION_API: "false"
+    ENABLE_HANDWRITING_MT: "false"
+    OCR_TRANSLATION_ENFORCE_PROVENANCE: "true"
+    DATABASE_SCHEMA: "public"
+    OCR_TASK_ROUTING: "gpu"
+    OCR_FAIR_FANOUT_ENABLED: "false"
+    OCR_MAX_INFLIGHT_PAGES_PER_DOCUMENT: "8"
+    ALLOW_DEGRADED_NER: "false"
+
+# Feature-flagged page-level handoff between mutually exclusive OCR images.
+# Deploy both worker classes first, then enable this flag on coordinators.
+ocrCapabilitySeparation:
+  enabled: false
+
+# Durable CPU render -> GPU inference -> CPU finalization. Default off until
+# target hardware and all storage modes are qualified with current source.
+ocrStagedPage:
+  enabled: false
+  # Fleet-wide decoded raster reservation; worker memory also holds encoded
+  # payloads, PIL copies, detector crops and native predictor allocations.
+  # Keep per-pod memory limits above that active overhead after measuring it.
+  globalBytes: "17179869184"
+  maxPageBytes: "268435456"
+  maxCapacityWaitSeconds: "3600"
+  leaseSeconds: "1800"
+  recoveryIntervalSeconds: "60"
+  # A single legal document can feed 16/32 logical workers without the old
+  # eight-page fair-admission bottleneck; DB byte reservations still govern.
+  maxInflightPagesPerDocument: "64"
+  render:
+    replicas: 4
+    concurrency: 2
+    autoscaling: {enabled: false, minReplicas: 4, maxReplicas: 16, queueTarget: 4}
+    resources:
+      requests: {cpu: "2", memory: 4Gi}
+      limits: {cpu: "4", memory: 8Gi}
+  finalize:
+    replicas: 4
+    concurrency: 2
+    autoscaling: {enabled: false, minReplicas: 4, maxReplicas: 16, queueTarget: 4}
+    resources:
+      requests: {cpu: "2", memory: 4Gi}
+      limits: {cpu: "4", memory: 8Gi}
 
 # ---------------------------------------------------------------------------
-# External EXTERNAL_TRANSLATION seam (default OFF)
+# External EDC_TRANSLATION seam (default OFF)
 # ---------------------------------------------------------------------------
-externalTranslation:
+edcTranslation:
   preferExternal: "false"
   url: ""
   providerId: "passthrough"
   timeoutSeconds: "30"
   readinessPath: "/health"
+
+# External strong-auth proof verifier used by review certification. The route
+# remains fail-closed (HTTP 501) while verifierUrl is empty.
+reviewStrongAuth:
+  verifierUrl: ""
+  caSecretName: ""
+  caSecretKey: "ca.crt"
 
 # ---------------------------------------------------------------------------
 # Frontend operator console (Next.js)
@@ -114,7 +213,9 @@ externalTranslation:
 frontend:
   enabled: true
   replicas: 1
+  maxConcurrentJobs: 4
   apiBaseUrl: "/"                 # same-origin ingress/service path by default
+  httpOnlySession: false          # runtime browser cookie mode; requires API sessions
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 1000
@@ -136,6 +237,59 @@ frontend:
     limits:
       cpu: 500m
       memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# FastAPI API surface
+# ---------------------------------------------------------------------------
+# The API uses a single SQLite writer by default, so keep replicas at one
+# unless the operator supplies a separately coordinated database backend.
+api:
+  enabled: true
+  replicas: 1
+  # Inference concurrency is memory-bound. Queue capacity may be larger so
+  # callers can submit bounded work without forcing pipelines to overlap.
+  maxConcurrentJobs: 1
+  maxQueuedJobs: 4
+  # Qualified local API profile: one full document pipeline at a time. Add
+  # fleet capacity through coordinator workers for larger parallelism.
+  pipeline:
+    workers: 2
+    extractors: 2
+    compressors: 1
+    ompThreads: 1
+    mklThreads: 1
+    nativeThreadsPerPredictor: 1
+    modelReplicasPerKey: 2
+    inferenceSlotsPerDevice: 2
+    # Planning reservation per concurrent full pipeline, based on the
+    # qualified 8 GiB local API recipe. This is not a measured RSS ceiling.
+    memoryBudgetMiB: 8192
+  dataMountPath: /app/ocr_data
+  sourceSubdir: source
+  outputSubdir: output
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: "4"
+      memory: 8Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
 
 # ---------------------------------------------------------------------------
 # Celery coordinator worker (job lifecycle queue)
@@ -188,7 +342,7 @@ celeryBeat:
 # ---------------------------------------------------------------------------
 # Flower (Celery monitoring dashboard)
 #
-# SECURITY NOTE:
+# SECURITY NOTE (maintenance review):
 #   Flower exposes Celery task queue internals (job IDs, file paths, timings,
 #   worker hostnames, argument payloads). Basic HTTP auth is the ONLY
 #   authentication layer Flower ships with and is NOT sufficient for exposure
@@ -206,7 +360,9 @@ celeryBeat:
 #        proxied.
 # ---------------------------------------------------------------------------
 flower:
-  enabled: true
+  # LT-11 / S2-04: default OFF — Flower basic-auth is not SSO. Opt-in only when
+  # operators accept basic-auth + namespace NetworkPolicy (see SECURITY NOTE).
+  enabled: false
   # NetworkPolicy restricting Flower ingress to pods within the release namespace.
   # Leave enabled in production unless a dedicated, authenticated ingress path
   # is being provisioned. See SECURITY NOTE above.
@@ -236,8 +392,32 @@ flower:
 # ---------------------------------------------------------------------------
 gpuWorker:
   replicas: 2
+  # Staged inference defaults to one prefork process per one-visible-GPU pod.
+  # Threads are an opt-in hardware-qualification profile: one process owns all
+  # predictors on that device, and slots/model copies have an explicit budget.
+  stagedInference:
+    # prefork is the safe default because EngineRuntimePool is process-local.
+    # threads runs ONE Celery process on each one-visible-GPU pod; concurrent
+    # predictor owners are bounded by slotsPerDevice and replicasPerKey.
+    # Qualify real VRAM/native-memory use on target hardware before enabling.
+    # Celery soft time limits do not interrupt an occupied thread: rely on
+    # hard pod termination, late ACK, durable stage leases and Beat recovery.
+    # The budget below is an operator estimate, not a measured hardware claim.
+    pool: prefork
+    concurrency: 1
+    slotsPerDevice: 1
+    replicasPerKey: 1
+    deviceMemoryMiB: 0
+    modelReplicaMiB: 0
+    runtimeReserveMiB: 0
   concurrency: 4
-  queues: "ocr_gpu,cpu_general"
+  queues: "ocr_gpu,cpu_general,nlp_general"
+  env:
+    OCR_NATIVE_THREADS_PER_PREDICTOR: "4"
+    OCR_RECOGNIZER_BATCH_SIZE: "6"
+    OCR_INFERENCE_SLOTS_PER_DEVICE: "1"
+    OCR_ENGINE_REPLICAS_PER_KEY: "1"
+    # Fleet overlays set OCR_GPU_LOCAL_DEVICE=0 only for one-visible-device pods.
   maxTasksPerChild: 50
   shmSize: 8Gi
   podSecurityContext:
@@ -256,10 +436,10 @@ gpuWorker:
       type: RuntimeDefault
   autoscaling:
     enabled: false
-    minReplicas: 2              #  tuning -- min replicas for ocr_gpu queue
-    maxReplicas: 8              #  tuning -- max replicas for ocr_gpu queue
-    pollingInterval: 15         #  tuning -- queue poll interval (seconds)
-    cooldownPeriod: 120         #  tuning -- scale-down cooldown (seconds)
+    minReplicas: 2              # Plan C Phase 0 tuning -- min replicas for ocr_gpu queue
+    maxReplicas: 8              # Plan C Phase 0 tuning -- max replicas for ocr_gpu queue
+    pollingInterval: 15         # Plan C Phase 0 tuning -- queue poll interval (seconds)
+    cooldownPeriod: 120         # Plan C Phase 0 tuning -- scale-down cooldown (seconds)
     queueTarget: 5
   resources:
     requests:
@@ -278,18 +458,23 @@ gpuWorker:
   tolerations: []
 
 # ---------------------------------------------------------------------------
-# CPU OCR workers (PaddleOCR on CPU with ONNX Runtime optimization)
-# For deployments without GPU hardware or to supplement GPU workers
+# CPU OCR workers (native-Paddle CPU inference; the qualified default recipe)
+# For deployments without GPU hardware or to supplement GPU workers.
+# ONNX Runtime is an explicit opt-in only: it requires installing onnxruntime
+# into the worker image and setting OCR_INFERENCE_BACKEND=onnx.
 # ---------------------------------------------------------------------------
 cpuOcrWorker:
   enabled: false            # Disabled by default; enable for CPU-only deployments
   replicas: 2
   concurrency: 4
-  queues: "ocr_cpu,cpu_general"
+  queues: "ocr_cpu"
   maxTasksPerChild: 100     # Higher than GPU (less memory pressure without VRAM)
   env:
-    OCR_INFERENCE_BACKEND: "onnx"   # ONNX Runtime for CPU optimization
+    OCR_INFERENCE_BACKEND: "paddle" # Native Paddle CPU inference (qualified default)
     OCR_TASK_ROUTING: "cpu"         # Route OCR tasks to ocr_cpu queue
+    OCR_NATIVE_THREADS_PER_PREDICTOR: "4"
+    OCR_RECOGNIZER_BATCH_SIZE: "6"
+    OCR_INFERENCE_SLOTS_PER_DEVICE: "1"
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 1000
@@ -303,10 +488,10 @@ cpuOcrWorker:
       type: RuntimeDefault
   autoscaling:
     enabled: false
-    minReplicas: 1              #  tuning -- min replicas for ocr_cpu queue
-    maxReplicas: 8              #  tuning -- max replicas for ocr_cpu queue
-    pollingInterval: 15         #  tuning -- queue poll interval (seconds)
-    cooldownPeriod: 120         #  tuning -- scale-down cooldown (seconds)
+    minReplicas: 1              # Plan C Phase 0 tuning -- min replicas for ocr_cpu queue
+    maxReplicas: 8              # Plan C Phase 0 tuning -- max replicas for ocr_cpu queue
+    pollingInterval: 15         # Plan C Phase 0 tuning -- queue poll interval (seconds)
+    cooldownPeriod: 120         # Plan C Phase 0 tuning -- scale-down cooldown (seconds)
     queueTarget: 3          # Lower target (CPU is slower, keep queue shallow)
   resources:
     requests:
@@ -315,6 +500,39 @@ cpuOcrWorker:
     limits:
       cpu: "8"
       memory: 8Gi
+  nodeSelector: {}
+  tolerations: []
+
+tesseractWorker:
+  enabled: false
+  replicas: 1
+  concurrency: 2
+  queues: "ocr_tesseract"
+  maxTasksPerChild: 100
+  env:
+    OCR_WORKER_CAPABILITY: "tesseract"
+    OCR_SEPARATE_TESSERACT_LANE: "true"
+    OCR_LANGUAGE_TIERS: "core,extended"
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 8
+    pollingInterval: 15
+    cooldownPeriod: 120
+    queueTarget: 3
+  resources:
+    requests: {cpu: "2", memory: 2Gi}
+    limits: {cpu: "4", memory: 4Gi}
   nodeSelector: {}
   tolerations: []
 
@@ -369,7 +587,7 @@ nlpGpuWorker:
   enabled: false            # Disabled by default; enable when VLM inference is needed
   replicas: 1
   concurrency: 2            # VLM inference is memory-heavy; keep concurrency low
-  queues: "ocr_nlp_gpu"
+  queues: "ocr_nlp_gpu,nlp_general"
   maxTasksPerChild: 25      # Aggressive recycling to reclaim GPU memory
   shmSize: 8Gi
   capabilities: "vlm,semantic_search"
@@ -393,10 +611,10 @@ nlpGpuWorker:
       type: RuntimeDefault
   autoscaling:
     enabled: false
-    minReplicas: 2              #  tuning -- min replicas for nlp_general queue
-    maxReplicas: 6              #  tuning -- max replicas for nlp_general queue
-    pollingInterval: 30         #  tuning -- queue poll interval (seconds)
-    cooldownPeriod: 180         #  tuning -- scale-down cooldown (seconds)
+    minReplicas: 2              # Plan C Phase 0 tuning -- min replicas for nlp_general queue
+    maxReplicas: 6              # Plan C Phase 0 tuning -- max replicas for nlp_general queue
+    pollingInterval: 30         # Plan C Phase 0 tuning -- queue poll interval (seconds)
+    cooldownPeriod: 180         # Plan C Phase 0 tuning -- scale-down cooldown (seconds)
     queueTarget: 3           # Keep queue shallow for expensive GPU tasks
   resources:
     requests:
@@ -449,11 +667,15 @@ layoutlmWorker:
       type: RuntimeDefault
   autoscaling:
     enabled: false
-    minReplicas: 0              #  tuning -- min replicas for ocr_layoutlm queue (scale-to-zero)
-    maxReplicas: 3              #  tuning -- max replicas for ocr_layoutlm queue
-    pollingInterval: 30         #  tuning -- queue poll interval (seconds)
-    cooldownPeriod: 300         #  tuning -- scale-down cooldown (seconds)
+    minReplicas: 0              # Plan C Phase 0 tuning -- min replicas for ocr_layoutlm queue (scale-to-zero)
+    maxReplicas: 3              # Plan C Phase 0 tuning -- max replicas for ocr_layoutlm queue
+    pollingInterval: 30         # Plan C Phase 0 tuning -- queue poll interval (seconds)
+    cooldownPeriod: 300         # Plan C Phase 0 tuning -- scale-down cooldown (seconds)
     queueTarget: 2
+  # The nvidia.com/gpu device request is injected into requests+limits by
+  # layoutlm-worker-deployment.yaml from gpu.count when gpu.enabled=true.  Do
+  # NOT hardcode nvidia.com/gpu here -- that would also request a GPU in
+  # CPU-only mode (gpu.enabled=false, LAYOUTLM_DEVICE=cpu).
   resources:
     requests:
       memory: "2Gi"
@@ -469,7 +691,9 @@ layoutlmWorker:
 cpuWorker:
   replicas: 1
   concurrency: 8
-  queues: "cpu_general"
+  queues: "cpu_general,nlp_general"
+  nodeSelector: {}
+  tolerations: []
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 1000
@@ -483,10 +707,10 @@ cpuWorker:
       type: RuntimeDefault
   autoscaling:
     enabled: false
-    minReplicas: 2              #  tuning -- min replicas for cpu_general (compression) queue
-    maxReplicas: 8              #  tuning -- max replicas for cpu_general queue
-    pollingInterval: 30         #  tuning -- queue poll interval (seconds)
-    cooldownPeriod: 180         #  tuning -- scale-down cooldown (seconds)
+    minReplicas: 2              # Plan C Phase 0 tuning -- min replicas for cpu_general (compression) queue
+    maxReplicas: 8              # Plan C Phase 0 tuning -- max replicas for cpu_general queue
+    pollingInterval: 30         # Plan C Phase 0 tuning -- queue poll interval (seconds)
+    cooldownPeriod: 180         # Plan C Phase 0 tuning -- scale-down cooldown (seconds)
     queueTarget: 10
   resources:
     requests:
@@ -499,14 +723,51 @@ cpuWorker:
 # ---------------------------------------------------------------------------
 # Shared storage
 # ---------------------------------------------------------------------------
+# R2-RC-20: backend "nfs" alone only sets NFS_ROOT in ConfigMap (env theater).
+# For real shared volumes set storage.nfs.persistence.enabled=true (creates PVC
+# {{ .Release.Name }}-nfs-data) and mountPath on workers. storage.nfs.server is
+# for operator CSI/static PV documentation; chart does not auto-create NFS PV.
 storage:
-  backend: nfs                   # "nfs" or "s3"
+  backend: nfs                   # "nfs" or "s3" (nfs requires PVC for real share)
+  # S2-02: when workerSecurity.leastSecretEnv=true, S3 credentials are only
+  # injected into worker pods if this is true. Prefer presigned I/O (default).
+  workerInjectS3Credentials: false
   nfs:
-    server: ""                   # NFS server hostname / IP
-    path: /shared                # NFS export path
+    server: ""                   # NFS server hostname / IP (document for CSI/PV)
+    path: /shared                # legacy local root without a PVC; configure the export in the PV/CSI driver
+    mountPath: /shared           # container mount when persistence.enabled
+    persistence:
+      enabled: false             # set true to create RWX PVC (not env-only)
+      size: 100Gi
+      storageClass: ""
+      accessMode: ReadWriteMany
   s3:
-    cacheDir: /tmp/ocr-cache
-    cacheMaxSizeGB: 10
+    # static: explicit endpoint/key pair; iam: refreshable SDK provider chain.
+    authMode: static
+    # Existing operator-managed IAM service account, used only by control-plane
+    # pods. Required in iam mode; workers retain the credential-free account.
+    controlPlaneServiceAccount: ""
+    # Exact signed URL hostnames, including bucket-prefixed AWS hosts. Required
+    # for IAM presigned mode; no wildcard suffix matching is permitted.
+    presignedAllowedHosts: []
+    # The cache shares the protected worker staging volume. Keep headroom for
+    # raster and output staging, especially when emptyDir.medium is Memory.
+    # Cache eviction has one pod-local byte budget; immutable source fetches
+    # allow up to four concurrent transfers per worker process, so process
+    # concurrency still contributes to transient network/staging pressure.
+    cacheDir: /tmp/staging/ocr-cache
+    cacheMaxSizeGB: 1
+    cacheMaxObjectGB: 0.5
+    usePresignedUrls: false
+    # Optional CA Secret for private S3-compatible endpoints. The key is
+    # mounted read-only and exported through AWS_CA_BUNDLE for botocore.
+    caSecretName: ""
+    caSecretKey: ca.crt
+    caMountPath: /etc/s3-ca/ca.crt
+    networkPolicy:
+      # Required when storage.backend=s3.  The chart refuses an S3 render
+      # without an explicit endpoint CIDR allow-list; do not use 0.0.0.0/0.
+      allowedCidrs: []
     # endpoint, bucket, accessKey, secretKey, region set via secret
 
 # ---------------------------------------------------------------------------
@@ -516,12 +777,19 @@ storage:
 # Update with: docker pull <image>:<tag> && docker inspect --format='{{.RepoDigests}}' <image>:<tag>
 postgresql:
   enabled: true
+  # Client transport can be configured independently for an external
+  # PostgreSQL service. tls.enabled remains the bundled all-services default.
+  clientTls:
+    enabled: false
+    caSecretName: ""
+    caSecretKey: ca.crt
+    caMountPath: /etc/postgresql-ca/ca.crt
   storage: 50Gi
   storageClass: ""
   image:
     repository: postgres
     tag: "16-alpine"
-    # digest: sha256:<hash>  # Update with: docker pull postgres:16-alpine && docker inspect --format='{{.RepoDigests}}' postgres:16-alpine
+    digest: ""          # required when image.requireDigest=true
   podSecurityContext:
     runAsUser: 999
     fsGroup: 999
@@ -545,7 +813,7 @@ postgresql:
     effectiveCacheSize: 768MB
     workMem: 4MB
   backup:
-    enabled: true               #  tuning -- HA overlay default
+    enabled: true               # Plan C Phase 0 tuning -- HA overlay default
     schedule: "0 2 * * *"       # Daily at 2 AM UTC
     retentionCount: 7            # Keep last 7 backups
     storage: 20Gi
@@ -558,17 +826,22 @@ postgresql:
 # ---------------------------------------------------------------------------
 rabbitmq:
   enabled: true
+  # Independent client TLS is for an external TLS broker with an explicit
+  # secrets.celeryBrokerUrl. The bundled broker requires
+  # tls.enabled=true to configure its matching listener and certificates.
+  clientTls:
+    enabled: false
+    caSecretName: ""
+    caSecretKey: ca.crt
+    caMountPath: /etc/rabbitmq-ca/ca.crt
   replicas: 1
   storage: 10Gi
   storageClass: ""
   image:
     repository: rabbitmq
     tag: "3.13-management-alpine"
-    # digest: sha256:<hash>  # Update with: docker pull rabbitmq:3.13-management-alpine && docker inspect --format='{{.RepoDigests}}' rabbitmq:3.13-management-alpine
-  quorumQueues: true            #  tuning -- HA queue replication
-  #  tuning -- broker-level default queue type for new queues
-  extraConfiguration:
-    RABBITMQ_DEFAULT_QUEUE_TYPE: quorum
+    digest: ""          # required when image.requireDigest=true
+  quorumQueues: true            # Plan C Phase 0 tuning -- HA queue replication
   erlangCookieSecret: ""
   podSecurityContext:
     runAsUser: 999
@@ -594,12 +867,17 @@ rabbitmq:
 # ---------------------------------------------------------------------------
 redis:
   enabled: true
+  clientTls:
+    enabled: false
+    caSecretName: ""
+    caSecretKey: ca.crt
+    caMountPath: /etc/redis-ca/ca.crt
   storage: 5Gi
   storageClass: ""
   image:
     repository: redis
     tag: "7-alpine"
-    # digest: sha256:<hash>  # Update with: docker pull redis:7-alpine && docker inspect --format='{{.RepoDigests}}' redis:7-alpine
+    digest: ""          # required when image.requireDigest=true
   podSecurityContext:
     runAsUser: 999
     fsGroup: 999
@@ -620,7 +898,10 @@ redis:
   maxmemory: "256mb"
   maxmemoryPolicy: allkeys-lru
   sentinel:
-    enabled: true               #  tuning -- HA overlay default
+    # Sentinel manifests are opt-in lab scaffolding only.  The chart's
+    # application clients use direct redis:// URLs unless an external,
+    # Sentinel-aware client overlay is supplied; keep this false by default.
+    enabled: false
     masterName: ocr-master
     replicas: 1                  # Number of read replicas
     sentinelReplicas: 3          # Number of sentinel instances (odd number)
@@ -639,12 +920,62 @@ ingress:
   clusterIssuer: letsencrypt-prod
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+# Distinct authenticated Django coordinator submission endpoint. This does
+# not replace the standalone FastAPI/UI ingress or its broader API contract.
+fleetIngress:
+  enabled: false
+  className: nginx
+  host: ""
+  tls: true
+  tlsSecretName: ""
+  clusterIssuer: letsencrypt-prod
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
 
 # ---------------------------------------------------------------------------
 # Network policy
 # ---------------------------------------------------------------------------
+# PH2-14 / PH3-14: production posture requires NetworkPolicy. Default is
+# **true** so a bare `helm install` is not an open CNI free-for-all.
+# Local/kind sandboxes without a network-policy-capable CNI must set
+# `networkPolicy.enabled=false` (see values-local-sandbox.yaml).
+# values-production.yaml also pins enabled=true explicitly.
 networkPolicy:
-  enabled: false
+  enabled: true
+  # Coordinator/API ingress is limited to same-namespace callers plus the
+  # configured ingress-controller namespace. Override the label for clusters
+  # that use a different ingress namespace.
+  ingressNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: ingress-nginx
+  # Explicit selectors for shared dependencies outside this release. When a
+  # dependency is enabled here, egress is constrained by both namespace and
+  # pod identity instead of the chart's same-namespace component label.
+  externalDependencies:
+    postgresql:
+      enabled: false
+      namespaceSelector: {}
+      podSelector: {}
+      port: 5432
+    rabbitmq:
+      enabled: false
+      namespaceSelector: {}
+      podSelector: {}
+      port: 5672
+    redis:
+      enabled: false
+      namespaceSelector: {}
+      podSelector: {}
+      port: 6379
+    s3:
+      enabled: false
+      namespaceSelector: {}
+      podSelector: {}
+      port: 443
 
 # ---------------------------------------------------------------------------
 # Assembly tuning
@@ -667,22 +998,34 @@ cleanup:
 # ---------------------------------------------------------------------------
 secrets:
   djangoSecretKey: ""
+  coordinatorApiKey: ""
+  apiKey: ""
   postgresPassword: ""
   databaseUrl: ""          # auto-generated from release name if empty
   rabbitmqUser: "ocr"
   rabbitmqPassword: ""
+  # Optional dedicated management API account. Leave unset in local labs to
+  # reuse the bundled broker account; production KEDA requires a distinct
+  # account with RabbitMQ monitoring-only access.
+  rabbitmqManagementUser: ""
+  rabbitmqManagementPassword: ""
   celeryBrokerUrl: ""      # auto-generated from release name if empty
   redisPassword: ""
   redisUrl: ""             # auto-generated from release name if empty
   celeryResultBackend: ""  # auto-generated from release name if empty
+  celeryTaskSigningKey: ""
   flowerPassword: ""
   metricsApiKey: ""
+  webhookSecretKey: ""
+  piiEncryptionKey: ""
   # S3 secrets (only used when storage.backend == "s3")
   s3Endpoint: ""
   s3Bucket: ""
   s3AccessKey: ""
   s3SecretKey: ""
+  s3SessionToken: ""
   s3Region: ""
+  presignedTaskKey: ""
 
 # ---------------------------------------------------------------------------
 # Inter-service TLS (cert-manager)
@@ -705,6 +1048,18 @@ cloudProvider: "generic"   # "aws", "gcp", "oracle", or "generic"
 # KEDA scaling strategy (applies when any autoscaling.enabled is true)
 # ---------------------------------------------------------------------------
 keda:
+  # RabbitMQ management endpoint used by the HTTP scaler so unacknowledged
+  # messages remain visible while workers are processing. The default is for
+  # the bundled lab broker; production operators should override this with a
+  # trusted HTTPS endpoint and restrict access to the KEDA operator.
+  rabbitmqManagementHost: ""
+  # For an external broker with a private CA, name a Secret in this release
+  # namespace containing the CA at rabbitmqManagementCaSecretKey.
+  rabbitmqManagementCaSecretName: ""
+  rabbitmqManagementCaSecretKey: ca.crt
+  # Namespace where the KEDA operator runs; used only to permit its management
+  # API scrape through the optional federation mTLS NetworkPolicy.
+  operatorNamespace: keda
   # Scaling strategy affects cooldown, polling, and queue targets:
   #   aggressive  — fast scale-up (10s poll, 60s cooldown, low queue target)
   #   balanced    — default behavior (15s poll, 120-300s cooldown)
@@ -733,7 +1088,7 @@ webhooks:
 # Prometheus monitoring
 # ---------------------------------------------------------------------------
 prometheus:
-  enabled: true                 #  tuning -- enable Prometheus stack by default
+  enabled: true                 # Plan C Phase 0 tuning -- enable Prometheus stack by default
   serviceMonitor:
     enabled: false
     interval: 30s
@@ -743,58 +1098,58 @@ prometheus:
     enabled: false
     additionalLabels: {}
   grafana:
-    enabled: true               #  tuning -- enable Grafana dashboards by default
+    enabled: true               # Plan C Phase 0 tuning -- enable Grafana dashboards by default
     dashboardLabel: grafana_dashboard
     dashboardLabelValue: "1"
 
 # ---------------------------------------------------------------------------
-# Monitoring ( alias / consolidated toggles)
+# Monitoring (Plan C Phase 0 alias / consolidated toggles)
 # These mirror the per-tool flags above and serve as the documented public
-# surface for "is monitoring on" in . The chart still consumes
+# surface for "is monitoring on" in Plan C Phase 0. The chart still consumes
 # `prometheus.enabled` and `prometheus.grafana.enabled` directly.
 # ---------------------------------------------------------------------------
 monitoring:
   prometheus:
-    enabled: true               #  tuning -- monitoring on by default
+    enabled: true               # Plan C Phase 0 tuning -- monitoring on by default
   grafana:
-    enabled: true               #  tuning -- monitoring on by default
+    enabled: true               # Plan C Phase 0 tuning -- monitoring on by default
 
 # ---------------------------------------------------------------------------
-# Coordinator KEDA autoscaling
+# Coordinator KEDA autoscaling (Plan C Phase 0)
 # Controls autoscaling for the coordinator deployment when KEDA is wired up.
 # Default `enabled: false` preserves existing behavior; flipping to true
 # scales between minReplicas..maxReplicas based on broker queue depth.
 # ---------------------------------------------------------------------------
 coordinatorAutoscaling:
   enabled: false
-  minReplicas: 1                #  tuning -- coordinator min replicas
-  maxReplicas: 2                #  tuning -- coordinator max replicas
-  pollingInterval: 30           #  tuning -- queue poll interval (seconds)
-  cooldownPeriod: 300           #  tuning -- scale-down cooldown (seconds)
+  minReplicas: 1                # Plan C Phase 0 tuning -- coordinator min replicas
+  maxReplicas: 2                # Plan C Phase 0 tuning -- coordinator max replicas
+  pollingInterval: 30           # Plan C Phase 0 tuning -- queue poll interval (seconds)
+  cooldownPeriod: 300           # Plan C Phase 0 tuning -- scale-down cooldown (seconds)
 
 # ---------------------------------------------------------------------------
-# Pod Disruption Budgets
+# Pod Disruption Budgets (Plan C Phase 0)
 # Documented PDB targets for production. The shipped templates currently use
 # fixed `maxUnavailable: 1` per component; these values are the canonical
-#  targets and can be wired into templates in a follow-up PR
+# Plan C Phase 0 targets and can be wired into templates in a follow-up PR
 # without further values.yaml changes.
 # ---------------------------------------------------------------------------
 pdb:
   coordinator:
-    minAvailable: 1             #  tuning -- coordinator PDB target
+    minAvailable: 1             # Plan C Phase 0 tuning -- coordinator PDB target
   gpuWorker:
-    maxUnavailable: "25%"       #  tuning -- GPU worker PDB target
+    maxUnavailable: "25%"       # Plan C Phase 0 tuning -- GPU worker PDB target
   cpuWorker:
-    maxUnavailable: "50%"       #  tuning -- CPU worker PDB target
+    maxUnavailable: "50%"       # Plan C Phase 0 tuning -- CPU worker PDB target
   rabbitmq:
-    minAvailable: 2             #  tuning -- RabbitMQ PDB target (HA quorum)
+    minAvailable: 2             # Plan C Phase 0 tuning -- RabbitMQ PDB target (HA quorum)
   postgres:
-    minAvailable: 1             #  tuning -- Postgres PDB target
+    minAvailable: 1             # Plan C Phase 0 tuning -- Postgres PDB target
   redis:
-    minAvailable: 2             #  tuning -- Redis PDB target (Sentinel quorum)
+    minAvailable: 2             # Plan C Phase 0 tuning -- Redis PDB target (Sentinel quorum)
 
 # ---------------------------------------------------------------------------
-# Federation  -- multi-cluster overlay
+# Federation (Plan C Phase 1) -- multi-cluster overlay
 #
 # Opt-in primitives for federated, multi-cluster deployments:
 #   * RabbitMQ federation (overflow-only on `ocr_gpu*` and `ocr_cpu` queues)
@@ -812,14 +1167,14 @@ pdb:
 # CRDs; it only renders FederationUpstream + Policy custom resources.
 #
 # Reference: docs/operations/plan-c-phase1-federation.md
-# Reference: docs/planning/2026-04-24-translation-swarm/03-plan-C-swarm-kubernetes.md (Section 4)
+# Reference: docs/release-candidate.md (Section 4)
 # ---------------------------------------------------------------------------
 federation:
   enabled: false                   # master toggle -- default OFF
   clusterName: ""                  # required when enabled (e.g., "prod-us-east-1")
   presignedEndpoint: ""            # this cluster's presigned-URL endpoint exposed to peers
   # ---------------------------------------------------------------------------
-  # , item C2 -- expanded peer-cluster registry.
+  # Plan C Phase 1, item C2 -- expanded peer-cluster registry.
   #
   # `clusters` is the new dynamic peer registry consumed by the federation
   # reconciler (federation-cluster-registry-configmap.yaml). Each entry
@@ -855,6 +1210,7 @@ federation:
       # Defaults to the coordinator image; override only for custom builds.
       repository: ""
       tag: ""
+      digest: ""
       pullPolicy: IfNotPresent
     resources:
       requests:
@@ -893,7 +1249,7 @@ federation:
     peerCidrs: []                  # list of CIDRs for peer-cluster RabbitMQ endpoints
     amqpsPort: 5671
   # ---------------------------------------------------------------------------
-  # , item C4 -- cross-cluster job routing.
+  # Plan C Phase 1, item C4 -- cross-cluster job routing.
   #
   # Multi-strategy router consulted by the Celery callable router at
   # task-dispatch time. With `routing.enabled=false` (default), behaviour is
@@ -915,7 +1271,7 @@ federation:
     load_aware_cache_seconds: 5
     custom_callable: ""            # dotted import path "module.path:attr"
   # ---------------------------------------------------------------------------
-  # , item C7 -- DNS-SD federation cluster auto-discovery.
+  # Plan C Phase 1, item C7 -- DNS-SD federation cluster auto-discovery.
   #
   # When enabled, a Kubernetes CronJob periodically queries DNS-SD (RFC 6763)
   # for peer clusters advertising the `_ocr-federation._tcp` service type and
@@ -931,25 +1287,13 @@ federation:
     configmapName: "federation-clusters"
     dryRun: false                  # when true, log diffs instead of patching the ConfigMap
   # ---------------------------------------------------------------------------
-  # , item C8 -- federation mTLS hardening.
-  #
-  # When `federation.enabled=true` and `federation.mtls.enabled=true`, the
-  # chart renders cert-manager Issuer + Certificate resources that mint a
-  # self-signed root CA, a coordinator server cert, a RabbitMQ server cert,
-  # and a peer-cluster client cert. The coordinator-deployment and
-  # rabbitmq-statefulset additively mount the resulting Secret(s) at
-  # /etc/federation-mtls/ and the federation-overlay ConfigMap exposes
-  # OCR_FEDERATION_MTLS_* env vars pointing at those mount paths.
-  #
-  # Production deployments should override `caRef` with the name of an
-  # existing CA Secret (managed externally) instead of using the self-signed
-  # bootstrap Issuer that the chart provisions by default.
-  #
-  # All flags are subordinate to `federation.enabled`: when federation is
-  # off, no mTLS resources are rendered regardless of `mtls.enabled`.
+  # Federation mTLS is unsupported in this chart. Enabling it fails rendering:
+  # the certificate scaffolding does not wire mutually authenticated listeners
+  # or reconciler identity. Ordinary tls.enabled is server TLS with passwords.
+  # Use independently configured/verified external transport for federation.
   # ---------------------------------------------------------------------------
   mtls:
-    enabled: false                 # master toggle for federation-internal mTLS
+    enabled: false                 # keep false; incomplete transport is rejected
     clusterIssuer: false           # render ClusterIssuer instead of namespaced Issuer
     caRef: ""                      # name of existing CA Secret (skips bootstrap Issuer/CA cert)
     certDuration: 8760h            # leaf cert lifetime (1 year)

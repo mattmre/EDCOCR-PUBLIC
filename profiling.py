@@ -1,4 +1,4 @@
-"""Production pipeline profiling framework for EDCOCR.
+"""Production pipeline profiling framework for OCR_LOCAL.
 
 Provides per-stage timing, CPU time, peak RSS memory tracking, and
 structured JSON output for ongoing performance monitoring and regression

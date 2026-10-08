@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 # GCP GKE Module Variables
-# EDCOCR — Cloud-Native Deployment
+# Industrial Adaptive OCR — Cloud-Native Deployment
 # -----------------------------------------------------------------------------
 
 variable "cluster_name" {

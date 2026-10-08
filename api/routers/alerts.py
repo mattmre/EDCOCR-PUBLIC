@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+)
+from fastapi import (
+    Path as PathParam,
+)
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
-
+from api.authz import require_platform_admin_for_global_control_plane
 from api.identity import require_role
 from api.limits import get_default_rate, limiter
 from api.queue_alerting import AlertState, get_queue_monitor
@@ -25,7 +34,9 @@ class QueueThresholdRequest(BaseModel):
     @model_validator(mode="after")
     def validate_ordering(self) -> "QueueThresholdRequest":
         if self.critical_depth < self.warning_depth:
-            raise ValueError("critical_depth must be greater than or equal to warning_depth")
+            raise ValueError(
+                "critical_depth must be greater than or equal to warning_depth"
+            )
         if self.critical_wait_seconds < self.warning_wait_seconds:
             raise ValueError(
                 "critical_wait_seconds must be greater than or equal to warning_wait_seconds"
@@ -38,6 +49,7 @@ class QueueThresholdRequest(BaseModel):
 async def get_alerts_snapshot(
     request: Request,
     _auth: None = Depends(require_role("admin", "operator")),
+    _scope: None = Depends(require_platform_admin_for_global_control_plane),
 ):
     monitor = get_queue_monitor()
     return monitor.get_snapshot().to_dict()
@@ -48,6 +60,7 @@ async def get_alerts_snapshot(
 async def get_active_alerts(
     request: Request,
     _auth: None = Depends(require_role("admin", "operator")),
+    _scope: None = Depends(require_platform_admin_for_global_control_plane),
 ):
     monitor = get_queue_monitor()
     return [a.to_dict() for a in monitor.get_active_alerts()]
@@ -58,6 +71,7 @@ async def get_active_alerts(
 async def list_queue_thresholds(
     request: Request,
     _auth: None = Depends(require_role("admin", "operator")),
+    _scope: None = Depends(require_platform_admin_for_global_control_plane),
 ):
     monitor = get_queue_monitor()
     return [threshold.to_dict() for threshold in monitor.list_thresholds()]
@@ -67,13 +81,16 @@ async def list_queue_thresholds(
 @limiter.limit(get_default_rate())
 async def get_queue_threshold(
     request: Request,
-    queue_name: str,
+    queue_name: str = PathParam(..., min_length=1, max_length=128),
     _auth: None = Depends(require_role("admin", "operator")),
+    _scope: None = Depends(require_platform_admin_for_global_control_plane),
 ):
     monitor = get_queue_monitor()
     threshold = monitor.get_threshold(queue_name)
     if threshold is None:
-        raise HTTPException(status_code=404, detail=f"Queue threshold {queue_name} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Queue threshold {queue_name} not found"
+        )
     return threshold.to_dict()
 
 
@@ -81,9 +98,10 @@ async def get_queue_threshold(
 @limiter.limit(get_default_rate())
 async def update_queue_threshold(
     request: Request,
-    queue_name: str,
     body: QueueThresholdRequest,
+    queue_name: str = PathParam(..., min_length=1, max_length=128),
     _auth: None = Depends(require_role("admin")),
+    _scope: None = Depends(require_platform_admin_for_global_control_plane),
 ):
     monitor = get_queue_monitor()
     monitor.set_threshold(
@@ -105,6 +123,7 @@ async def acknowledge_alert(
     request: Request,
     alert_id: str,
     _auth: None = Depends(require_role("admin", "operator")),
+    _scope: None = Depends(require_platform_admin_for_global_control_plane),
 ):
     monitor = get_queue_monitor()
     # acknowledge_alert returns None; check alert existence separately
@@ -125,6 +144,7 @@ async def resolve_alert(
     request: Request,
     alert_id: str,
     _auth: None = Depends(require_role("admin", "operator")),
+    _scope: None = Depends(require_platform_admin_for_global_control_plane),
 ):
     monitor = get_queue_monitor()
     alert = monitor._alerts.get(alert_id)
@@ -143,8 +163,14 @@ async def resolve_alert(
 async def get_queue_history(
     request: Request,
     queue_name: str,
-    window_seconds: int = Query(3600),
+    window_seconds: int = Query(
+        3600,
+        ge=1,
+        le=7 * 24 * 3600,
+        description="History window in seconds (maximum 7 days).",
+    ),
     _auth: None = Depends(require_role("admin", "operator")),
+    _scope: None = Depends(require_platform_admin_for_global_control_plane),
 ):
     monitor = get_queue_monitor()
     # get_queue_history returns a list of dicts already

@@ -1,4 +1,4 @@
-"""Tests for exception_router.py wiring into the CLI pipeline.
+"""Tests for exception_router.py wiring into the CLI pipeline (maintenance review).
 
 Covers:
 - Import guard and availability flag

@@ -64,7 +64,9 @@ class TestCLIParsing:
 
     def test_required_args(self):
         parser = build_parser()
-        args = parser.parse_args(["--base-url", "http://localhost:8000", "--api-key", "test"])
+        args = parser.parse_args(
+            ["--base-url", "http://localhost:8000", "--api-key", "test"]
+        )
         assert args.base_url == "http://localhost:8000"
         assert args.api_key == "test"
 
@@ -284,15 +286,17 @@ class TestSchemaList:
 
     @patch("scripts.validate_deployment._http_get")
     def test_all_schemas_present(self, mock_get):
-        schemas = [{"output_type": t, "schema_version": "1.0"} for t in EXPECTED_SCHEMA_TYPES]
+        schemas = [
+            {"output_type": t, "schema_version": "1.0"} for t in EXPECTED_SCHEMA_TYPES
+        ]
         mock_get.return_value = (200, {"schemas": schemas}, {})
         result = check_schema_list("http://localhost:8000", "key")
         assert result.passed is True
-        assert "14" in result.detail
+        assert str(len(EXPECTED_SCHEMA_TYPES)) in result.detail
 
     @patch("scripts.validate_deployment._http_get")
     def test_missing_schemas(self, mock_get):
-        # Only return 10 of 14
+        # Only return 10 of 16
         schemas = [
             {"output_type": t, "schema_version": "1.0"}
             for t in list(EXPECTED_SCHEMA_TYPES)[:10]
@@ -567,7 +571,9 @@ class TestJSONReport:
             profile=PROFILE_SINGLE_NODE,
             timestamp="2026-03-29T00:00:00+00:00",
             checks=[
-                CheckResult(name="health_check", passed=True, detail="OK", duration_ms=5.0),
+                CheckResult(
+                    name="health_check", passed=True, detail="OK", duration_ms=5.0
+                ),
                 CheckResult(name="schema_list", passed=False, detail="Missing types"),
             ],
         )
@@ -650,8 +656,12 @@ class TestMarkdownReport:
     def test_table_format(self):
         report = DeploymentReport(
             checks=[
-                CheckResult(name="check_a", passed=True, detail="good", duration_ms=5.0),
-                CheckResult(name="check_b", passed=False, detail="bad", duration_ms=10.0),
+                CheckResult(
+                    name="check_a", passed=True, detail="good", duration_ms=5.0
+                ),
+                CheckResult(
+                    name="check_b", passed=False, detail="bad", duration_ms=10.0
+                ),
             ]
         )
         output = format_markdown_report(report)
@@ -761,9 +771,7 @@ class TestRunValidation:
     @patch("scripts.validate_deployment._http_get")
     def test_includes_timestamp(self, mock_get):
         mock_get.return_value = (200, {"status": "healthy", "type": "object"}, {})
-        report = run_validation(
-            base_url="http://x", api_key="k", skip_job_submit=True
-        )
+        report = run_validation(base_url="http://x", api_key="k", skip_job_submit=True)
         assert report.timestamp  # Non-empty
         assert "T" in report.timestamp  # ISO format
 
@@ -803,21 +811,29 @@ class TestMainCLI:
             },
             {"x-api-version": "1.2.0"},
         )
-        rc = main([
-            "--base-url", "http://localhost:8000",
-            "--api-key", "test",
-            "--skip-job-submit",
-        ])
+        rc = main(
+            [
+                "--base-url",
+                "http://localhost:8000",
+                "--api-key",
+                "test",
+                "--skip-job-submit",
+            ]
+        )
         assert rc == 0
 
     @patch("scripts.validate_deployment._http_get")
     def test_returns_one_on_failure(self, mock_get, capsys):
         mock_get.return_value = (500, None, {})
-        rc = main([
-            "--base-url", "http://localhost:8000",
-            "--api-key", "test",
-            "--skip-job-submit",
-        ])
+        rc = main(
+            [
+                "--base-url",
+                "http://localhost:8000",
+                "--api-key",
+                "test",
+                "--skip-job-submit",
+            ]
+        )
         assert rc == 1
 
     @patch("scripts.validate_deployment._http_get")
@@ -827,12 +843,17 @@ class TestMainCLI:
             {"status": "healthy", "type": "object"},
             {"x-api-version": "1.2.0"},
         )
-        main([
-            "--base-url", "http://localhost:8000",
-            "--api-key", "test",
-            "--skip-job-submit",
-            "--format", "json",
-        ])
+        main(
+            [
+                "--base-url",
+                "http://localhost:8000",
+                "--api-key",
+                "test",
+                "--skip-job-submit",
+                "--format",
+                "json",
+            ]
+        )
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert "summary" in data
@@ -845,12 +866,17 @@ class TestMainCLI:
             {"status": "healthy", "type": "object"},
             {"x-api-version": "1.2.0"},
         )
-        main([
-            "--base-url", "http://localhost:8000",
-            "--api-key", "test",
-            "--skip-job-submit",
-            "--format", "markdown",
-        ])
+        main(
+            [
+                "--base-url",
+                "http://localhost:8000",
+                "--api-key",
+                "test",
+                "--skip-job-submit",
+                "--format",
+                "markdown",
+            ]
+        )
         captured = capsys.readouterr()
         assert "# Deployment Validation Report" in captured.out
 
@@ -862,12 +888,17 @@ class TestMainCLI:
             {"x-api-version": "1.2.0"},
         )
         output_file = str(tmp_path / "report.json")
-        main([
-            "--base-url", "http://localhost:8000",
-            "--api-key", "test",
-            "--skip-job-submit",
-            "--output", output_file,
-        ])
+        main(
+            [
+                "--base-url",
+                "http://localhost:8000",
+                "--api-key",
+                "test",
+                "--skip-job-submit",
+                "--output",
+                output_file,
+            ]
+        )
         assert os.path.isfile(output_file)
         with open(output_file) as f:
             data = json.loads(f.read())
@@ -880,11 +911,15 @@ class TestMainCLI:
             {"status": "healthy", "type": "object"},
             {"x-api-version": "1.2.0"},
         )
-        main([
-            "--base-url", "http://localhost:8000/",
-            "--api-key", "test",
-            "--skip-job-submit",
-        ])
+        main(
+            [
+                "--base-url",
+                "http://localhost:8000/",
+                "--api-key",
+                "test",
+                "--skip-job-submit",
+            ]
+        )
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert data["base_url"] == "http://localhost:8000"
@@ -899,7 +934,7 @@ class TestConstants:
     """Verify constant values are consistent."""
 
     def test_expected_schema_types_count(self):
-        assert len(EXPECTED_SCHEMA_TYPES) == 14
+        assert len(EXPECTED_SCHEMA_TYPES) == 18
 
     def test_default_timeout(self):
         assert DEFAULT_TIMEOUT_SECONDS == 60
@@ -911,6 +946,7 @@ class TestConstants:
         """Verify our constants match the schemas/ package output types."""
         try:
             from schemas import OUTPUT_TYPES
+
             assert set(EXPECTED_SCHEMA_TYPES) == set(OUTPUT_TYPES)
         except ImportError:
             pytest.skip("schemas package not importable")

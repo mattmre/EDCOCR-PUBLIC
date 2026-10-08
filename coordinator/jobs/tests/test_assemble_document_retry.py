@@ -1,4 +1,4 @@
-"""Tests for assemble_document Celery retry logic.
+"""Tests for assemble_document Celery retry logic (maintenance review).
 
 Validates that transient S3 upload failures during assembly trigger automatic
 retries with exponential backoff, and that permanent failures properly mark
@@ -8,6 +8,7 @@ guards prevent duplicate custody events on retry.
 Run with: cd coordinator && python -m pytest jobs/tests/test_assemble_document_retry.py -v
 """
 
+import hashlib
 import os
 import shutil
 import socket
@@ -18,8 +19,18 @@ from unittest.mock import MagicMock, PropertyMock, patch
 from celery.exceptions import MaxRetriesExceededError, Retry
 from django.test import TestCase
 
-from jobs.models import CustodyEvent, Job
+from jobs.models import CustodyEvent, Job, PageResult
 from jobs.tasks import _ensure_job_dirs, assemble_document
+
+
+def _accept_page(job, page_num, text):
+    PageResult.objects.create(
+        job=job, page_num=page_num, document_id=job.source_hash[:16],
+        admitted_generation=job.dispatch_generation, status="ok",
+        ocr_provenance={
+            "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        },
+    )
 
 
 class TestAssembleDocumentRetryConfig(TestCase):
@@ -64,6 +75,30 @@ class TestAssembleDocumentNoRetryOnPermanent(TestCase):
 class TestAssembleDocumentS3UploadRetry(TestCase):
     """Tests for S3 upload failure retry behavior in assemble_document."""
 
+    @staticmethod
+    def _configure_s3_backend(upload_error):
+        """Return an S3 mock that materializes valid downloaded page artifacts."""
+        backend = MagicMock()
+        backend.backend_name = "s3"
+        backend.exists.return_value = True
+
+        def download_file(_key, destination):
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            if destination.endswith(".pdf"):
+                import fitz
+
+                document = fitz.open()
+                document.new_page()
+                document.save(destination)
+                document.close()
+            else:
+                with open(destination, "w", encoding="utf-8") as page_text:
+                    page_text.write("Test page text")
+
+        backend.download_file.side_effect = download_file
+        backend.upload_file.side_effect = upload_error
+        return backend
+
     def _make_job_with_nfs(self, total_pages=2, **kwargs):
         """Create a job with NFS backend and page artifacts."""
         tmpdir = tempfile.mkdtemp()
@@ -87,8 +122,10 @@ class TestAssembleDocumentS3UploadRetry(TestCase):
             txt_path = os.path.join(page_temp_dir, f"{page_num}.txt")
             with open(txt_path, "w") as f:
                 f.write(f"Page {page_num} text")
+            _accept_page(job, page_num, f"Page {page_num} text")
             # Create a valid single-page PDF via fitz
             import fitz
+
             doc = fitz.open()
             page = doc.new_page()
             page.insert_text((72, 72), f"Page {page_num}")
@@ -102,11 +139,7 @@ class TestAssembleDocumentS3UploadRetry(TestCase):
     @patch("jobs.tasks._get_backend_for_job")
     def test_s3_upload_failure_triggers_retry(self, mock_get_backend):
         """S3 upload failure during assembly should trigger retry."""
-        backend = MagicMock()
-        backend.backend_name = "s3"
-        backend.exists.return_value = True
-        backend.download_file.return_value = None
-        backend.upload_file.side_effect = ConnectionError("S3 timeout")
+        backend = self._configure_s3_backend(ConnectionError("S3 timeout"))
         mock_get_backend.return_value = backend
 
         job = Job.objects.create(
@@ -116,14 +149,18 @@ class TestAssembleDocumentS3UploadRetry(TestCase):
             source_hash="abcdef1234567890" * 4,
             detected_language="en",
         )
+        _accept_page(job, 1, "Test page text")
 
         with patch.object(
-            assemble_document, "retry",
+            assemble_document,
+            "retry",
             side_effect=Retry(),
         ):
             with patch.object(
-                type(assemble_document.request), "retries",
-                new_callable=PropertyMock, return_value=0,
+                type(assemble_document.request),
+                "retries",
+                new_callable=PropertyMock,
+                return_value=0,
             ):
                 with self.assertRaises(Retry):
                     assemble_document.run(str(job.job_id))
@@ -135,11 +172,7 @@ class TestAssembleDocumentS3UploadRetry(TestCase):
     @patch("jobs.tasks._get_backend_for_job")
     def test_s3_upload_marks_failed_after_max_retries(self, mock_get_backend):
         """S3 upload permanently failing should mark job FAILED."""
-        backend = MagicMock()
-        backend.backend_name = "s3"
-        backend.exists.return_value = True
-        backend.download_file.return_value = None
-        backend.upload_file.side_effect = ConnectionError("S3 timeout")
+        backend = self._configure_s3_backend(ConnectionError("S3 timeout"))
         mock_get_backend.return_value = backend
 
         job = Job.objects.create(
@@ -149,18 +182,22 @@ class TestAssembleDocumentS3UploadRetry(TestCase):
             source_hash="abcdef1234567890" * 4,
             detected_language="en",
         )
+        _accept_page(job, 1, "Test page text")
 
         with patch.object(
-            assemble_document, "retry",
+            assemble_document,
+            "retry",
             side_effect=MaxRetriesExceededError(),
         ):
             with patch.object(
-                type(assemble_document.request), "retries",
-                new_callable=PropertyMock, return_value=3,
+                type(assemble_document.request),
+                "retries",
+                new_callable=PropertyMock,
+                return_value=3,
             ):
                 result = assemble_document.run(str(job.job_id))
 
-        assert result["status"] == "error"
+        assert result["status"] == "failed"
         assert "S3 upload failed" in result["message"]
 
         job.refresh_from_db()
@@ -170,11 +207,7 @@ class TestAssembleDocumentS3UploadRetry(TestCase):
     @patch("jobs.tasks._get_backend_for_job")
     def test_s3_upload_retry_logs_warning(self, mock_get_backend):
         """S3 upload retry should log a warning with attempt number."""
-        backend = MagicMock()
-        backend.backend_name = "s3"
-        backend.exists.return_value = True
-        backend.download_file.return_value = None
-        backend.upload_file.side_effect = ConnectionError("S3 timeout")
+        backend = self._configure_s3_backend(ConnectionError("S3 timeout"))
         mock_get_backend.return_value = backend
 
         job = Job.objects.create(
@@ -184,23 +217,27 @@ class TestAssembleDocumentS3UploadRetry(TestCase):
             source_hash="abcdef1234567890" * 4,
             detected_language="en",
         )
+        _accept_page(job, 1, "Test page text")
 
         with patch.object(
-            assemble_document, "retry",
+            assemble_document,
+            "retry",
             side_effect=Retry(),
         ):
             with patch.object(
-                type(assemble_document.request), "retries",
-                new_callable=PropertyMock, return_value=1,
+                type(assemble_document.request),
+                "retries",
+                new_callable=PropertyMock,
+                return_value=1,
             ):
                 with self.assertRaises(Retry):
                     with self.assertLogs("jobs.tasks", level="WARNING") as cm:
                         assemble_document.run(str(job.job_id))
 
         retry_logs = [
-            log for log in cm.output
-            if "Retrying assemble_document" in log
-            and "S3 upload failure" in log
+            log
+            for log in cm.output
+            if "Retrying assemble_document" in log and "S3 upload failure" in log
         ]
         assert len(retry_logs) == 1
         assert "attempt 2/3" in retry_logs[0]
@@ -208,11 +245,7 @@ class TestAssembleDocumentS3UploadRetry(TestCase):
     @patch("jobs.tasks._get_backend_for_job")
     def test_permanent_failure_logs_error(self, mock_get_backend):
         """Permanent failure (after max retries) should log error."""
-        backend = MagicMock()
-        backend.backend_name = "s3"
-        backend.exists.return_value = True
-        backend.download_file.return_value = None
-        backend.upload_file.side_effect = ConnectionError("final S3 error")
+        backend = self._configure_s3_backend(ConnectionError("final S3 error"))
         mock_get_backend.return_value = backend
 
         job = Job.objects.create(
@@ -222,22 +255,23 @@ class TestAssembleDocumentS3UploadRetry(TestCase):
             source_hash="abcdef1234567890" * 4,
             detected_language="en",
         )
+        _accept_page(job, 1, "Test page text")
 
         with patch.object(
-            assemble_document, "retry",
+            assemble_document,
+            "retry",
             side_effect=MaxRetriesExceededError(),
         ):
             with patch.object(
-                type(assemble_document.request), "retries",
-                new_callable=PropertyMock, return_value=3,
+                type(assemble_document.request),
+                "retries",
+                new_callable=PropertyMock,
+                return_value=3,
             ):
                 with self.assertLogs("jobs.tasks", level="ERROR") as cm:
                     assemble_document.run(str(job.job_id))
 
-        error_logs = [
-            log for log in cm.output
-            if "permanently failed" in log
-        ]
+        error_logs = [log for log in cm.output if "permanently failed" in log]
         assert len(error_logs) == 1
         assert "3 retries" in error_logs[0]
 
@@ -266,7 +300,9 @@ class TestAssembleDocumentNfsSuccess(TestCase):
             txt_path = os.path.join(page_temp_dir, f"{page_num}.txt")
             with open(txt_path, "w") as f:
                 f.write(f"Page {page_num} text")
+            _accept_page(job, page_num, f"Page {page_num} text")
             import fitz
+
             doc = fitz.open()
             page = doc.new_page()
             page.insert_text((72, 72), f"Page {page_num}")
@@ -318,6 +354,7 @@ class TestAssembleDocumentCustodyIdempotency(TestCase):
         page_temp_dir = os.path.join(tmpdir, "temp", document_id)
         os.makedirs(page_temp_dir, exist_ok=True)
         import fitz
+
         doc = fitz.open()
         page = doc.new_page()
         page.insert_text((72, 72), "Page 1")
@@ -325,6 +362,7 @@ class TestAssembleDocumentCustodyIdempotency(TestCase):
         doc.close()
         with open(os.path.join(page_temp_dir, "1.txt"), "w") as f:
             f.write("Page 1 text")
+        _accept_page(job, 1, "Page 1 text")
 
         # Pre-create an assembly_complete custody event (simulating prior attempt)
         CustodyEvent.objects.create(
@@ -343,9 +381,9 @@ class TestAssembleDocumentCustodyIdempotency(TestCase):
             event_count = CustodyEvent.objects.filter(
                 job=job, document_id=document_id, event_type="assembly_complete"
             ).count()
-            assert event_count == 1, (
-                f"Expected 1 assembly_complete event but found {event_count}"
-            )
+            assert (
+                event_count == 1
+            ), f"Expected 1 assembly_complete event but found {event_count}"
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -369,6 +407,7 @@ class TestAssembleDocumentCustodyIdempotency(TestCase):
         page_temp_dir = os.path.join(tmpdir, "temp", document_id)
         os.makedirs(page_temp_dir, exist_ok=True)
         import fitz
+
         doc = fitz.open()
         page = doc.new_page()
         page.insert_text((72, 72), "Page 1")
@@ -376,6 +415,7 @@ class TestAssembleDocumentCustodyIdempotency(TestCase):
         doc.close()
         with open(os.path.join(page_temp_dir, "1.txt"), "w") as f:
             f.write("Page 1 text")
+        _accept_page(job, 1, "Page 1 text")
 
         try:
             result = assemble_document.run(str(job.job_id))

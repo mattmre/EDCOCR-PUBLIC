@@ -20,7 +20,6 @@ Graceful degradation:
 """
 
 import datetime
-import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -29,7 +28,8 @@ from typing import Optional
 from barcode_extraction import BarcodeExtractor
 from ocr_distributed.ocr_utils import (
     build_sidecar_base_name,
-    sanitize_path_segment,
+    resolve_safe_output_subfolder,
+    write_json_atomic,
 )
 from omr_detection import OMRDetector
 
@@ -256,31 +256,7 @@ def write_symbology_json(
     """
     try:
         symbology_dir = os.path.join(output_folder, "EXPORT", "SYMBOLOGY")
-
-        if subfolder and subfolder != ".":
-            safe_parts = [
-                s for s in (
-                    sanitize_path_segment(p)
-                    for p in subfolder.replace("\\", "/").split("/")
-                    if p
-                )
-                if s
-            ]
-            target_dir = (
-                os.path.join(symbology_dir, *safe_parts)
-                if safe_parts
-                else symbology_dir
-            )
-        else:
-            target_dir = symbology_dir
-
-        # Path traversal protection
-        resolved = os.path.realpath(target_dir)
-        if not resolved.startswith(os.path.realpath(symbology_dir)):
-            logger.error(
-                "Path traversal blocked in symbology output: %s", subfolder
-            )
-            return None
+        target_dir = resolve_safe_output_subfolder(symbology_dir, subfolder)
 
         os.makedirs(target_dir, exist_ok=True)
 
@@ -331,8 +307,7 @@ def write_symbology_json(
             "pages": pages_output,
         }
 
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2, ensure_ascii=False, default=str)
+        write_json_atomic(json_path, report, allowed_root=symbology_dir)
 
         return json_path
     except Exception as exc:

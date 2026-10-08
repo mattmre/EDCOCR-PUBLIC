@@ -1,0 +1,170 @@
+# Mock multi-node farm control plane (laptop lab). Not for public internet.
+# Used by scripts/run_mock_prod_farm.py — dedicated host ports only.
+
+x-coordinator-build-args: &coordinator-build-args
+  # These labels are part of the source-bound coordinator image identity.
+  # See docs/setup/FARM-STANDUP.md for the host export commands.
+  SOURCE_REVISION: "${SOURCE_REVISION:-unknown}"
+  SOURCE_TREE_SHA256: "${SOURCE_TREE_SHA256:-unknown}"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ocr_coordinator
+      POSTGRES_USER: ocr
+      # Value comes from host/env-file (scripts/run_mock_prod_farm.py); no inline default.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "0.0.0.0:${POSTGRES_HOST_PORT:-25432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ocr -d ocr_coordinator"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    mem_limit: 512m
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-ocr_user}
+      # Value comes from host/env-file; no inline default.
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "0.0.0.0:${RABBITMQ_HOST_PORT:-25672}:5672"
+      - "0.0.0.0:${RABBITMQ_MGMT_HOST_PORT:-35672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    mem_limit: 512m
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Auth token supplied via host/env-file (REDIS_PASSWORD); no inline default.
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes --maxmemory 192mb --maxmemory-policy allkeys-lru
+    ports:
+      - "0.0.0.0:${REDIS_HOST_PORT:-26379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    mem_limit: 256m
+
+  django:
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile.coordinator
+      args: *coordinator-build-args
+    image: ocr-farm-cp-django:latest
+    restart: unless-stopped
+    command: >
+      sh -c "set -eu;
+             python manage.py migrate --noinput;
+             python manage.py collectstatic --noinput;
+             exec gunicorn coordinator.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120"
+    environment: &coord_env
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      CELERY_TASK_SIGNING_KEY: ${CELERY_TASK_SIGNING_KEY}
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY}
+      WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY}
+      S3_PRESIGNED_TASK_KEY: ${S3_PRESIGNED_TASK_KEY:-}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-staging}
+      PRODUCTION_READINESS_ACK: ${PRODUCTION_READINESS_ACK:-false}
+      DATABASE_URL: postgres://ocr:${POSTGRES_PASSWORD}@postgres:5432/ocr_coordinator
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-ocr_user}:${RABBITMQ_PASSWORD}@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      NFS_ROOT: ${NFS_ROOT:-/shared}
+      STORAGE_BACKEND: nfs
+      OCR_TASK_ROUTING: ${OCR_TASK_ROUTING:-gpu}
+      METRICS_API_KEY: ${METRICS_API_KEY:-}
+      # MP-B1 lab/prod: seconds after assembly_complete before beat redrive (default 90 in code)
+      ASSEMBLING_REDRIVE_AFTER_SECONDS: ${ASSEMBLING_REDRIVE_AFTER_SECONDS:-90}
+      ASSEMBLING_REDRIVE_MAX: ${ASSEMBLING_REDRIVE_MAX:-3}
+      ASSEMBLING_POST_HOLD_SECONDS: ${ASSEMBLING_POST_HOLD_SECONDS:-0}
+      # Repo root mounted at /app/repo so ocr_local imports resolve
+      PYTHONPATH: /app/repo/coordinator:/app/repo:/app/coordinator
+    ports:
+      - "0.0.0.0:${DJANGO_HOST_PORT:-18000}:8000"
+    volumes:
+      - ${NFS_HOST_PATH:-./shared}:/shared
+      - ${OCR_LOCAL_SRC:-..}:/app/repo:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: 1024m
+
+  celery-coordinator:
+    image: ocr-farm-cp-django:latest
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile.coordinator
+      args: *coordinator-build-args
+    restart: unless-stopped
+    # Prefer mounted repo so MP-B1 redrive/hold code is live without rebuild
+    working_dir: /app/repo/coordinator
+    command: celery -A coordinator worker -Q coordinator -c 2 -l info --hostname coordinator@%h
+    environment: *coord_env
+    volumes:
+      - ${NFS_HOST_PATH:-./shared}:/shared
+      - ${OCR_LOCAL_SRC:-..}:/app/repo:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # This service runs Celery, not Django/Gunicorn; disable the image's
+    # inherited localhost:8000 HTTP healthcheck.
+    healthcheck:
+      disable: true
+    mem_limit: 1024m
+
+  celery-beat:
+    image: ocr-farm-cp-django:latest
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile.coordinator
+      args: *coordinator-build-args
+    restart: unless-stopped
+    working_dir: /app/repo/coordinator
+    command: celery -A coordinator beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment: *coord_env
+    volumes:
+      - ${NFS_HOST_PATH:-./shared}:/shared
+      - ${OCR_LOCAL_SRC:-..}:/app/repo:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # This service runs Celery Beat, not Django/Gunicorn.
+    healthcheck:
+      disable: true
+    mem_limit: 512m
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  redis_data:

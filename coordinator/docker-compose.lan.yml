@@ -1,0 +1,54 @@
+# LAN-safe control-plane port binds for multi-VM worker nodes.
+#
+# Default docker-compose.coordinator.yml binds Postgres/RabbitMQ/Redis to
+# 127.0.0.1 only — workers on other machines cannot join. This overlay
+# rebinds those ports (and optional management UI) to all interfaces.
+#
+# Usage (control-plane VM):
+#   docker compose \
+#     -f docker-compose.coordinator.yml \
+#     -f docker-compose.lan.yml \
+#     up -d
+#
+# Optional HA:
+#   docker compose \
+#     -f docker-compose.coordinator.yml \
+#     -f docker-compose.ha.yml \
+#     -f docker-compose.lan.yml \
+#     up -d
+#
+# SECURITY: Only use on trusted networks / with firewall rules. Prefer
+# mTLS or VPN for production; never expose guest/default passwords on LAN.
+#
+# Firewall suggestion (example):
+#   allow <worker-subnet> → tcp/5432,5672,6379,8000
+#   deny public internet → those ports
+
+services:
+  postgres:
+    ports:
+      - "${POSTGRES_LAN_BIND:-0.0.0.0}:${POSTGRES_HOST_PORT:-5432}:5432"
+
+  rabbitmq:
+    ports:
+      - "${RABBITMQ_LAN_BIND:-0.0.0.0}:5672:5672"
+      # Management UI stays loopback by default — open only if operator needs LAN mgmt
+      - "${RABBITMQ_MGMT_LAN_BIND:-127.0.0.1}:15672:15672"
+
+  redis:
+    ports:
+      - "${REDIS_LAN_BIND:-0.0.0.0}:${REDIS_HOST_PORT:-6379}:6379"
+
+  django:
+    ports:
+      - "${DJANGO_LAN_BIND:-0.0.0.0}:8000:8000"
+    environment:
+      # Prefer explicit LAN host/IP list; avoid bare * on multi-tenant or hostile nets
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,control-plane.local}
+
+  # Flower: base compose is already 127.0.0.1:5555. Optional LAN rebind when
+  # operators set FLOWER_LAN_BIND (compose concatenates port lists — do not
+  # rely on this overlay alone to remove a bare 0.0.0.0 publish from base).
+  flower:
+    ports:
+      - "${FLOWER_LAN_BIND:-127.0.0.1}:5555:5555"

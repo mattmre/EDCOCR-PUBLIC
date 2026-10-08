@@ -32,7 +32,7 @@ spec:
           {{- end }}
           containers:
             - name: pg-backup
-              image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+              image: {{ include "ocr-local.imageRef" (dict "image" .Values.postgresql.image "defaultTag" "" "requireDigest" .Values.image.requireDigest "name" "postgresql-backup") | quote }}
               imagePullPolicy: IfNotPresent
               command:
                 - sh
@@ -70,9 +70,20 @@ spec:
                     secretKeyRef:
                       name: {{ .Release.Name }}-secret
                       key: POSTGRES_PASSWORD
+                {{- if .Values.tls.enabled }}
+                - name: PGSSLMODE
+                  value: verify-full
+                - name: PGSSLROOTCERT
+                  value: /etc/backup-ca/ca.crt
+                {{- end }}
               volumeMounts:
                 - name: backup-storage
                   mountPath: /backups
+                {{- if .Values.tls.enabled }}
+                - name: backup-ca
+                  mountPath: /etc/backup-ca
+                  readOnly: true
+                {{- end }}
               resources:
                 requests:
                   cpu: 250m
@@ -88,6 +99,14 @@ spec:
             - name: backup-storage
               persistentVolumeClaim:
                 claimName: {{ .Release.Name }}-postgres-backup
+            {{- if .Values.tls.enabled }}
+            - name: backup-ca
+              secret:
+                secretName: {{ include "ocr-local.fullname" . }}-postgresql-tls
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+            {{- end }}
 ---
 # =============================================================================
 # Backup PVC

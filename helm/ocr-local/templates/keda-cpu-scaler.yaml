@@ -10,16 +10,18 @@ spec:
   scaleTargetRef:
     name: {{ .Release.Name }}-cpu-worker
   minReplicaCount: {{ .Values.cpuWorker.autoscaling.minReplicas }}
-  maxReplicaCount: {{ .Values.cpuWorker.autoscaling.maxReplicas }}
+  maxReplicaCount: {{ min .Values.cpuWorker.autoscaling.maxReplicas (.Values.keda.maxReplicaCount | default 50) }}
   pollingInterval: {{ .Values.cpuWorker.autoscaling.pollingInterval }}
   cooldownPeriod: {{ .Values.cpuWorker.autoscaling.cooldownPeriod }}
   triggers:
     - type: rabbitmq
       metadata:
-        protocol: amqp
+        protocol: http
         queueName: {{ .Values.keda.cpu.queueName | default "cpu_general" }}
+        vhostName: "/"
         mode: QueueLength
         value: {{ .Values.cpuWorker.autoscaling.queueTarget | quote }}
+        excludeUnacknowledged: "false"
       authenticationRef:
         name: {{ .Release.Name }}-rabbitmq-auth
 {{- end }}

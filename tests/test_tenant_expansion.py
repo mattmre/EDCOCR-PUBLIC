@@ -19,6 +19,7 @@ from api.database import (
 # ---------------------------------------------------------------------------
 
 
+
 @pytest.fixture()
 def session():
     """Return a SQLAlchemy session for direct ORM access."""

@@ -1,3 +1,5 @@
+> Design/reference material. Optional deployment and feature claims require the acceptance checks in [candidate scope](../release-candidate.md).
+
 # Evidence Bundle Specification -- Certified Translation Deliverable
 
 **Status**: P1 deliverable (E-X-005, tracked under  + )
@@ -297,8 +299,8 @@ The UI also exposes a **dry-run / preview** mode that produces the manifest with
 - `docs/forensic/custody-schema-v1.json` -- authoritative custody event schema (10 events)
 - `docs/forensic/llm-mt-admissibility-playbook.md` -- legal posture for defending LLM-MT output
 - `docs/architecture/forensic-ai-boundary-contract.md` -- forensic-core vs. AI-adjacent boundary contract
-- `docs/planning/2026-04-24-translation-swarm/panels/panel-03-forensic-ediscovery.md` -- panel of record
-- `docs/planning/2026-04-24-translation-swarm/04-plan-D-management-ui-enrichments.md` --  UI design, Screen 15 Audit
+- `docs/release-candidate.md` -- panel of record
+- `docs/release-candidate.md` --  UI design, Screen 15 Audit
 - `scripts/build_evidence_bundle.py` -- canonical bundle builder (to be authored under  +  )
 
 ---

@@ -624,7 +624,7 @@ def test_ftps_uses_ssl_context(tmp_path):
         shutdown_event=SHUTDOWN_EVENT,
     )
 
-    with mock.patch("file_watcher_remote.ssl.create_default_context") as mock_ctx, \
+    with mock.patch("file_watcher_remote.ssl.create_default_context") as mock_ctx,\
          mock.patch("file_watcher_remote.ftplib.FTP_TLS") as mock_tls_cls:
         mock_client = mock_tls_cls.return_value
         mock_client.sock = mock.MagicMock()

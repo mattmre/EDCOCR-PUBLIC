@@ -50,10 +50,11 @@ const SEEDED_WORKERS = {
   online: "playwright-worker-online",
 };
 
-test.describe("Django admin smoke", => {
+test.describe("Django admin smoke", () => {
   test.skip(
     !hasEnv("PLAYWRIGHT_COORDINATOR_BASE_URL"),
-    "Set PLAYWRIGHT_COORDINATOR_BASE_URL to run Django admin browser tests.");
+    "Set PLAYWRIGHT_COORDINATOR_BASE_URL to run Django admin browser tests.",
+  );
 
   test("@smoke admin login page loads", async ({ page }) => {
     const consoleTracker = trackConsoleErrors(page);
@@ -68,7 +69,8 @@ test.describe("Django admin smoke", => {
 
   test.skip(
     !hasAdminCredentials(),
-    "Set Django admin credentials to run authenticated admin smoke coverage.");
+    "Set Django admin credentials to run authenticated admin smoke coverage.",
+  );
 
   test("@smoke authenticated admin index loads", async ({ page }) => {
     const consoleTracker = trackConsoleErrors(page);
@@ -96,7 +98,8 @@ test.describe("Django admin smoke", => {
 
   test.skip(
     !hasSeededAdminData(),
-    "Set PLAYWRIGHT_ADMIN_SEEDED=true after running the coordinator seed command to run seeded admin workflows.");
+    "Set PLAYWRIGHT_ADMIN_SEEDED=true after running the coordinator seed command to run seeded admin workflows.",
+  );
 
   test("@smoke seeded failed job can be retried", async ({ page }) => {
     const consoleTracker = trackConsoleErrors(page);

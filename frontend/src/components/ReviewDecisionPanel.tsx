@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ApiError, post } from "@/lib/api-client";
+import { deriveReviewerLabel } from "@/lib/auth";
 import type {
   ReviewDecision,
   ReviewDecisionRequest,
@@ -41,7 +42,10 @@ export interface ReviewDecisionPanelProps {
   item: ReviewItem;
   /** Called with the API-returned item after a successful decision. */
   onDecision: (updated: ReviewItem) => void;
-  /** Optional reviewer label (defaults to empty string -> backend records as anonymous). */
+  /**
+   * Optional reviewer label override. When empty/omitted, the panel derives a
+   * non-empty identity via `deriveReviewerLabel` (redacted key or "operator").
+   */
   reviewer?: string;
 }
 
@@ -49,6 +53,7 @@ export interface ReviewDecisionPanelProps {
  * Decision panel: notes textarea + Approve/Reject/Escalate buttons.
  *
  * - Disabled while submitting and after a non-pending decision lands.
+ * - Always posts a non-empty `reviewer` so custody records are attributable.
  * - Optimistic update fires before the network round-trip; on error we
  *   surface the message and the parent can refresh the item.
  */
@@ -64,15 +69,17 @@ export function ReviewDecisionPanel({
   const [error, setError] = useState<string | null>(null);
 
   const alreadyDecided = item.status !== "pending";
+  const recordingAs = deriveReviewerLabel(reviewer);
 
   async function submit(decision: ReviewDecision) {
     if (alreadyDecided || submitting) return;
     setSubmitting(true);
     setPendingDecision(decision);
     setError(null);
+    // Never send an empty reviewer — forensic decisions must be attributable.
     const body: ReviewDecisionRequest = {
       status: decision,
-      reviewer,
+      reviewer: deriveReviewerLabel(reviewer),
       notes,
     };
     try {
@@ -115,7 +122,14 @@ export function ReviewDecisionPanel({
           {item.reviewed_at ? ` at ${item.reviewed_at}` : ""}.
           Decisions are immutable once recorded.
         </p>
-      ) : null}
+      ) : (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="review-decision-recording-as"
+        >
+          Recording as: <span className="font-medium text-foreground">{recordingAs}</span>
+        </p>
+      )}
 
       <label className="block text-xs font-medium text-muted-foreground">
         Reviewer notes

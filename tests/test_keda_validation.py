@@ -15,10 +15,13 @@ import textwrap
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(
     0,
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"),
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"
+    ),
 )
 
 from scripts.validate_keda import (  # noqa: E402
@@ -37,6 +40,7 @@ from scripts.validate_keda import (  # noqa: E402
     build_parser,
     main,
     parse_scaled_object,
+    parse_scaled_objects,
     parse_trigger_auth,
     run_validation,
     validate_cooldown_period,
@@ -46,6 +50,7 @@ from scripts.validate_keda import (  # noqa: E402
     validate_scale_up_threshold,
     validate_scaling_strategy_support,
     validate_trigger_auth,
+    validate_unacknowledged_message_scaling,
     validate_values_defaults,
 )
 
@@ -71,10 +76,11 @@ SAMPLE_SCALED_OBJECT = textwrap.dedent("""\
       triggers:
         - type: rabbitmq
           metadata:
-            protocol: amqp
+            protocol: http
             queueName: ocr_gpu
             mode: QueueLength
             value: {{ .Values.gpuWorker.autoscaling.queueTarget | quote }}
+            excludeUnacknowledged: "false"
           authenticationRef:
             name: {{ .Release.Name }}-rabbitmq-auth
     {{- end }}
@@ -92,7 +98,13 @@ SAMPLE_TRIGGER_AUTH_FIXED = textwrap.dedent("""\
       secretTargetRef:
         - parameter: host
           name: {{ .Release.Name }}-secret
-          key: CELERY_BROKER_URL
+          key: RABBITMQ_MANAGEMENT_HOST
+        - parameter: username
+          name: {{ .Release.Name }}-secret
+          key: RABBITMQ_MANAGEMENT_USER
+        - parameter: password
+          name: {{ .Release.Name }}-secret
+          key: RABBITMQ_MANAGEMENT_PASSWORD
     {{- end }}
 """)
 
@@ -123,7 +135,7 @@ def sample_scaled_objects():
             max_replicas_expr="{{ .Values.gpuWorker.autoscaling.maxReplicas }}",
             polling_interval_expr="{{ .Values.gpuWorker.autoscaling.pollingInterval }}",
             cooldown_period_expr="{{ .Values.gpuWorker.autoscaling.cooldownPeriod }}",
-            queue_target_expr='{{ .Values.gpuWorker.autoscaling.queueTarget | quote }}',
+            queue_target_expr="{{ .Values.gpuWorker.autoscaling.queueTarget | quote }}",
             trigger_auth_ref="{{ .Release.Name }}-rabbitmq-auth",
             raw_content=SAMPLE_SCALED_OBJECT,
         ),
@@ -135,7 +147,7 @@ def sample_scaled_objects():
             max_replicas_expr="{{ .Values.cpuWorker.autoscaling.maxReplicas }}",
             polling_interval_expr="{{ .Values.cpuWorker.autoscaling.pollingInterval }}",
             cooldown_period_expr="{{ .Values.cpuWorker.autoscaling.cooldownPeriod }}",
-            queue_target_expr='{{ .Values.cpuWorker.autoscaling.queueTarget | quote }}',
+            queue_target_expr="{{ .Values.cpuWorker.autoscaling.queueTarget | quote }}",
             trigger_auth_ref="{{ .Release.Name }}-rabbitmq-auth",
             raw_content="",
         ),
@@ -147,7 +159,7 @@ def sample_scaled_objects():
             max_replicas_expr="{{ .Values.cpuOcrWorker.autoscaling.maxReplicas }}",
             polling_interval_expr="{{ .Values.cpuOcrWorker.autoscaling.pollingInterval }}",
             cooldown_period_expr="{{ .Values.cpuOcrWorker.autoscaling.cooldownPeriod }}",
-            queue_target_expr='{{ .Values.cpuOcrWorker.autoscaling.queueTarget | quote }}',
+            queue_target_expr="{{ .Values.cpuOcrWorker.autoscaling.queueTarget | quote }}",
             trigger_auth_ref="{{ .Release.Name }}-rabbitmq-auth",
             raw_content="",
         ),
@@ -159,7 +171,7 @@ def sample_scaled_objects():
             max_replicas_expr="{{ .Values.layoutCpuWorker.autoscaling.maxReplicas }}",
             polling_interval_expr="{{ .Values.layoutCpuWorker.autoscaling.pollingInterval }}",
             cooldown_period_expr="{{ .Values.layoutCpuWorker.autoscaling.cooldownPeriod }}",
-            queue_target_expr='{{ .Values.layoutCpuWorker.autoscaling.queueTarget | quote }}',
+            queue_target_expr="{{ .Values.layoutCpuWorker.autoscaling.queueTarget | quote }}",
             trigger_auth_ref="{{ .Release.Name }}-rabbitmq-auth",
             raw_content="",
         ),
@@ -171,7 +183,7 @@ def sample_scaled_objects():
             max_replicas_expr="{{ .Values.nlpGpuWorker.autoscaling.maxReplicas }}",
             polling_interval_expr="{{ .Values.nlpGpuWorker.autoscaling.pollingInterval }}",
             cooldown_period_expr="{{ .Values.nlpGpuWorker.autoscaling.cooldownPeriod }}",
-            queue_target_expr='{{ .Values.nlpGpuWorker.autoscaling.queueTarget | quote }}',
+            queue_target_expr="{{ .Values.nlpGpuWorker.autoscaling.queueTarget | quote }}",
             trigger_auth_ref="{{ .Release.Name }}-rabbitmq-auth",
             raw_content="",
         ),
@@ -183,7 +195,7 @@ def sample_scaled_objects():
             max_replicas_expr="{{ .Values.layoutlmWorker.autoscaling.maxReplicas }}",
             polling_interval_expr="{{ .Values.layoutlmWorker.autoscaling.pollingInterval }}",
             cooldown_period_expr="{{ .Values.layoutlmWorker.autoscaling.cooldownPeriod }}",
-            queue_target_expr='{{ .Values.layoutlmWorker.autoscaling.queueTarget | quote }}',
+            queue_target_expr="{{ .Values.layoutlmWorker.autoscaling.queueTarget | quote }}",
             trigger_auth_ref="{{ .Release.Name }}-rabbitmq-auth",
             raw_content="",
         ),
@@ -204,8 +216,13 @@ def fixed_trigger_auth():
             "(and .Values.layoutlmWorker.enabled .Values.layoutlmWorker.autoscaling.enabled) }}"
         ),
         secret_ref_name="{{ .Release.Name }}-secret",
-        secret_ref_key="CELERY_BROKER_URL",
+        secret_ref_key="RABBITMQ_MANAGEMENT_HOST",
         raw_content=SAMPLE_TRIGGER_AUTH_FIXED,
+        secret_ref_keys=(
+            "RABBITMQ_MANAGEMENT_HOST",
+            "RABBITMQ_MANAGEMENT_USER",
+            "RABBITMQ_MANAGEMENT_PASSWORD",
+        ),
     )
 
 
@@ -231,6 +248,7 @@ def buggy_trigger_auth():
 # Template parsing tests
 # ===========================================================================
 
+
 class TestTemplateParsing:
     """Tests for YAML template parsing helpers."""
 
@@ -251,15 +269,21 @@ class TestTemplateParsing:
         assert _extract_queue_name(content) == "cpu_general"
 
     def test_extract_queue_name_helm_template(self):
-        content = '    queueName: {{ .Values.keda.gpu.queueName | default "ocr_gpu" }}\n'
+        content = (
+            '    queueName: {{ .Values.keda.gpu.queueName | default "ocr_gpu" }}\n'
+        )
         assert _extract_queue_name(content) == "ocr_gpu"
 
     def test_extract_queue_name_helm_template_cpu(self):
-        content = '    queueName: {{ .Values.keda.cpu.queueName | default "cpu_general" }}\n'
+        content = (
+            '    queueName: {{ .Values.keda.cpu.queueName | default "cpu_general" }}\n'
+        )
         assert _extract_queue_name(content) == "cpu_general"
 
     def test_extract_queue_name_helm_template_cpu_ocr(self):
-        content = '    queueName: {{ .Values.keda.cpuOcr.queueName | default "ocr_cpu" }}\n'
+        content = (
+            '    queueName: {{ .Values.keda.cpuOcr.queueName | default "ocr_cpu" }}\n'
+        )
         assert _extract_queue_name(content) == "ocr_cpu"
 
     def test_extract_queue_name_missing(self):
@@ -267,10 +291,7 @@ class TestTemplateParsing:
         assert _extract_queue_name(content) == "unknown"
 
     def test_extract_trigger_auth_ref(self):
-        content = (
-            "      authenticationRef:\n"
-            "        name: release-rabbitmq-auth\n"
-        )
+        content = "      authenticationRef:\n        name: release-rabbitmq-auth\n"
         assert _extract_trigger_auth_ref(content) == "release-rabbitmq-auth"
 
     def test_extract_trigger_auth_ref_missing(self):
@@ -278,7 +299,9 @@ class TestTemplateParsing:
         assert _extract_trigger_auth_ref(content) == ""
 
     def test_extract_template_expr(self):
-        content = "  pollingInterval: {{ .Values.gpuWorker.autoscaling.pollingInterval }}\n"
+        content = (
+            "  pollingInterval: {{ .Values.gpuWorker.autoscaling.pollingInterval }}\n"
+        )
         result = _extract_template_expr(content, "pollingInterval")
         assert ".Values.gpuWorker.autoscaling.pollingInterval" in result
 
@@ -308,12 +331,67 @@ class TestTemplateParsing:
         f.write_text("apiVersion: apps/v1\nkind: Deployment\n", encoding="utf-8")
         assert parse_scaled_object(f) is None
 
+    def test_staged_loop_expands_only_known_queues(self, tmp_path):
+        chart = Path(__file__).resolve().parent.parent / "helm" / "ocr-local"
+        source = (chart / "templates/keda-staged-page-scalers.yaml").read_text()
+        f = tmp_path / "keda-staged-page-scalers.yaml"
+        f.write_text(source, encoding="utf-8")
+        objects = parse_scaled_objects(f)
+        assert [(so.component, so.queue_name) for so in objects] == [
+            ("ocr-render", "ocr_render"),
+            ("ocr-finalize", "ocr_finalize"),
+        ]
+        assert all("ocrStagedPage" in so.max_replicas_expr for so in objects)
+
+        f.write_text(source.replace('list "render" "finalize"',
+                                    'list "render" "unknown"'), encoding="utf-8")
+        with pytest.raises(ValueError, match="unknown or malformed"):
+            parse_scaled_objects(f)
+        chart_dir = tmp_path / "chart"
+        templates = chart_dir / "templates"
+        templates.mkdir(parents=True)
+        (templates / f.name).write_text(f.read_text(), encoding="utf-8")
+        (chart_dir / "values.yaml").write_text((chart / "values.yaml").read_text())
+        report = run_validation(chart_dir)
+        assert not report.passed
+        assert any(r.check.startswith("template:stage_expansion:") and not r.passed
+                   for r in report.results)
+
+    def test_staged_values_and_auth_guard_are_checked(self, tmp_path):
+        chart = Path(__file__).resolve().parent.parent / "helm" / "ocr-local"
+        staged_file = chart / "templates/keda-staged-page-scalers.yaml"
+        objects = parse_scaled_objects(staged_file)
+        auth = parse_trigger_auth(chart / "templates/keda-trigger-auth.yaml")
+        assert auth is not None
+        assert all(r.passed for r in _check_trigger_auth_guard_coverage(
+            auth.guard_condition, objects
+        ))
+        broken_guard = auth.guard_condition.replace(
+            ".Values.ocrStagedPage.finalize.autoscaling.enabled", "false"
+        )
+        checks = _check_trigger_auth_guard_coverage(broken_guard, objects)
+        assert not next(r for r in checks
+                        if r.check == "trigger_auth:guard:ocr-finalize").passed
+
+        values = yaml.safe_load((chart / "values.yaml").read_text())
+        values["ocrStagedPage"]["finalize"]["autoscaling"]["queueTarget"] = 0
+        path = tmp_path / "values.yaml"
+        path.write_text(yaml.safe_dump(values), encoding="utf-8")
+        checks = validate_values_defaults(path, require_staged=True)
+        assert not next(r for r in checks
+                        if r.check == "values:staged:finalize:autoscaling").passed
+
     def test_parse_trigger_auth_from_file(self, tmp_path):
         f = tmp_path / "keda-trigger-auth.yaml"
         f.write_text(SAMPLE_TRIGGER_AUTH_FIXED, encoding="utf-8")
         ta = parse_trigger_auth(f)
         assert ta is not None
-        assert ta.secret_ref_key == "CELERY_BROKER_URL"
+        assert ta.secret_ref_key == "RABBITMQ_MANAGEMENT_HOST"
+        assert set(ta.secret_ref_keys) == {
+            "RABBITMQ_MANAGEMENT_HOST",
+            "RABBITMQ_MANAGEMENT_USER",
+            "RABBITMQ_MANAGEMENT_PASSWORD",
+        }
         assert "cpuOcrWorker" in ta.guard_condition
 
     def test_parse_trigger_auth_non_keda(self, tmp_path):
@@ -325,6 +403,7 @@ class TestTemplateParsing:
 # ===========================================================================
 # Queue name validation tests
 # ===========================================================================
+
 
 class TestQueueNameValidation:
     """Tests for queue name correctness validation."""
@@ -352,6 +431,40 @@ class TestQueueNameValidation:
         assert not results[0].passed
         assert "wrong_queue" in results[0].message
 
+
+class TestUnacknowledgedMessageScaling:
+    def test_current_chart_uses_http_queue_metrics_for_all_workers(self):
+        chart = Path(__file__).resolve().parent.parent / "helm" / "ocr-local"
+        report = run_validation(chart)
+        checks = [
+            result
+            for result in report.results
+            if result.check.startswith("unacknowledged_messages:")
+        ]
+        assert len(checks) == 9
+        assert {"unacknowledged_messages:ocr-render",
+                "unacknowledged_messages:ocr-finalize"} <= {
+                    result.check for result in checks
+                }
+        assert all(result.passed for result in checks)
+
+    def test_amqp_or_ready_only_metrics_are_rejected(self):
+        so = ScaledObjectInfo(
+            file_name="keda-cpu-ocr-scaler.yaml",
+            component="cpu-ocr-worker",
+            queue_name="ocr_cpu",
+            min_replicas_expr="0",
+            max_replicas_expr="2",
+            polling_interval_expr="5",
+            cooldown_period_expr="30",
+            queue_target_expr="1",
+            trigger_auth_ref="rabbit-auth",
+            raw_content='protocol: amqp\nexcludeUnacknowledged: "true"\n',
+        )
+        results = validate_unacknowledged_message_scaling([so])
+        assert len(results) == 1
+        assert not results[0].passed
+
     def test_unknown_component_warning(self):
         so = ScaledObjectInfo(
             file_name="keda-mystery-scaler.yaml",
@@ -371,10 +484,17 @@ class TestQueueNameValidation:
         assert results[0].severity == "warning"
 
     def test_expected_queues_complete(self):
-        """Verify EXPECTED_QUEUES covers all 6 worker types."""
+        """Verify EXPECTED_QUEUES covers seven workers and two staged queues."""
         expected_components = {
-            "gpu-worker", "cpu-worker", "cpu-ocr-worker",
-            "layout-cpu-worker", "nlp-gpu-worker", "layoutlm-worker",
+            "gpu-worker",
+            "cpu-worker",
+            "cpu-ocr-worker",
+            "tesseract-worker",
+            "layout-cpu-worker",
+            "nlp-gpu-worker",
+            "layoutlm-worker",
+            "ocr-render",
+            "ocr-finalize",
         }
         assert set(EXPECTED_QUEUES.keys()) == expected_components
 
@@ -382,6 +502,7 @@ class TestQueueNameValidation:
 # ===========================================================================
 # Scale-to-zero validation tests
 # ===========================================================================
+
 
 class TestScaleToZeroValidation:
     """Tests for minReplicaCount=0 configuration."""
@@ -430,6 +551,7 @@ class TestScaleToZeroValidation:
 # Scale-up threshold validation tests
 # ===========================================================================
 
+
 class TestScaleUpThresholdValidation:
     """Tests for queue depth threshold validation."""
 
@@ -459,6 +581,7 @@ class TestScaleUpThresholdValidation:
 # Cooldown period validation tests
 # ===========================================================================
 
+
 class TestCooldownPeriodValidation:
     """Tests for stabilization window validation."""
 
@@ -487,6 +610,7 @@ class TestCooldownPeriodValidation:
 # Polling interval validation tests
 # ===========================================================================
 
+
 class TestPollingIntervalValidation:
     """Tests for polling interval validation."""
 
@@ -514,6 +638,7 @@ class TestPollingIntervalValidation:
 # ===========================================================================
 # TriggerAuthentication validation tests
 # ===========================================================================
+
 
 class TestTriggerAuthValidation:
     """Tests for TriggerAuthentication reference and guard coverage."""
@@ -562,17 +687,25 @@ class TestTriggerAuthValidation:
     def test_trigger_auth_ref_inconsistency(self, fixed_trigger_auth):
         objects = [
             ScaledObjectInfo(
-                file_name="a.yaml", component="gpu-worker", queue_name="ocr_gpu",
-                min_replicas_expr="1", max_replicas_expr="10",
-                polling_interval_expr="15", cooldown_period_expr="300",
+                file_name="a.yaml",
+                component="gpu-worker",
+                queue_name="ocr_gpu",
+                min_replicas_expr="1",
+                max_replicas_expr="10",
+                polling_interval_expr="15",
+                cooldown_period_expr="300",
                 queue_target_expr="5",
                 trigger_auth_ref="auth-a",
                 raw_content="",
             ),
             ScaledObjectInfo(
-                file_name="b.yaml", component="cpu-worker", queue_name="cpu_general",
-                min_replicas_expr="0", max_replicas_expr="10",
-                polling_interval_expr="15", cooldown_period_expr="120",
+                file_name="b.yaml",
+                component="cpu-worker",
+                queue_name="cpu_general",
+                min_replicas_expr="0",
+                max_replicas_expr="10",
+                polling_interval_expr="15",
+                cooldown_period_expr="120",
                 queue_target_expr="10",
                 trigger_auth_ref="auth-b",
                 raw_content="",
@@ -598,6 +731,7 @@ class TestTriggerAuthValidation:
 # ===========================================================================
 # Bug fix validation: cpuOcrWorker missing from guard
 # ===========================================================================
+
 
 class TestCpuOcrWorkerBugFix:
     """Test that the known bug (missing cpuOcrWorker in TriggerAuthentication
@@ -647,7 +781,9 @@ class TestCpuOcrWorkerBugFix:
         assert "cpuOcrWorker.enabled" in first_line
         assert "cpuOcrWorker.autoscaling.enabled" in first_line
 
-    def test_other_workers_still_covered(self, sample_scaled_objects, buggy_trigger_auth):
+    def test_other_workers_still_covered(
+        self, sample_scaled_objects, buggy_trigger_auth
+    ):
         """Even in the buggy version, other workers are still covered."""
         results = _check_trigger_auth_guard_coverage(
             buggy_trigger_auth.guard_condition, sample_scaled_objects
@@ -675,6 +811,7 @@ class TestCpuOcrWorkerBugFix:
 # Scaling strategy validation tests
 # ===========================================================================
 
+
 class TestScalingStrategyValidation:
     """Tests for scaling strategy annotation support."""
 
@@ -690,7 +827,7 @@ class TestScalingStrategyValidation:
             queue_target_expr="5",
             trigger_auth_ref="",
             raw_content=(
-                '{{- $strategy := .Values.keda.scalingStrategy }}\n'
+                "{{- $strategy := .Values.keda.scalingStrategy }}\n"
                 '{{- if eq $strategy "aggressive" }}\n'
                 '{{- if eq $strategy "conservative" }}\n'
             ),
@@ -723,12 +860,14 @@ class TestScalingStrategyValidation:
 # Values.yaml validation tests
 # ===========================================================================
 
+
 class TestValuesValidation:
     """Tests for values.yaml KEDA defaults validation."""
 
     def test_valid_values_file(self, tmp_path):
         values = tmp_path / "values.yaml"
-        values.write_text(textwrap.dedent("""\
+        values.write_text(
+            textwrap.dedent("""\
             keda:
               scalingStrategy: "balanced"
               maxReplicaCount: 50
@@ -747,7 +886,9 @@ class TestValuesValidation:
             nlpGpuWorker:
               autoscaling:
                 enabled: false
-        """), encoding="utf-8")
+        """),
+            encoding="utf-8",
+        )
 
         results = validate_values_defaults(values)
         error_results = [r for r in results if r.severity == "error" and not r.passed]
@@ -760,7 +901,9 @@ class TestValuesValidation:
 
     def test_invalid_strategy(self, tmp_path):
         values = tmp_path / "values.yaml"
-        values.write_text("keda:\n  scalingStrategy: invalid_strategy\n", encoding="utf-8")
+        values.write_text(
+            "keda:\n  scalingStrategy: invalid_strategy\n", encoding="utf-8"
+        )
         results = validate_values_defaults(values)
         strategy_check = [r for r in results if r.check == "values:scaling_strategy"]
         assert len(strategy_check) == 1
@@ -779,6 +922,7 @@ class TestValuesValidation:
 # Full validation integration tests
 # ===========================================================================
 
+
 class TestFullValidation:
     """Integration tests running the full validation pipeline."""
 
@@ -791,20 +935,28 @@ class TestFullValidation:
 
         report = run_validation(chart_dir)
 
-        # Should find all 6 ScaledObjects
-        assert len(report.scaled_objects) == 6, (
-            f"Expected 6 ScaledObjects, found {len(report.scaled_objects)}: "
+        # Seven individual templates plus two concrete staged-loop objects.
+        assert len(report.scaled_objects) == 9, (
+            f"Expected 9 ScaledObjects, found {len(report.scaled_objects)}: "
             f"{[so.component for so in report.scaled_objects]}"
         )
+        staged = {so.component: so for so in report.scaled_objects
+                  if so.component in {"ocr-render", "ocr-finalize"}}
+        assert set(staged) == {"ocr-render", "ocr-finalize"}
+        assert {stage: so.queue_name for stage, so in staged.items()} == {
+            "ocr-render": "ocr_render", "ocr-finalize": "ocr_finalize",
+        }
+        for stage, so in staged.items():
+            assert f"ocrStagedPage.{stage.removeprefix('ocr-')}.autoscaling" in so.min_replicas_expr
+            assert so.trigger_auth_ref
 
         # Should find TriggerAuthentication
         assert report.trigger_auth is not None
 
         # After bug fix, all checks should pass
         errors = [r for r in report.results if not r.passed and r.severity == "error"]
-        assert len(errors) == 0, (
-            "Validation errors:\n"
-            + "\n".join(f"  {r.check}: {r.message}" for r in errors)
+        assert len(errors) == 0, "Validation errors:\n" + "\n".join(
+            f"  {r.check}: {r.message}" for r in errors
         )
 
     def test_run_validation_missing_chart_dir(self, tmp_path):
@@ -842,6 +994,7 @@ class TestFullValidation:
 # ===========================================================================
 # CLI tests
 # ===========================================================================
+
 
 class TestCLI:
     """Tests for CLI argument parsing and main entry point."""

@@ -13,11 +13,13 @@ import pytest
 # TestLanguageEntry
 # ---------------------------------------------------------------------------
 
+
 class TestLanguageEntry:
     """Validate dataclass construction, defaults, and immutability."""
 
     def test_construction_with_all_fields(self):
         from language_config import LanguageEntry
+
         entry = LanguageEntry(
             paddle_code="test",
             name="Test Language",
@@ -41,6 +43,7 @@ class TestLanguageEntry:
 
     def test_defaults(self):
         from language_config import LanguageEntry
+
         entry = LanguageEntry("x", "X Lang", ("x",), "latin", "core")
         assert entry.tesseract_code == ""
         assert entry.easyocr_code == ""
@@ -49,18 +52,21 @@ class TestLanguageEntry:
 
     def test_frozen_raises_on_mutation(self):
         from language_config import LanguageEntry
+
         entry = LanguageEntry("x", "X", ("x",), "latin", "core")
         with pytest.raises(AttributeError):
             entry.name = "Changed"  # type: ignore[misc]
 
     def test_equality(self):
         from language_config import LanguageEntry
+
         a = LanguageEntry("en", "English", ("en",), "latin", "core", "eng", "en")
         b = LanguageEntry("en", "English", ("en",), "latin", "core", "eng", "en")
         assert a == b
 
     def test_hash(self):
         from language_config import LanguageEntry
+
         a = LanguageEntry("en", "English", ("en",), "latin", "core", "eng", "en")
         b = LanguageEntry("en", "English", ("en",), "latin", "core", "eng", "en")
         assert hash(a) == hash(b)
@@ -70,37 +76,65 @@ class TestLanguageEntry:
 # TestRegistryCompleteness
 # ---------------------------------------------------------------------------
 
+
 class TestRegistryCompleteness:
     """Verify the registry contains the expected set of languages."""
 
     def test_core_tier_has_34_languages(self):
         from language_config import LANGUAGE_REGISTRY
+
         core = [e for e in LANGUAGE_REGISTRY.values() if e.tier == "core"]
         assert len(core) == 34
 
     def test_extended_tier_has_11_languages(self):
         from language_config import LANGUAGE_REGISTRY
+
         extended = [e for e in LANGUAGE_REGISTRY.values() if e.tier == "extended"]
         assert len(extended) == 11
 
     def test_total_registry_size(self):
         from language_config import LANGUAGE_REGISTRY
+
         assert len(LANGUAGE_REGISTRY) == 45
 
     def test_no_duplicate_paddle_codes(self):
         from language_config import LANGUAGE_REGISTRY
+
         codes = list(LANGUAGE_REGISTRY.keys())
         assert len(codes) == len(set(codes))
 
     def test_core_contains_original_27(self):
         """The original 27 Latin/CJK/Cyrillic baseline must all be core."""
         from language_config import LANGUAGE_REGISTRY
+
         original_27 = [
-            "ch", "chinese_cht", "japan", "korean", "vi",
-            "en", "fr", "german", "es", "it", "pt", "nl", "sv", "da",
-            "fi", "ro", "pl", "cs", "hu", "tr",
-            "ru", "uk", "be", "bg",
-            "ar", "hi", "el",
+            "ch",
+            "chinese_cht",
+            "japan",
+            "korean",
+            "vi",
+            "en",
+            "fr",
+            "german",
+            "es",
+            "it",
+            "pt",
+            "nl",
+            "sv",
+            "da",
+            "fi",
+            "ro",
+            "pl",
+            "cs",
+            "hu",
+            "tr",
+            "ru",
+            "uk",
+            "be",
+            "bg",
+            "ar",
+            "hi",
+            "el",
         ]
         for code in original_27:
             assert code in LANGUAGE_REGISTRY, f"Missing core language: {code}"
@@ -109,6 +143,7 @@ class TestRegistryCompleteness:
     def test_core_contains_low_resource_tranche(self):
         """The 7 low-resource languages added in the 34-language tranche."""
         from language_config import LANGUAGE_REGISTRY
+
         tranche_7 = ["fa", "ur", "ug", "te", "ta", "kn", "ka"]
         for code in tranche_7:
             assert code in LANGUAGE_REGISTRY, f"Missing tranche language: {code}"
@@ -116,31 +151,50 @@ class TestRegistryCompleteness:
 
     def test_extended_languages_present(self):
         from language_config import LANGUAGE_REGISTRY
-        extended = ["th", "bn", "mr", "ne", "hr", "sk", "no", "lt", "lv", "et", "rs_latin"]
+
+        extended = [
+            "th",
+            "bn",
+            "mr",
+            "ne",
+            "hr",
+            "sk",
+            "no",
+            "lt",
+            "lv",
+            "et",
+            "rs_latin",
+        ]
         for code in extended:
             assert code in LANGUAGE_REGISTRY, f"Missing extended language: {code}"
             assert LANGUAGE_REGISTRY[code].tier == "extended"
 
     def test_every_entry_has_name(self):
         from language_config import LANGUAGE_REGISTRY
+
         for code, entry in LANGUAGE_REGISTRY.items():
             assert entry.name, f"Language {code} has empty name"
 
     def test_every_entry_has_at_least_one_fasttext_code(self):
         from language_config import LANGUAGE_REGISTRY
+
         for code, entry in LANGUAGE_REGISTRY.items():
-            assert len(entry.fasttext_codes) >= 1, f"Language {code} has no FastText codes"
+            assert len(entry.fasttext_codes) >= 1, (
+                f"Language {code} has no FastText codes"
+            )
 
 
 # ---------------------------------------------------------------------------
 # TestGetEnabledLanguages
 # ---------------------------------------------------------------------------
 
+
 class TestGetEnabledLanguages:
     """Test tier-based filtering."""
 
     def test_core_only_default(self):
         from language_config import get_enabled_languages
+
         enabled = get_enabled_languages()
         # Default tier is "core" -- should return 34 languages
         assert len(enabled) == 34
@@ -149,6 +203,7 @@ class TestGetEnabledLanguages:
 
     def test_core_plus_extended(self):
         import language_config
+
         saved = language_config.OCR_LANGUAGE_TIERS
         try:
             language_config.OCR_LANGUAGE_TIERS = ["core", "extended"]
@@ -159,6 +214,7 @@ class TestGetEnabledLanguages:
 
     def test_extended_only(self):
         import language_config
+
         saved = language_config.OCR_LANGUAGE_TIERS
         try:
             language_config.OCR_LANGUAGE_TIERS = ["extended"]
@@ -171,6 +227,7 @@ class TestGetEnabledLanguages:
 
     def test_empty_tier_returns_nothing(self):
         import language_config
+
         saved = language_config.OCR_LANGUAGE_TIERS
         try:
             language_config.OCR_LANGUAGE_TIERS = ["nonexistent"]
@@ -184,11 +241,13 @@ class TestGetEnabledLanguages:
 # TestBuildLangMapping
 # ---------------------------------------------------------------------------
 
+
 class TestBuildLangMapping:
     """Test FastText-code -> PaddleOCR-code mapping generation."""
 
     def test_common_mappings(self):
         from language_config import build_lang_mapping
+
         m = build_lang_mapping()
         assert m["en"] == "en"
         assert m["zh"] == "ch"
@@ -198,16 +257,19 @@ class TestBuildLangMapping:
 
     def test_zh_cn_alias(self):
         from language_config import build_lang_mapping
+
         m = build_lang_mapping()
         assert m["zh-cn"] == "ch"
 
     def test_zh_tw_alias(self):
         from language_config import build_lang_mapping
+
         m = build_lang_mapping()
         assert m["zh-tw"] == "chinese_cht"
 
     def test_arabic_rtl_languages_present(self):
         from language_config import build_lang_mapping
+
         m = build_lang_mapping()
         assert m["ar"] == "ar"
         assert m["fa"] == "fa"
@@ -216,6 +278,7 @@ class TestBuildLangMapping:
 
     def test_low_resource_tranche_mapped(self):
         from language_config import build_lang_mapping
+
         m = build_lang_mapping()
         assert m["te"] == "te"
         assert m["ta"] == "ta"
@@ -225,6 +288,7 @@ class TestBuildLangMapping:
     def test_no_fasttext_code_collisions(self):
         """Each FastText code should map to exactly one PaddleOCR code."""
         from language_config import LANGUAGE_REGISTRY
+
         seen: dict[str, str] = {}
         for entry in LANGUAGE_REGISTRY.values():
             for ft_code in entry.fasttext_codes:
@@ -240,23 +304,38 @@ class TestBuildLangMapping:
 # TestBuildTargetLangs
 # ---------------------------------------------------------------------------
 
+
 class TestBuildTargetLangs:
     """Test PaddleOCR model code list generation."""
 
     def test_sorted(self):
         from language_config import build_target_langs
+
         langs = build_target_langs()
         assert langs == sorted(langs)
 
     def test_core_count(self):
         from language_config import build_target_langs
+
         langs = build_target_langs()
         assert len(langs) == 34
 
     def test_all_core_present(self):
         from language_config import build_target_langs
+
         langs = build_target_langs()
-        for code in ["ch", "en", "japan", "korean", "fr", "german", "ar", "fa", "ta", "ka"]:
+        for code in [
+            "ch",
+            "en",
+            "japan",
+            "korean",
+            "fr",
+            "german",
+            "ar",
+            "fa",
+            "ta",
+            "ka",
+        ]:
             assert code in langs, f"Missing: {code}"
 
 
@@ -264,11 +343,13 @@ class TestBuildTargetLangs:
 # TestBuildFontMap
 # ---------------------------------------------------------------------------
 
+
 class TestBuildFontMap:
     """Test font-file mapping generation."""
 
     def test_cjk_fonts(self):
         from language_config import build_font_map
+
         fm = build_font_map()
         assert fm["ch"] == "NotoSansCJKsc-Regular.otf"
         assert fm["chinese_cht"] == "NotoSansCJKtc-Regular.otf"
@@ -277,18 +358,21 @@ class TestBuildFontMap:
 
     def test_arabic_font(self):
         from language_config import build_font_map
+
         fm = build_font_map()
         assert fm["ar"] == "NotoSansArabic-Regular.ttf"
         assert fm["fa"] == "NotoSansArabic-Regular.ttf"
 
     def test_latin_default_font(self):
         from language_config import build_font_map
+
         fm = build_font_map()
         assert fm["en"] == "NotoSans-Regular.ttf"
         assert fm["fr"] == "NotoSans-Regular.ttf"
 
     def test_devanagari_font(self):
         from language_config import build_font_map
+
         fm = build_font_map()
         assert fm["hi"] == "NotoSansDevanagari-Regular.ttf"
 
@@ -297,11 +381,13 @@ class TestBuildFontMap:
 # TestBuildTesseractMap
 # ---------------------------------------------------------------------------
 
+
 class TestBuildTesseractMap:
     """Test PaddleOCR -> Tesseract code mapping."""
 
     def test_known_mappings(self):
         from language_config import build_tesseract_map
+
         tm = build_tesseract_map()
         assert tm["en"] == "eng"
         assert tm["fr"] == "fra"
@@ -309,12 +395,14 @@ class TestBuildTesseractMap:
 
     def test_cjk_tesseract(self):
         from language_config import build_tesseract_map
+
         tm = build_tesseract_map()
         assert tm["ch"] == "chi_sim"
         assert tm["japan"] == "jpn"
 
     def test_empty_codes_excluded(self):
         from language_config import build_tesseract_map
+
         tm = build_tesseract_map()
         for code, tess_code in tm.items():
             assert tess_code, f"Empty tesseract code for {code}"
@@ -324,11 +412,13 @@ class TestBuildTesseractMap:
 # TestBuildEasyocrMap
 # ---------------------------------------------------------------------------
 
+
 class TestBuildEasyocrMap:
     """Test PaddleOCR -> EasyOCR code mapping."""
 
     def test_known_mappings(self):
         from language_config import build_easyocr_map
+
         em = build_easyocr_map()
         assert em["en"] == "en"
         assert em["ch"] == "ch_sim"
@@ -336,12 +426,14 @@ class TestBuildEasyocrMap:
 
     def test_cjk_easyocr(self):
         from language_config import build_easyocr_map
+
         em = build_easyocr_map()
         assert em["japan"] == "ja"
         assert em["korean"] == "ko"
 
     def test_empty_codes_excluded(self):
         from language_config import build_easyocr_map
+
         em = build_easyocr_map()
         for code, eo_code in em.items():
             assert eo_code, f"Empty easyocr code for {code}"
@@ -351,16 +443,19 @@ class TestBuildEasyocrMap:
 # TestBuildRtlLanguages
 # ---------------------------------------------------------------------------
 
+
 class TestBuildRtlLanguages:
     """Test right-to-left language set."""
 
     def test_arabic_is_rtl(self):
         from language_config import build_rtl_languages
+
         rtl = build_rtl_languages()
         assert "ar" in rtl
 
     def test_persian_urdu_uyghur_are_rtl(self):
         from language_config import build_rtl_languages
+
         rtl = build_rtl_languages()
         assert "fa" in rtl
         assert "ur" in rtl
@@ -368,11 +463,13 @@ class TestBuildRtlLanguages:
 
     def test_english_not_rtl(self):
         from language_config import build_rtl_languages
+
         rtl = build_rtl_languages()
         assert "en" not in rtl
 
     def test_hindi_not_rtl(self):
         from language_config import build_rtl_languages
+
         rtl = build_rtl_languages()
         assert "hi" not in rtl
 
@@ -381,21 +478,25 @@ class TestBuildRtlLanguages:
 # TestGetPaddleCode
 # ---------------------------------------------------------------------------
 
+
 class TestGetPaddleCode:
     """Test FastText -> PaddleOCR code lookup with fallback."""
 
     def test_known_code(self):
         from language_config import get_paddle_code
+
         assert get_paddle_code("en") == "en"
         assert get_paddle_code("zh") == "ch"
         assert get_paddle_code("de") == "german"
 
     def test_unknown_code_falls_back_to_en(self):
         from language_config import get_paddle_code
+
         assert get_paddle_code("xx-nonexistent") == "en"
 
     def test_unknown_code_logs_warning(self, caplog):
         from language_config import get_paddle_code
+
         with caplog.at_level(logging.WARNING, logger="language_config"):
             get_paddle_code("zz-unknown")
         assert "Unmapped language" in caplog.text
@@ -403,11 +504,13 @@ class TestGetPaddleCode:
 
     def test_case_insensitive(self):
         from language_config import get_paddle_code
+
         assert get_paddle_code("EN") == "en"
         assert get_paddle_code("Zh") == "ch"
 
     def test_strips_whitespace(self):
         from language_config import get_paddle_code
+
         assert get_paddle_code("  en  ") == "en"
 
 
@@ -415,46 +518,88 @@ class TestGetPaddleCode:
 # TestGetTesseractCode
 # ---------------------------------------------------------------------------
 
+
 class TestGetTesseractCode:
     """Test PaddleOCR -> Tesseract code lookup with fallback."""
 
     def test_known_code(self):
         from language_config import get_tesseract_code
+
         assert get_tesseract_code("en") == "eng"
         assert get_tesseract_code("fr") == "fra"
 
     def test_unknown_falls_back_to_eng(self):
         from language_config import get_tesseract_code
+
         assert get_tesseract_code("nonexistent") == "eng"
 
     def test_cjk_codes(self):
         from language_config import get_tesseract_code
+
         assert get_tesseract_code("ch") == "chi_sim"
         assert get_tesseract_code("japan") == "jpn"
         assert get_tesseract_code("korean") == "kor"
+
+
+class TestQualifiedOcrRouting:
+    """The v1 engine split must reflect PaddleOCR 2.9.1 model coverage."""
+
+    def test_finnish_uses_paddle_latin_family(self):
+        from language_config import get_paddle_runtime_code
+
+        assert get_paddle_runtime_code("fi") == "latin"
+        assert get_paddle_runtime_code("fr") == "latin"
+
+    def test_non_paddle_scripts_are_explicit(self):
+        from language_config import is_paddle_language_supported
+
+        assert not is_paddle_language_supported("el")
+        assert not is_paddle_language_supported("kn")
+        assert not is_paddle_language_supported("th")
+        assert not is_paddle_language_supported("bn")
+        assert is_paddle_language_supported("en")
+        assert is_paddle_language_supported("  EN  ")
+        assert is_paddle_language_supported("zh")
+        assert not is_paddle_language_supported("und")
+        assert not is_paddle_language_supported("unknown")
+        assert not is_paddle_language_supported("zz-unknown")
+
+    def test_registry_codes_resolve_to_baked_model_families(self):
+        from language_config import get_paddle_model_family
+
+        assert get_paddle_model_family("fr") == "latin"
+        assert get_paddle_model_family("ru") == "cyrillic"
+        assert get_paddle_model_family("mr") == "devanagari"
+        assert get_paddle_model_family("japan") == "japan"
+        assert get_paddle_model_family("el") is None
 
 
 # ---------------------------------------------------------------------------
 # TestGetFont
 # ---------------------------------------------------------------------------
 
+
 class TestGetFont:
     """Test font file lookup with fallback."""
 
     def test_cjk_font(self):
         from language_config import get_font
+
         assert get_font("ch") == "NotoSansCJKsc-Regular.otf"
 
     def test_arabic_font(self):
         from language_config import get_font
+
         assert get_font("ar") == "NotoSansArabic-Regular.ttf"
 
     def test_latin_font(self):
         from language_config import get_font
+
         assert get_font("en") == "NotoSans-Regular.ttf"
 
     def test_fallback_font(self):
         from language_config import get_font
+
         assert get_font("nonexistent") == "NotoSans-Regular.ttf"
 
 
@@ -462,19 +607,23 @@ class TestGetFont:
 # TestIsRtl
 # ---------------------------------------------------------------------------
 
+
 class TestIsRtl:
     """Test RTL detection."""
 
     def test_arabic_is_rtl(self):
         from language_config import is_rtl
+
         assert is_rtl("ar") is True
 
     def test_persian_is_rtl(self):
         from language_config import is_rtl
+
         assert is_rtl("fa") is True
 
     def test_english_not_rtl(self):
         from language_config import is_rtl
+
         assert is_rtl("en") is False
 
 
@@ -482,15 +631,18 @@ class TestIsRtl:
 # TestGetSupportedLanguageCount
 # ---------------------------------------------------------------------------
 
+
 class TestGetSupportedLanguageCount:
     """Test enabled language count."""
 
     def test_core_count(self):
         from language_config import get_supported_language_count
+
         assert get_supported_language_count() == 34
 
     def test_all_tiers_count(self):
         import language_config
+
         saved = language_config.OCR_LANGUAGE_TIERS
         try:
             language_config.OCR_LANGUAGE_TIERS = ["core", "extended"]
@@ -503,23 +655,27 @@ class TestGetSupportedLanguageCount:
 # TestGetTierSummary
 # ---------------------------------------------------------------------------
 
+
 class TestGetTierSummary:
     """Test tier summary counts."""
 
     def test_summary_has_both_tiers(self):
         from language_config import get_tier_summary
+
         summary = get_tier_summary()
         assert "core" in summary
         assert "extended" in summary
 
     def test_summary_counts(self):
         from language_config import get_tier_summary
+
         summary = get_tier_summary()
         assert summary["core"] == 34
         assert summary["extended"] == 11
 
     def test_summary_total(self):
         from language_config import get_tier_summary
+
         summary = get_tier_summary()
         assert sum(summary.values()) == 45
 
@@ -528,22 +684,50 @@ class TestGetTierSummary:
 # TestBackwardCompatibility
 # ---------------------------------------------------------------------------
 
+
 class TestBackwardCompatibility:
     """Ensure the module-level constants match what existing consumers expect."""
 
     def test_lang_mapping_matches_old_constants(self):
         """LANG_MAPPING must contain every entry from the old constants.py."""
         from language_config import LANG_MAPPING
+
         old_mapping = {
-            'zh': 'ch', 'zh-cn': 'ch', 'zh-tw': 'chinese_cht',
-            'ja': 'japan', 'ko': 'korean', 'vi': 'vi',
-            'en': 'en', 'fr': 'fr', 'de': 'german', 'es': 'es', 'it': 'it',
-            'pt': 'pt', 'ru': 'ru', 'ar': 'ar', 'hi': 'hi',
-            'uk': 'uk', 'be': 'be', 'bg': 'bg', 'cs': 'cs', 'pl': 'pl',
-            'tr': 'tr', 'nl': 'nl', 'sv': 'sv', 'da': 'da',
-            'fi': 'fi', 'el': 'el', 'hu': 'hu', 'ro': 'ro',
-            'fa': 'fa', 'ur': 'ur', 'ug': 'ug',
-            'te': 'te', 'ta': 'ta', 'kn': 'kn', 'ka': 'ka',
+            "zh": "ch",
+            "zh-cn": "ch",
+            "zh-tw": "chinese_cht",
+            "ja": "japan",
+            "ko": "korean",
+            "vi": "vi",
+            "en": "en",
+            "fr": "fr",
+            "de": "german",
+            "es": "es",
+            "it": "it",
+            "pt": "pt",
+            "ru": "ru",
+            "ar": "ar",
+            "hi": "hi",
+            "uk": "uk",
+            "be": "be",
+            "bg": "bg",
+            "cs": "cs",
+            "pl": "pl",
+            "tr": "tr",
+            "nl": "nl",
+            "sv": "sv",
+            "da": "da",
+            "fi": "fi",
+            "el": "el",
+            "hu": "hu",
+            "ro": "ro",
+            "fa": "fa",
+            "ur": "ur",
+            "ug": "ug",
+            "te": "te",
+            "ta": "ta",
+            "kn": "kn",
+            "ka": "ka",
         }
         for ft_code, paddle_code in old_mapping.items():
             assert LANG_MAPPING.get(ft_code) == paddle_code, (
@@ -554,26 +738,59 @@ class TestBackwardCompatibility:
     def test_target_langs_contains_all_34(self):
         """TARGET_LANGS must contain all 34 core models."""
         from language_config import TARGET_LANGS
+
         old_target = [
-            'ch', 'chinese_cht', 'japan', 'korean', 'vi',
-            'en', 'fr', 'german', 'es', 'it', 'pt', 'ru', 'ar', 'hi',
-            'uk', 'be', 'bg', 'cs', 'pl', 'tr', 'nl', 'sv', 'da',
-            'fi', 'el', 'hu', 'ro',
-            'fa', 'ur', 'ug', 'te', 'ta', 'kn', 'ka',
+            "ch",
+            "chinese_cht",
+            "japan",
+            "korean",
+            "vi",
+            "en",
+            "fr",
+            "german",
+            "es",
+            "it",
+            "pt",
+            "ru",
+            "ar",
+            "hi",
+            "uk",
+            "be",
+            "bg",
+            "cs",
+            "pl",
+            "tr",
+            "nl",
+            "sv",
+            "da",
+            "fi",
+            "el",
+            "hu",
+            "ro",
+            "fa",
+            "ur",
+            "ug",
+            "te",
+            "ta",
+            "kn",
+            "ka",
         ]
         for code in old_target:
             assert code in TARGET_LANGS, f"TARGET_LANGS missing: {code}"
 
     def test_target_langs_count(self):
         from language_config import TARGET_LANGS
+
         assert len(TARGET_LANGS) == 34
 
     def test_lang_mapping_is_dict(self):
         from language_config import LANG_MAPPING
+
         assert isinstance(LANG_MAPPING, dict)
 
     def test_target_langs_is_list(self):
         from language_config import TARGET_LANGS
+
         assert isinstance(TARGET_LANGS, list)
 
     def test_module_level_maps_are_populated(self):
@@ -585,6 +802,7 @@ class TestBackwardCompatibility:
             TARGET_LANGS,
             TESSERACT_MAP,
         )
+
         assert len(LANG_MAPPING) > 0
         assert len(TARGET_LANGS) > 0
         assert len(FONT_MAP) > 0
@@ -597,28 +815,49 @@ class TestBackwardCompatibility:
 # TestScriptMetadata
 # ---------------------------------------------------------------------------
 
+
 class TestScriptMetadata:
     """Verify script family assignments are correct."""
 
     def test_cjk_scripts(self):
         from language_config import LANGUAGE_REGISTRY
+
         for code in ["ch", "chinese_cht", "japan", "korean"]:
             assert LANGUAGE_REGISTRY[code].script == "cjk"
 
     def test_cyrillic_scripts(self):
         from language_config import LANGUAGE_REGISTRY
+
         for code in ["ru", "uk", "be", "bg"]:
             assert LANGUAGE_REGISTRY[code].script == "cyrillic"
 
     def test_arabic_scripts(self):
         from language_config import LANGUAGE_REGISTRY
+
         for code in ["ar", "fa", "ur", "ug"]:
             assert LANGUAGE_REGISTRY[code].script == "arabic"
 
     def test_latin_scripts(self):
         from language_config import LANGUAGE_REGISTRY
-        latin_codes = ["en", "fr", "german", "es", "it", "pt", "nl",
-                        "sv", "da", "fi", "ro", "pl", "cs", "hu", "tr", "vi"]
+
+        latin_codes = [
+            "en",
+            "fr",
+            "german",
+            "es",
+            "it",
+            "pt",
+            "nl",
+            "sv",
+            "da",
+            "fi",
+            "ro",
+            "pl",
+            "cs",
+            "hu",
+            "tr",
+            "vi",
+        ]
         for code in latin_codes:
             assert LANGUAGE_REGISTRY[code].script == "latin", (
                 f"{code} should be latin, got {LANGUAGE_REGISTRY[code].script}"
@@ -626,5 +865,6 @@ class TestScriptMetadata:
 
     def test_extended_latin_scripts(self):
         from language_config import LANGUAGE_REGISTRY
+
         for code in ["hr", "sk", "no", "lt", "lv", "et", "rs_latin"]:
             assert LANGUAGE_REGISTRY[code].script == "latin"

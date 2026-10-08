@@ -1,6 +1,6 @@
 {{- if .Values.federation.enabled }}
 # =============================================================================
-# Federation Cluster Registry (item C2)
+# Federation Cluster Registry (Plan C Phase 1, item C2)
 #
 # Authoritative inventory of peer RabbitMQ clusters consumed by the
 # federation reconciler (see federation-reconciler-deployment.yaml). The

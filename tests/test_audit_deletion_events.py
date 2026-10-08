@@ -15,6 +15,7 @@ import importlib
 import os
 import sys
 import types
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from unittest.mock import MagicMock
@@ -54,6 +55,11 @@ def _build_mock_django():
 
     base_mod.BaseCommand = FakeBaseCommand
 
+    class FakeCommandError(Exception):
+        pass
+
+    base_mod.CommandError = FakeCommandError
+
     # django.conf -- needed by purge_temp_files
     conf_mod = types.ModuleType("django.conf")
 
@@ -61,6 +67,22 @@ def _build_mock_django():
         NFS_ROOT = "/tmp/test-nfs"
 
     conf_mod.settings = _FakeSettings()
+
+    transaction_mod = types.ModuleType("django.db.transaction")
+
+    def atomic(func=None):
+        if callable(func):
+
+            def wrapped(*args, **kwargs):
+                with nullcontext():
+                    return func(*args, **kwargs)
+
+            return wrapped
+        return nullcontext()
+
+    transaction_mod.atomic = atomic
+    db_mod = types.ModuleType("django.db")
+    db_mod.transaction = transaction_mod
 
     # django module stubs
     django_mod = types.ModuleType("django")
@@ -71,6 +93,8 @@ def _build_mock_django():
     return {
         "django": django_mod,
         "django.conf": conf_mod,
+        "django.db": db_mod,
+        "django.db.transaction": transaction_mod,
         "django.utils": django_utils,
         "django.utils.timezone": tz_mod,
         "django.core": django_core,
@@ -102,8 +126,17 @@ class _FakeQuerySet:
         self._items.clear()
         return (n, {})
 
+    def update(self, **kwargs):
+        for item in self._items:
+            for key, value in kwargs.items():
+                setattr(item, key, value)
+        return len(self._items)
+
     def first(self):
         return self._items[0] if self._items else None
+
+    def select_for_update(self):
+        return self
 
     def __getitem__(self, key):
         return self._items[key]
@@ -133,6 +166,10 @@ def _build_mock_job_models():
 
             @classmethod
             def filter(cls, **kwargs):
+                return _FakeQuerySet(cls._store)
+
+            @classmethod
+            def select_for_update(cls):
                 return _FakeQuerySet(cls._store)
 
             @classmethod
@@ -188,7 +225,28 @@ def _build_mock_job_models():
     models_mod.CustodyEvent = FakeCustodyEvent
     models_mod.PiiEntity = FakePiiEntity
 
+    class FakeTaskDispatchOutbox:
+        class Status:
+            PENDING = "pending"
+            FAILED = "failed"
+            DEAD = "dead"
+
+        class objects:
+            @classmethod
+            def filter(cls, **kwargs):
+                return _FakeQuerySet([])
+
+    class FakePresignedTaskCapability:
+        class objects:
+            @classmethod
+            def filter(cls, **kwargs):
+                return _FakeQuerySet([])
+
+    models_mod.TaskDispatchOutbox = FakeTaskDispatchOutbox
+    models_mod.PresignedTaskCapability = FakePresignedTaskCapability
+
     jobs_mod = types.ModuleType("jobs")
+    jobs_mod.__path__ = []
 
     return {
         "jobs": jobs_mod,
@@ -200,6 +258,7 @@ def _build_mock_job_models():
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _import_command(monkeypatch, command_name, django_mocks, model_mocks):
     """Import a management command module with mocks in place."""
     all_mocks = {**django_mocks, **model_mocks}
@@ -209,6 +268,24 @@ def _import_command(monkeypatch, command_name, django_mocks, model_mocks):
     litigation_mod.check_litigation_hold = MagicMock(return_value=False)
     litigation_mod.is_litigation_hold_active = MagicMock(return_value=False)
     all_mocks["jobs.litigation_hold"] = litigation_mod
+
+    # cleanup_old_jobs resolves the backend captured at ingest.  Keep the
+    # command's import boundary honest without importing the real Django task
+    # module into this deliberately isolated fake-Django test.
+    tasks_mod = types.ModuleType("jobs.tasks")
+
+    class _FakeNfsBackend:
+        backend_name = "nfs"
+
+    tasks_mod._get_backend_for_job = lambda _job: _FakeNfsBackend()
+    tasks_mod._record_control_plane_custody_event = lambda **kwargs: all_mocks[
+        "jobs.models"
+    ].CustodyEvent.objects.create(job=None, **kwargs)
+    all_mocks["jobs.tasks"] = tasks_mod
+
+    rls_mod = types.ModuleType("jobs.rls")
+    rls_mod.control_plane_rls_command = lambda func: func
+    all_mocks["jobs.rls"] = rls_mod
 
     saved = {}
     for name, mod in all_mocks.items():
@@ -230,7 +307,11 @@ def _import_command(monkeypatch, command_name, django_mocks, model_mocks):
     )
     spec = importlib.util.spec_from_file_location(command_name, cmd_path)
     cmd_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cmd_module)
+    try:
+        spec.loader.exec_module(cmd_module)
+    except Exception:
+        _restore_modules(saved)
+        raise
 
     return cmd_module, all_mocks, saved
 
@@ -335,8 +416,11 @@ class TestPurgeTempFilesCustodyEvent:
         cmd.handle(dry_run=False)
 
         # Verify custody event was created
-        assert len(FakeCustodyEvent._created) == 1
-        event = FakeCustodyEvent._created[0]
+        assert [event["event_type"] for event in FakeCustodyEvent._created] == [
+            "temp_files_deletion_started",
+            "temp_files_purged",
+        ]
+        event = FakeCustodyEvent._created[-1]
         assert event["event_type"] == "temp_files_purged"
         assert event["data"]["action"] == "temp_purge"
         assert event["data"]["reason"] == "orphaned_directory"
@@ -365,7 +449,13 @@ class TestPurgeTempFilesCustodyEvent:
         cmd.stdout = StringIO()
         cmd.handle(dry_run=False)
 
-        assert len(FakeCustodyEvent._created) == 2
+        assert len(FakeCustodyEvent._created) == 4
+        assert [event["event_type"] for event in FakeCustodyEvent._created] == [
+            "temp_files_deletion_started",
+            "temp_files_purged",
+            "temp_files_deletion_started",
+            "temp_files_purged",
+        ]
 
     def test_purge_event_data_payload_structure(self, purge_module, tmp_path):
         """Custody event data must contain all required fields."""
@@ -388,8 +478,8 @@ class TestPurgeTempFilesCustodyEvent:
         cmd.stdout = StringIO()
         cmd.handle(dry_run=False)
 
-        assert len(FakeCustodyEvent._created) == 1
-        data = FakeCustodyEvent._created[0]["data"]
+        assert len(FakeCustodyEvent._created) == 2
+        data = FakeCustodyEvent._created[-1]["data"]
 
         required_keys = {"action", "directory", "size_bytes", "reason", "operator"}
         assert required_keys.issubset(set(data.keys()))
@@ -419,8 +509,10 @@ class TestPurgeTempFilesCustodyEvent:
         # Should not raise
         cmd.handle(dry_run=False)
 
-        # No custody event because there is no Job to anchor to
-        assert len(FakeCustodyEvent._created) == 0
+        # Control-plane purge events are standalone and remain auditable even
+        # when there is no OCR Job FK to anchor them to.
+        assert len(FakeCustodyEvent._created) == 2
+        assert all(event["job"] is None for event in FakeCustodyEvent._created)
 
 
 # ===========================================================================
@@ -507,33 +599,38 @@ class TestCleanupOldJobsOperator:
         cmd._cleanup_jobs(days=1, dry_run=False)
 
         assert len(FakeCustodyEvent._created) >= 1
-        event = FakeCustodyEvent._created[0]
+        event = next(
+            item
+            for item in FakeCustodyEvent._created
+            if item["event_type"] == "data_deleted" and "operator" in item["data"]
+        )
         assert event["event_type"] == "data_deleted"
         assert "operator" in event["data"]
         assert isinstance(event["data"]["operator"], str)
         assert len(event["data"]["operator"]) > 0
 
-    def test_pii_cleanup_includes_operator(self, cleanup_module, monkeypatch):
-        """pii_deleted custody event should contain 'operator' field."""
+    def test_pii_cleanup_uses_shared_operator_audited_saga(
+        self, cleanup_module, monkeypatch
+    ):
+        """Retention delegates to the fenced purge primitive with operator audit."""
         mod = cleanup_module["cmd_module"]
-        FakeJob = cleanup_module["FakeJob"]
-        FakePiiEntity = cleanup_module["FakePiiEntity"]
-        FakeCustodyEvent = cleanup_module["FakeCustodyEvent"]
-
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
+        import inspect
+        from pathlib import Path
 
-        FakeJob.objects._store = [MagicMock()]
-        FakePiiEntity.objects._store = [MagicMock()]
-
-        cmd = mod.Command()
-        cmd.stdout = StringIO()
-        cmd._cleanup_pii_entities(days=90, dry_run=False)
-
-        assert len(FakeCustodyEvent._created) >= 1
-        event = FakeCustodyEvent._created[0]
-        assert event["event_type"] == "pii_deleted"
-        assert "operator" in event["data"]
-        assert isinstance(event["data"]["operator"], str)
+        retention_source = inspect.getsource(mod.Command._cleanup_pii_entities)
+        purge_source = (
+            Path(__file__).resolve().parents[1]
+            / "coordinator"
+            / "jobs"
+            / "management"
+            / "commands"
+            / "purge_pii.py"
+        ).read_text(encoding="utf-8")
+        assert "erase_pii_for_job" in retention_source
+        assert '"operator": getpass.getuser()' in purge_source
+        assert 'event_type="pii_deletion_started"' in purge_source
+        assert 'event_type="pii_purged"' in purge_source
 
     def test_operator_matches_current_user(self, cleanup_module, monkeypatch):
         """Operator field should match getpass.getuser() output."""
@@ -554,7 +651,9 @@ class TestCleanupOldJobsOperator:
         cmd.stdout = StringIO()
         cmd._cleanup_jobs(days=1, dry_run=False)
 
-        event = FakeCustodyEvent._created[0]
+        event = next(
+            item for item in FakeCustodyEvent._created if "operator" in item["data"]
+        )
         assert event["data"]["operator"] == getpass.getuser()
 
     def test_dry_run_no_operator_event(self, cleanup_module, monkeypatch):

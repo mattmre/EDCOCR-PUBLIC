@@ -1,5 +1,6 @@
 """Tests for ``ocr_local.translation.policy`` and routing-policy
 interactions in ``ocr_local.translation.router`` -- 22 tests."""
+
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -13,6 +14,7 @@ from ocr_local.translation.models import EngineCapability, TranslationRequest
 from ocr_local.translation.policy import (
     PolicyDenied,
     TenantPolicy,
+    assert_certified_delivery_allowed,
     compute_policy_hash,
     load_tenant_policy,
 )
@@ -45,7 +47,9 @@ def _make_fake_engine(
         quality_class=quality,
         latency_class="standard",
         license=license_str,
-        provider_retention_class="local_only" if is_local else "zero_retention_with_baa",
+        provider_retention_class="local_only"
+        if is_local
+        else "zero_retention_with_baa",
         deployment_envs=["local"] if is_local else ["cloud"],
     )
 
@@ -83,9 +87,9 @@ def _registered(*engine_classes):
 def test_load_tenant_policy_returns_default():
     p = load_tenant_policy("tenant-a")
     assert p.tenant_id == "tenant-a"
-    # Defaults are permissive
+    # LT-05: NC-licensed engines default refused; local-only still off by default
     assert p.require_local_only is False
-    assert p.allow_nllb_commercial is True
+    assert p.allow_nllb_commercial is False
     assert p.allowed_engine_ids == []
 
 
@@ -128,7 +132,9 @@ def test_privilege_flag_blocks_cloud():
 
 
 def test_privilege_block_emits_custody_before_raise():
-    cloud = _make_fake_engine(engine_id="fake_cloud_pol2", is_local=False, is_cloud=True)
+    cloud = _make_fake_engine(
+        engine_id="fake_cloud_pol2", is_local=False, is_cloud=True
+    )
     with _registered(cloud):
         chain = _mock_chain()
         # Capture call ordering: chain.log_event must be called BEFORE the
@@ -156,7 +162,9 @@ def test_privilege_block_emits_custody_before_raise():
 
 
 def test_cloud_blocked_by_tenant_policy():
-    cloud = _make_fake_engine(engine_id="fake_cloud_pol3", is_local=False, is_cloud=True)
+    cloud = _make_fake_engine(
+        engine_id="fake_cloud_pol3", is_local=False, is_cloud=True
+    )
     with _registered(cloud):
         chain = _mock_chain()
         req = TranslationRequest(src_lang="en", tgt_lang="ja", tenant_id="tenant-a")
@@ -167,7 +175,9 @@ def test_cloud_blocked_by_tenant_policy():
 
 
 def test_tenant_policy_block_emits_custody():
-    cloud = _make_fake_engine(engine_id="fake_cloud_pol4", is_local=False, is_cloud=True)
+    cloud = _make_fake_engine(
+        engine_id="fake_cloud_pol4", is_local=False, is_cloud=True
+    )
     with _registered(cloud):
         chain = _mock_chain()
         req = TranslationRequest(src_lang="en", tgt_lang="ja", tenant_id="tenant-a")
@@ -213,9 +223,7 @@ def test_nllb_blocked_for_commercial():
     with _registered(nllb):
         chain = _mock_chain()
         req = TranslationRequest(src_lang="en", tgt_lang="ja", tenant_id="tenant-a")
-        tenant = TenantPolicy(
-            tenant_id="tenant-a", allow_nllb_commercial=False
-        )
+        tenant = TenantPolicy(tenant_id="tenant-a", allow_nllb_commercial=False)
         with pytest.raises(PolicyDenied) as exc_info:
             select_engine(req, tenant, chain)
         assert exc_info.value.reason_code == ReasonCode.UNSUPPORTED_LANGUAGE
@@ -243,8 +251,12 @@ def test_allowed_engine_ids_filters():
 
 
 def test_blocked_engine_ids_excludes():
-    a = _make_fake_engine(engine_id="fake_a2", is_local=True, is_cloud=False, quality="legal")
-    b = _make_fake_engine(engine_id="fake_b2", is_local=True, is_cloud=False, quality="standard")
+    a = _make_fake_engine(
+        engine_id="fake_a2", is_local=True, is_cloud=False, quality="legal"
+    )
+    b = _make_fake_engine(
+        engine_id="fake_b2", is_local=True, is_cloud=False, quality="standard"
+    )
     with _registered(a, b):
         chain = _mock_chain()
         req = TranslationRequest(src_lang="en", tgt_lang="ja", tenant_id="tenant-a")
@@ -270,8 +282,12 @@ def test_gemini_ai_studio_blocked_in_production(monkeypatch):
 
 
 def test_local_engine_preferred_over_cloud():
-    local = _make_fake_engine(engine_id="fake_local_pref", is_local=True, is_cloud=False)
-    cloud = _make_fake_engine(engine_id="fake_cloud_pref", is_local=False, is_cloud=True)
+    local = _make_fake_engine(
+        engine_id="fake_local_pref", is_local=True, is_cloud=False
+    )
+    cloud = _make_fake_engine(
+        engine_id="fake_cloud_pref", is_local=False, is_cloud=True
+    )
     with _registered(local, cloud):
         chain = _mock_chain()
         req = TranslationRequest(src_lang="en", tgt_lang="ja", tenant_id="tenant-a")
@@ -327,6 +343,68 @@ def test_residency_not_blocking_without_cloud():
         )
         engine = select_engine(req, tenant, chain)
         assert engine.capability.is_local is True
+
+
+def test_residency_blocks_cloud_even_when_cloud_allowed():
+    """S2-04: residency_region set rejects cloud with RESIDENCY_VIOLATION."""
+    cloud = _make_fake_engine(
+        engine_id="fake_cloud_res_block", is_local=False, is_cloud=True
+    )
+    with _registered(cloud):
+        chain = _mock_chain()
+        req = TranslationRequest(src_lang="en", tgt_lang="ja", tenant_id="tenant-eu")
+        tenant = TenantPolicy(
+            tenant_id="tenant-eu",
+            allow_cloud_translation=True,
+            residency_region="eu-west-1",
+        )
+        with pytest.raises(PolicyDenied) as exc_info:
+            select_engine(req, tenant, chain)
+        assert exc_info.value.reason_code == ReasonCode.RESIDENCY_VIOLATION
+        assert chain.log_event.called
+        args = chain.log_event.call_args.args
+        assert args[0] == "TRANSLATION_REJECTED"
+        assert args[1]["reason_code"] == "RESIDENCY_VIOLATION"
+
+
+def test_residency_prefers_local_over_cloud():
+    """S2-04: with residency pin + local available, local wins (cloud filtered)."""
+    local = _make_fake_engine(
+        engine_id="fake_local_res2", is_local=True, is_cloud=False
+    )
+    cloud = _make_fake_engine(
+        engine_id="fake_cloud_res2", is_local=False, is_cloud=True
+    )
+    with _registered(local, cloud):
+        chain = _mock_chain()
+        req = TranslationRequest(src_lang="en", tgt_lang="ja", tenant_id="tenant-eu")
+        tenant = TenantPolicy(
+            tenant_id="tenant-eu",
+            allow_cloud_translation=True,
+            residency_region="eu",
+        )
+        engine = select_engine(req, tenant, chain)
+        assert engine.capability.is_local is True
+        assert engine.capability.id == "fake_local_res2"
+
+
+def test_assert_certified_delivery_blocks_uncertified():
+    """S2-04: require_certified=True blocks delivery when certified=False."""
+    policy = TenantPolicy(tenant_id="t-cert", require_certified=True)
+    with pytest.raises(PolicyDenied) as exc_info:
+        assert_certified_delivery_allowed(policy, certified=False)
+    assert exc_info.value.reason_code == ReasonCode.TENANT_POLICY
+    assert "require_certified" in str(exc_info.value)
+
+
+def test_assert_certified_delivery_allows_when_certified():
+    policy = TenantPolicy(tenant_id="t-cert", require_certified=True)
+    assert_certified_delivery_allowed(policy, certified=True)  # no raise
+
+
+def test_assert_certified_delivery_noop_when_flag_off():
+    policy = TenantPolicy(tenant_id="t-cert", require_certified=False)
+    assert_certified_delivery_allowed(policy, certified=False)  # no raise
 
 
 def test_all_reason_codes_are_strings():

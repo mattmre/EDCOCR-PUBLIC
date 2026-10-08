@@ -516,18 +516,19 @@ class TestEvaluateTenant:
         self.monitor = SLAMonitor(window_hours=1)
 
     def test_all_compliant_no_data(self):
-        """No data defaults to healthy assumptions."""
+        """S2-11: no data must not greenwash (unknown = non-compliant)."""
         report = self.monitor.evaluate_tenant("t1")
-        assert report.overall_compliant is True
-        assert report.violation_count == 0
-        assert report.compliance_percentage == 100.0
+        assert report.overall_compliant is False
+        assert report.violation_count >= 1
+        assert report.compliance_percentage < 100.0
 
     def test_all_compliant_with_data(self):
-        # Record healthy data that meets all default SLOs
+        # Record healthy data that meets all default SLOs (including recovery)
         for _ in range(20):
             self.monitor.record_request("t1", success=True, latency_seconds=5.0)
             self.monitor.record_success("t1")
         self.monitor.record_throughput("t1", 15.0)
+        self.monitor.record_recovery("t1", 10.0)
         report = self.monitor.evaluate_tenant("t1")
         assert report.overall_compliant is True
         assert report.compliance_percentage == 100.0
@@ -632,7 +633,8 @@ class TestEvaluateSystem:
     def test_system_report_no_data(self):
         report = self.monitor.evaluate_system()
         assert report.tenant_id == "system"
-        assert report.overall_compliant is True
+        # S2-11: no-data system report is non-compliant (not greenwash)
+        assert report.overall_compliant is False
 
     def test_system_aggregates_all_tenants(self):
         self.monitor.record_request("t1", success=True, latency_seconds=1.0)
@@ -650,9 +652,7 @@ class TestEvaluateSystem:
 
     def test_system_report_with_violations(self):
         for _ in range(100):
-            self.monitor.record_request(
-                "t1", success=False, latency_seconds=60.0
-            )
+            self.monitor.record_request("t1", success=False, latency_seconds=60.0)
         report = self.monitor.evaluate_system()
         assert report.overall_compliant is False
 
@@ -730,9 +730,7 @@ class TestWriteReportJson:
                 report, tmpdir, filename="../../evil.json"
             )
             # Should not escape tmpdir
-            assert os.path.dirname(os.path.abspath(path)) == os.path.abspath(
-                tmpdir
-            )
+            assert os.path.dirname(os.path.abspath(path)) == os.path.abspath(tmpdir)
 
     def test_custom_filename(self):
         report = self.monitor.evaluate_tenant("t1")

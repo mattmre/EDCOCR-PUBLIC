@@ -1,6 +1,6 @@
 {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
 # =============================================================================
-# Federation mTLS NetworkPolicy (item C8)
+# Federation mTLS NetworkPolicy (Plan C Phase 1, item C8)
 #
 # Restricts ingress on federation-internal ports to peer pods bearing the
 # `federation.mtls.peerLabel` label. Peer clusters present mTLS client
@@ -32,6 +32,7 @@ spec:
   policyTypes:
     - Ingress
   ingress:
+    # Cross-cluster federation peers (AMQPS / epmd / dist / custody).
     - from:
         - podSelector:
             matchLabels:
@@ -48,4 +49,31 @@ spec:
           port: 25672
         - protocol: TCP
           port: {{ .Values.federation.mtls.custodyPort | default 8443 }}
+    # R3-RC-06: local in-namespace clients (GPU/CPU workers, beat, flower)
+    # still need the chart-selected broker listener and management API.
+    # Without this rule, enabling federation.mtls isolates RabbitMQ and strands
+    # unlabeled local consumers — work parks forever with zero consumers on
+    # reachable queues.
+    - from:
+        - podSelector: {}
+      ports:
+        {{- if .Values.tls.enabled }}
+        - protocol: TCP
+          port: 5671
+        {{- else }}
+        - protocol: TCP
+          port: 5672
+        {{- end }}
+        - protocol: TCP
+          port: {{ ternary 15671 15672 .Values.tls.enabled }}
+    # KEDA runs in a separate namespace and polls the RabbitMQ management API
+    # for ready plus unacknowledged queue messages. Limit this exception to
+    # that operator namespace and the management port.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.keda.operatorNamespace | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ ternary 15671 15672 .Values.tls.enabled }}
 {{- end }}

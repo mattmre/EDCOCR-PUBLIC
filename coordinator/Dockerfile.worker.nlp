@@ -2,11 +2,19 @@
 # All OCR models are baked into the image at build time for
 # deployment in air-gapped (no internet) environments.
 
-FROM python:3.11-slim-bookworm AS base
+FROM python:3.12-slim-bookworm AS base
+ARG SOURCE_REVISION
+ARG SOURCE_TREE_SHA256
+RUN if ! printf '%s' "${SOURCE_REVISION}" | grep -Eq '^[0-9a-f]{40,64}$' || \
+       ! printf '%s' "${SOURCE_TREE_SHA256}" | grep -Eq '^[0-9a-f]{64}$'; then \
+      printf '%s\n' 'ERROR: use scripts/with_runtime_source.sh worker to build this image' >&2; exit 1; fi
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      io.ocr_local.runtime-source-sha256="${SOURCE_TREE_SHA256}" \
+      io.ocr_local.runtime-profile="worker"
 
 # System dependencies for OCR
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tesseract-ocr \
+    tesseract-ocr-all \
     poppler-utils \
     ghostscript \
     fonts-noto-core \
@@ -15,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     libzbar0 \
     nfs-common \
+    tini \
     curl \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -55,14 +64,25 @@ RUN curl -fSL "https://github.com/notofonts/noto-cjk/raw/f8d157532fbfaeda587e826
 
 WORKDIR /app
 
+# PaddleOCR 2.9.1 resolves caches from $HOME/.paddleocr, not
+# PADDLEOCR_HOME. Use the final non-root user's home during model preload.
+ENV HOME=/home/ocr
+ENV PADDLE_HOME=/home/ocr/.paddle
+ENV PADDLEOCR_HOME=/home/ocr/.paddleocr
+RUN mkdir -p /home/ocr/.paddle /home/ocr/.paddleocr
+
 # Install requirements
 COPY coordinator/requirements.txt /app/coordinator-requirements.txt
 COPY requirements.txt /app/ocr-requirements.txt
+RUN python3 -m pip install --no-cache-dir --upgrade "pip==26.2.1"
 RUN pip install --no-cache-dir -r /app/coordinator-requirements.txt -r /app/ocr-requirements.txt
 
-# Pre-bake PaddleOCR models for air-gapped deployment (34 languages)
-# --cpu-only forces use_gpu=False + use_onnx=True to prevent CUDA probe
-# segfault (exit 139) in CPU-only build environments.
+COPY scripts/harden_imgaug_runtime.py /tmp/harden_imgaug_runtime.py
+RUN python3 /tmp/harden_imgaug_runtime.py && rm /tmp/harden_imgaug_runtime.py
+
+# Pre-bake the 32 PaddleOCR 2.9.1-native core language entries.
+# --cpu-only forces use_gpu=False with CUDA visibility disabled. Preload keeps
+# native Paddle model format; freshly downloaded caches are not ONNX models.
 # SKIP_MODEL_PRELOAD=1 skips download entirely (escape hatch).
 COPY download_models.py /tmp/download_models.py
 ARG SKIP_MODEL_PRELOAD=1
@@ -81,11 +101,9 @@ COPY . /app/
 
 ENV PYTHONPATH=/app:/app/coordinator
 ENV DJANGO_SETTINGS_MODULE=coordinator.settings
-ENV PADDLE_HOME=/app/.paddle
-ENV PADDLEOCR_HOME=/app/.paddleocr
 
 # ---------------------------------------------------------------------------
-# Remove build-essential from runtime image ( / INFRA-002)
+# Remove build-essential from runtime image (maintenance review / INFRA-002)
 # gcc/g++/make are only needed for compiling C extensions during pip install;
 # the compiled .so files remain but the toolchain is stripped to reduce
 # image size (~200MB) and CVE surface area.
@@ -94,30 +112,28 @@ RUN apt-get update && apt-get purge -y --auto-remove build-essential && \
     rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# Relocate model caches from /root/ to /app/ for non-root access
-# ---------------------------------------------------------------------------
-RUN mkdir -p /app/.paddle /app/.paddleocr && \
-    if [ -d /root/.paddleocr ]; then cp -a /root/.paddleocr/* /app/.paddleocr/ 2>/dev/null || true; fi && \
-    if [ -d /root/.paddle ]; then cp -a /root/.paddle/* /app/.paddle/ 2>/dev/null || true; fi
-
-# ---------------------------------------------------------------------------
 # Non-root runtime user (SEC-003)
 # ---------------------------------------------------------------------------
 RUN groupadd -r -g 1000 ocr && \
     useradd -r -u 1000 -g ocr -d /home/ocr -s /sbin/nologin ocr && \
     mkdir -p /home/ocr && \
-    chown -R ocr:ocr /app/.paddle /app/.paddleocr /home/ocr
+    chown -R ocr:ocr /home/ocr
+
+
+# Pre-bake spaCy NER model (en_core_web_sm) for air-gapped entity extraction
+RUN python3 -m spacy download en_core_web_sm &&     python3 -c "import spacy; spacy.load('en_core_web_sm'); print('SPACY_BAKE_OK')"
 
 USER ocr
 
 # ---------------------------------------------------------------------------
-# Docker HEALTHCHECK — Celery worker inspect ping
+# Docker HEALTHCHECK — Celery worker inspect ping (maintenance review)
 # start-period=120s gives time for model loading.
 # ---------------------------------------------------------------------------
 HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
-    CMD celery -A coordinator inspect ping --timeout=10 -d celery@$(hostname) || exit 1
+    CMD python3 /app/coordinator/worker_healthcheck.py
 
 # Default: NLP worker listening on nlp_general and cpu_general queues
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
 CMD ["celery", "-A", "coordinator", "worker", \
      "-Q", "nlp_general,cpu_general", \
      "-c", "4", \

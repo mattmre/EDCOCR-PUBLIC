@@ -11,8 +11,9 @@ coordinator:
     DJANGO_ALLOWED_HOSTS: "*"
     DEPLOYMENT_ENV: development
     PRODUCTION_READINESS_ACK: "false"
+    OCR_TASK_ROUTING: "cpu"
 
-externalTranslation:
+edcTranslation:
   preferExternal: "false"
   url: ""
   providerId: "passthrough"

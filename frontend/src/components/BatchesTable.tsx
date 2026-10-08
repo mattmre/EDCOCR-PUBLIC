@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BatchSubmitForm } from "@/components/BatchSubmitForm";
 import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -22,26 +22,40 @@ export function BatchesTable() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const requestGeneration = useRef(0);
+  const optimisticBatch = useRef<BatchStatusResponse | null>(null);
   const offset = (page - 1) * PAGE_SIZE;
 
-  async function load() {
-    try {
-      setLoading(true);
-      const response = await fetchBatches(PAGE_SIZE, offset);
-      setBatches(response.batches ?? []);
-      setTotal(response.total ?? 0);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load batches");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
+    let active = true;
+    const generation = ++requestGeneration.current;
+    async function load() {
+      try {
+        setLoading(true);
+        const response = await fetchBatches(PAGE_SIZE, offset);
+        if (!active || generation !== requestGeneration.current) return;
+        const rows = response.batches ?? [];
+        const pending = page === 1 ? optimisticBatch.current : null;
+        if (pending && !rows.some((row) => row.batch_id === pending.batch_id)) {
+          setBatches([pending, ...rows].slice(0, PAGE_SIZE));
+          setTotal((current) => Math.max(current, (response.total ?? 0) + 1));
+        } else {
+          optimisticBatch.current = null;
+          setBatches(rows);
+          setTotal(response.total ?? 0);
+        }
+        setError(null);
+      } catch (err) {
+        if (active && generation === requestGeneration.current) {
+          setError(err instanceof Error ? err.message : "Unable to load batches");
+        }
+      } finally {
+        if (active && generation === requestGeneration.current) setLoading(false);
+      }
+    }
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+    return () => { active = false; };
+  }, [page, offset]);
 
   function handleSubmitted(batch: BatchSubmitResponse) {
     const progress = {
@@ -52,8 +66,7 @@ export function BatchesTable() {
       cancelled: 0,
       percent_complete: 0,
     };
-    setBatches((current) => [
-      {
+    const submitted: BatchStatusResponse = {
         batch_id: batch.batch_id,
         status: batch.status,
         created_at: batch.created_at,
@@ -64,10 +77,13 @@ export function BatchesTable() {
         jobs: batch.jobs,
         settings: {},
         webhook_status: null,
-      },
-      ...current,
-    ]);
+      };
+    requestGeneration.current += 1;
+    optimisticBatch.current = submitted;
+    setBatches((current) => [submitted, ...(page === 1 ? current : [])].slice(0, PAGE_SIZE));
     setTotal((value) => value + 1);
+    setLoading(false);
+    if (page !== 1) setPage(1);
   }
 
   return (
@@ -126,7 +142,7 @@ export function BatchesTable() {
       </div>
       <Pagination
         disabled={loading}
-        onPageChange={setPage}
+        onPageChange={(next) => { setBatches([]); setPage(next); }}
         page={page}
         pageSize={PAGE_SIZE}
         total={total}

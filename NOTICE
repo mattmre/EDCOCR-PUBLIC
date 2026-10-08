@@ -12,3 +12,10 @@ This product includes software developed by:
 - Celery (https://github.com/celery/celery) — BSD-3-Clause
 - OpenCV (https://github.com/opencv/opencv) — Apache 2.0
 - Pillow (https://github.com/python-pillow/Pillow) — HPND
+
+The Python and TypeScript SDK components retain their MIT licenses and
+copyright notices in sdk/python/LICENSE and sdk/typescript/LICENSE.
+
+The SDK package metadata is aligned with its existing MIT LICENSE files;
+the previous public metadata identified Apache-2.0 inconsistently. The root
+application license remains Apache-2.0.

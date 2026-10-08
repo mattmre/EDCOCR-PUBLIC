@@ -1,7 +1,7 @@
 """Database file security helpers.
 
 Shared utilities for securing SQLite database files on disk. Addresses
- (expert panel P2): SQLite database files must not be world-readable
+maintenance review (expert panel P2): SQLite database files must not be world-readable
 because they may contain PII, job metadata, and review decisions.
 """
 

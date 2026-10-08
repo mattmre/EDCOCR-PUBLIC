@@ -7,14 +7,16 @@ import argparse
 import importlib
 import os
 import sys
-
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ocr_local.enrichment_bus import EnrichmentBus, discover_entry_point_providers  # noqa: E402
+from ocr_local.enrichment_bus import (  # noqa: E402
+    EnrichmentBus,
+    discover_entry_point_providers,
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -4,7 +4,7 @@ pipeline_config.py -- Typed configuration dataclass for the OCR pipeline.
 Centralises the pipeline parameters that were previously scattered as
 module-level globals in ``ocr_gpu_async.py``.  The module globals remain in
 place for backward compatibility; this dataclass is the path toward removing
-them in a future session.
+them in a future session (maintenance review).
 
 Phase 1 added 21 numeric/simple parameters (Groups 1-6).
 Phase 2 added 30 feature-flag fields (Groups 7-12) covering Document
@@ -129,6 +129,8 @@ class PipelineConfig:
     enable_table_fallback: bool = False
     enable_classification: bool = False
     enable_extraction: bool = False
+    # Historical name: enables document routing (.routing.json via routing.py),
+    # not specialist_routing.SpecialistRouter (.specialist.json).
     enable_specialist_routing: bool = False
     enable_entity_consolidation: bool = False
     enable_relationship_extraction: bool = False
@@ -236,12 +238,8 @@ class PipelineConfig:
         if not (72 <= self.dpi <= 1200):
             raise ValueError(f"DPI must be 72..1200, got {self.dpi}")
         if not (1 <= self.jpeg_quality <= 100):
-            raise ValueError(
-                f"jpeg_quality must be 1..100, got {self.jpeg_quality}"
-            )
-        _require_range(
-            "monitor_sleep_seconds", self.monitor_sleep_seconds, 1, 3600
-        )
+            raise ValueError(f"jpeg_quality must be 1..100, got {self.jpeg_quality}")
+        _require_range("monitor_sleep_seconds", self.monitor_sleep_seconds, 1, 3600)
         if not isinstance(self.keep_temp_files, bool):
             raise ValueError(
                 f"keep_temp_files must be bool, got {type(self.keep_temp_files).__name__}"
@@ -257,7 +255,10 @@ class PipelineConfig:
         _require_range("video_max_frames", self.video_max_frames, 1, 10_000)
 
         # Group 6: ML paths
-        if not isinstance(self.fasttext_model_path, str) or not self.fasttext_model_path:
+        if (
+            not isinstance(self.fasttext_model_path, str)
+            or not self.fasttext_model_path
+        ):
             raise ValueError(
                 "fasttext_model_path must be a non-empty string, got "
                 f"{self.fasttext_model_path!r}"
@@ -272,9 +273,7 @@ class PipelineConfig:
         ):
             value = getattr(self, name)
             if not isinstance(value, str) or not value:
-                raise ValueError(
-                    f"{name} must be a non-empty string, got {value!r}"
-                )
+                raise ValueError(f"{name} must be a non-empty string, got {value!r}")
 
         # Group 7: Document Intelligence
         _require_bool("enable_document_intelligence", self.enable_document_intelligence)
@@ -329,9 +328,7 @@ class PipelineConfig:
         _require_bool("enable_classification", self.enable_classification)
         _require_bool("enable_extraction", self.enable_extraction)
         _require_bool("enable_specialist_routing", self.enable_specialist_routing)
-        _require_bool(
-            "enable_entity_consolidation", self.enable_entity_consolidation
-        )
+        _require_bool("enable_entity_consolidation", self.enable_entity_consolidation)
         _require_bool(
             "enable_relationship_extraction", self.enable_relationship_extraction
         )
@@ -353,9 +350,9 @@ class PipelineConfig:
             1,
             10_000,
         )
-        if not isinstance(self.language_confidence_threshold, (int, float)) or isinstance(
-            self.language_confidence_threshold, bool
-        ):
+        if not isinstance(
+            self.language_confidence_threshold, (int, float)
+        ) or isinstance(self.language_confidence_threshold, bool):
             raise ValueError(
                 "language_confidence_threshold must be float, got "
                 f"{type(self.language_confidence_threshold).__name__}"
@@ -437,10 +434,9 @@ class PipelineConfig:
                 "translation_external_timeout_seconds must be 0.1..600.0, got "
                 f"{self.translation_external_timeout_seconds}"
             )
-        if (
-            not isinstance(self.translation_external_readiness_path, str)
-            or not self.translation_external_readiness_path.startswith("/")
-        ):
+        if not isinstance(
+            self.translation_external_readiness_path, str
+        ) or not self.translation_external_readiness_path.startswith("/"):
             raise ValueError(
                 "translation_external_readiness_path must be an absolute HTTP path"
             )
@@ -467,9 +463,7 @@ class PipelineConfig:
         _require_bool("translation_airgapped", self.translation_airgapped)
 
         # Group 16: Batch translation scheduling (Plan B Wave M2 -- B17)
-        _require_bool(
-            "translation_batch_enabled", self.translation_batch_enabled
-        )
+        _require_bool("translation_batch_enabled", self.translation_batch_enabled)
         _require_range(
             "translation_batch_max_inputs",
             self.translation_batch_max_inputs,
@@ -584,21 +578,15 @@ class PipelineConfig:
 def _require_range(name: str, value: int, min_val: int, max_val: int) -> None:
     """Raise ``ValueError`` if ``value`` is outside ``[min_val, max_val]``."""
     if not isinstance(value, int) or isinstance(value, bool):
-        raise ValueError(
-            f"{name} must be int, got {type(value).__name__}"
-        )
+        raise ValueError(f"{name} must be int, got {type(value).__name__}")
     if value < min_val or value > max_val:
-        raise ValueError(
-            f"{name} must be {min_val}..{max_val}, got {value}"
-        )
+        raise ValueError(f"{name} must be {min_val}..{max_val}, got {value}")
 
 
 def _require_bool(name: str, value: object) -> None:
     """Raise ``ValueError`` if ``value`` is not a ``bool``."""
     if not isinstance(value, bool):
-        raise ValueError(
-            f"{name} must be bool, got {type(value).__name__}"
-        )
+        raise ValueError(f"{name} must be bool, got {type(value).__name__}")
 
 
 def _int(
@@ -708,8 +696,7 @@ def _path(
     raw = env.get(key, default)
     resolved = os.path.realpath(raw)
     if allowed_prefixes and not any(
-        resolved.startswith(os.path.realpath(prefix))
-        for prefix in allowed_prefixes
+        resolved.startswith(os.path.realpath(prefix)) for prefix in allowed_prefixes
     ):
         return os.path.realpath(default)
     return resolved
@@ -766,7 +753,7 @@ def create_pipeline_config(
         _ALLOWED_PATH_PREFIXES,
     )
 
-    return PipelineConfig(
+    cfg = PipelineConfig(
         # Group 1: queue sizes
         image_queue_size=_int(e, "IMAGE_QUEUE_SIZE", 200, min_val=1, max_val=10_000),
         chunk_queue_size=_int(e, "CHUNK_QUEUE_SIZE", 50, min_val=1, max_val=10_000),
@@ -789,17 +776,11 @@ def create_pipeline_config(
         extractor_process_workers=_int(
             e, "EXTRACTOR_PROCESS_WORKERS", 8, min_val=1, max_val=64
         ),
-        extractor_mode=_str_choice(
-            e, "EXTRACTOR_MODE", "thread", _EXTRACTOR_MODES
-        ),
+        extractor_mode=_str_choice(e, "EXTRACTOR_MODE", "thread", _EXTRACTOR_MODES),
         # Group 3: timeouts
         poppler_timeout=_int(e, "POPPLER_TIMEOUT", 300, min_val=1, max_val=1800),
-        tesseract_timeout=_int(
-            e, "TESSERACT_TIMEOUT", 120, min_val=1, max_val=600
-        ),
-        thread_join_timeout=_int(
-            e, "THREAD_JOIN_TIMEOUT", 30, min_val=1, max_val=600
-        ),
+        tesseract_timeout=_int(e, "TESSERACT_TIMEOUT", 120, min_val=1, max_val=600),
+        thread_join_timeout=_int(e, "THREAD_JOIN_TIMEOUT", 30, min_val=1, max_val=600),
         shutdown_drain_timeout_seconds=_int(
             e, "SHUTDOWN_DRAIN_TIMEOUT", 300, min_val=1, max_val=3600
         ),
@@ -810,9 +791,7 @@ def create_pipeline_config(
             e, "MONITOR_SLEEP_SECONDS", 10, min_val=1, max_val=3600
         ),
         keep_temp_files=_bool(e, "KEEP_TEMP_FILES", False),
-        chunk_target_size=_int(
-            e, "CHUNK_TARGET_SIZE", 20, min_val=1, max_val=500
-        ),
+        chunk_target_size=_int(e, "CHUNK_TARGET_SIZE", 20, min_val=1, max_val=500),
         # Group 5: video params
         video_frame_sample_seconds=_float(
             e,
@@ -821,13 +800,9 @@ def create_pipeline_config(
             min_val=0.1,
             max_val=600.0,
         ),
-        video_max_frames=_int(
-            e, "VIDEO_MAX_FRAMES", 300, min_val=1, max_val=10_000
-        ),
+        video_max_frames=_int(e, "VIDEO_MAX_FRAMES", 300, min_val=1, max_val=10_000),
         # Group 6: ML paths
-        fasttext_model_path=e.get(
-            "FASTTEXT_MODEL_PATH", "/app/models/lid.176.bin"
-        ),
+        fasttext_model_path=e.get("FASTTEXT_MODEL_PATH", "/app/models/lid.176.bin"),
         source_folder=source_folder,
         output_folder=output_folder,
         temp_folder=temp_folder,
@@ -835,21 +810,15 @@ def create_pipeline_config(
         failure_report=failure_report,
         healthcheck_file=healthcheck_file,
         # Group 7: Document Intelligence (Phase 3A)
-        enable_document_intelligence=_bool(
-            e, "ENABLE_DOCUMENT_INTELLIGENCE", False
-        ),
+        enable_document_intelligence=_bool(e, "ENABLE_DOCUMENT_INTELLIGENCE", False),
         enable_layout_analysis=_bool(e, "ENABLE_LAYOUT_ANALYSIS", True),
         enable_table_extraction=_bool(e, "ENABLE_TABLE_EXTRACTION", True),
-        docintel_mode=_str_choice(
-            e, "DOCINTEL_MODE", "full", _DOCINTEL_MODES
-        ),
+        docintel_mode=_str_choice(e, "DOCINTEL_MODE", "full", _DOCINTEL_MODES),
         export_tables=_bool(e, "EXPORT_TABLES", False),
         # Group 8: Form & KV extraction (Phase 3C)
         enable_form_detection=_bool(e, "ENABLE_FORM_DETECTION", False),
         enable_kv_extraction=_bool(e, "ENABLE_KV_EXTRACTION", False),
-        enable_privilege_detection=_bool(
-            e, "ENABLE_PRIVILEGE_DETECTION", False
-        ),
+        enable_privilege_detection=_bool(e, "ENABLE_PRIVILEGE_DETECTION", False),
         # Group 9: Custody
         enable_custody=_bool(e, "ENABLE_CUSTODY", True),
         # Group 10: Processing features
@@ -870,19 +839,13 @@ def create_pipeline_config(
         # Group 11: Analysis features
         enable_ner=_bool(e, "ENABLE_NER", False),
         enable_handwriting=_bool(e, "ENABLE_HANDWRITING", False),
-        enable_signature_verification=_bool(
-            e, "ENABLE_SIGNATURE_VERIFICATION", False
-        ),
+        enable_signature_verification=_bool(e, "ENABLE_SIGNATURE_VERIFICATION", False),
         enable_vertical_text=_bool(e, "ENABLE_VERTICAL_TEXT", False),
         enable_table_fallback=_bool(e, "ENABLE_TABLE_FALLBACK", False),
         enable_classification=_bool(e, "ENABLE_CLASSIFICATION", False),
         enable_extraction=_bool(e, "ENABLE_EXTRACTION", False),
-        enable_specialist_routing=_bool(
-            e, "ENABLE_SPECIALIST_ROUTING", False
-        ),
-        enable_entity_consolidation=_bool(
-            e, "ENABLE_ENTITY_CONSOLIDATION", False
-        ),
+        enable_specialist_routing=_bool(e, "ENABLE_SPECIALIST_ROUTING", False),
+        enable_entity_consolidation=_bool(e, "ENABLE_ENTITY_CONSOLIDATION", False),
         enable_relationship_extraction=_bool(
             e, "ENABLE_RELATIONSHIP_EXTRACTION", False
         ),
@@ -918,9 +881,7 @@ def create_pipeline_config(
         ),
         # Group 14: Translation enrichment (Plan B Wave M1)
         enable_translation=_bool(e, "ENABLE_TRANSLATION", False),
-        translation_target_languages=_csv_list(
-            e, "TRANSLATION_TARGET_LANGUAGES"
-        ),
+        translation_target_languages=_csv_list(e, "TRANSLATION_TARGET_LANGUAGES"),
         translation_quality=_str_choice(
             e,
             "TRANSLATION_QUALITY",
@@ -972,9 +933,7 @@ def create_pipeline_config(
         ),
         translation_airgapped=_bool(e, "TRANSLATION_AIRGAPPED", False),
         # Group 16: Batch translation scheduling (Plan B Wave M2 -- B17)
-        translation_batch_enabled=_bool(
-            e, "OCR_TRANSLATION_BATCH_ENABLED", False
-        ),
+        translation_batch_enabled=_bool(e, "OCR_TRANSLATION_BATCH_ENABLED", False),
         translation_batch_max_inputs=_int(
             e,
             "OCR_TRANSLATION_BATCH_MAX_INPUTS",
@@ -1008,3 +967,32 @@ def create_pipeline_config(
             e, "OCR_TRANSLATION_ENFORCE_PROVENANCE", False
         ),
     )
+
+    # ES-4: named deployment profile (OCR_DEPLOYMENT_PROFILE / OCR_PROFILE).
+    # Applied before hardware auto-tune so OCR_AUTO_TUNE can refine further.
+    # Explicit NUM_* always wins over both.
+    try:
+        from ocr_local.config.deployment_profiles import (  # noqa: WPS433
+            maybe_apply_deployment_profile_to_pipeline_config,
+        )
+
+        cfg, _dep_profile = maybe_apply_deployment_profile_to_pipeline_config(
+            cfg, env=e
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    # ES-2: opt-in SOLO best-fit auto-tune (OCR_AUTO_TUNE=true). Default off.
+    # Explicit NUM_WORKERS / NUM_EXTRACTORS / etc. still win over recommendations.
+    try:
+        from ocr_local.infra.hardware_autotune import (  # noqa: WPS433
+            maybe_apply_autotune_to_pipeline_config,
+        )
+
+        cfg, _profile = maybe_apply_autotune_to_pipeline_config(cfg, env=e)
+    except Exception:  # noqa: BLE001
+        # Fail open to base config if autotune import/detect fails — never
+        # block pipeline startup on hardware probes.
+        pass
+
+    return cfg

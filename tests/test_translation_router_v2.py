@@ -4,6 +4,7 @@ Covers tenant-aware engine selection, glossary preprocessing,
 NC-license filtering, cache-availability filtering, custody event
 emission, and the REST endpoint integration.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -49,11 +50,14 @@ def _make_fake_engine(
         quality_class=quality,
         latency_class="standard",
         license=license_str,
-        provider_retention_class="local_only" if is_local else "zero_retention_with_baa",
+        provider_retention_class="local_only"
+        if is_local
+        else "zero_retention_with_baa",
         deployment_envs=["local"] if is_local else ["cloud"],
     )
 
     if accept_kwargs:
+
         class _FakeEngine:
             capability = cap
 
@@ -61,6 +65,7 @@ def _make_fake_engine(
                 self.model_id = model_id
                 self.tenant_policy = tenant_policy
     else:
+
         class _FakeEngine:  # type: ignore[no-redef]
             capability = cap
 
@@ -123,7 +128,7 @@ def test_get_tenant_policy_returns_default_when_tenant_id_none():
     policy = get_tenant_policy(None)
     assert isinstance(policy, TenantPolicy)
     assert policy.tenant_id == "default"
-    assert policy.allow_nllb_commercial is True  # default permissive
+    assert policy.allow_nllb_commercial is False  # secure default
 
 
 def test_get_tenant_policy_returns_default_when_django_unavailable(monkeypatch):
@@ -190,8 +195,9 @@ def test_v2_drops_nc_licensed_when_tenant_disallows():
         allow_nllb_commercial=False,
     )
 
-    with _registered(nllb, apache), _stubbed_cache(
-        [("rv2_nllb", "rv2_nllb"), ("rv2_opus", "rv2_opus")]
+    with (
+        _registered(nllb, apache),
+        _stubbed_cache([("rv2_nllb", "rv2_nllb"), ("rv2_opus", "rv2_opus")]),
     ):
         with patch(
             "ocr_local.translation.router.get_tenant_policy",
@@ -253,9 +259,7 @@ def test_v2_drops_engine_when_model_not_cached_and_no_download():
                     tenant_id="t",
                     allow_download=False,
                 )
-    assert any(
-        "not cached" in r for r in exc_info.value.filter_reasons
-    )
+    assert any("not cached" in r for r in exc_info.value.filter_reasons)
 
 
 def test_v2_keeps_engine_when_model_is_cached():
@@ -278,9 +282,7 @@ def test_v2_keeps_engine_when_model_is_cached():
 
 
 def test_is_engine_cached_skips_cloud_engines():
-    cloud = _make_fake_engine(
-        engine_id="rv2_cloud", is_local=False, is_cloud=True
-    )
+    cloud = _make_fake_engine(engine_id="rv2_cloud", is_local=False, is_cloud=True)
     fake_policy = TenantPolicy(tenant_id="t", allow_cloud_translation=True)
     ok, reason = _is_engine_cached(cloud, fake_policy, allow_download=False)
     assert ok is True
@@ -294,19 +296,16 @@ def test_is_engine_cached_skips_cloud_engines():
 
 def test_v2_preferred_engine_wins_over_default_quality_ranking():
     """Tenant-preferred standard engine should beat default-ranked legal engine."""
-    legal_default = _make_fake_engine(
-        engine_id="rv2_legal", quality="legal"
-    )
-    standard_pref = _make_fake_engine(
-        engine_id="rv2_pref_std", quality="standard"
-    )
+    legal_default = _make_fake_engine(engine_id="rv2_legal", quality="legal")
+    standard_pref = _make_fake_engine(engine_id="rv2_pref_std", quality="standard")
     fake_policy = TenantPolicy(
         tenant_id="t",
         preferred_engine_ids=["rv2_pref_std", "rv2_legal"],
     )
 
-    with _registered(legal_default, standard_pref), _stubbed_cache(
-        [("rv2_legal", "rv2_legal"), ("rv2_pref_std", "rv2_pref_std")]
+    with (
+        _registered(legal_default, standard_pref),
+        _stubbed_cache([("rv2_legal", "rv2_legal"), ("rv2_pref_std", "rv2_pref_std")]),
     ):
         with patch(
             "ocr_local.translation.router.get_tenant_policy",
@@ -326,12 +325,8 @@ def test_order_candidates_default_when_no_preferred():
     cloud = _make_fake_engine(
         engine_id="oc_cloud", is_local=False, is_cloud=True, quality="legal"
     )
-    local_std = _make_fake_engine(
-        engine_id="oc_local_std", quality="standard"
-    )
-    local_legal = _make_fake_engine(
-        engine_id="oc_local_legal", quality="legal"
-    )
+    local_std = _make_fake_engine(engine_id="oc_local_std", quality="standard")
+    local_legal = _make_fake_engine(engine_id="oc_local_legal", quality="legal")
     policy = TenantPolicy(tenant_id="t")
     ordered = _order_candidates([cloud, local_std, local_legal], policy)
     assert ordered[0].capability.id == "oc_local_legal"
@@ -441,7 +436,8 @@ def test_v2_success_emits_tenant_engine_selected_and_hydrated():
 
     # Sanity-check the SELECTED payload contains tenant + engine + lang.
     selected_payload = next(
-        c.args[1] for c in chain.log_event.call_args_list
+        c.args[1]
+        for c in chain.log_event.call_args_list
         if c.args[0] == "TENANT_ENGINE_SELECTED"
     )
     assert selected_payload["tenant_id"] == "acme"
@@ -475,7 +471,10 @@ def test_v2_engine_constructor_without_kwargs_is_fallback_compatible():
     engine_cls = _make_fake_engine(engine_id="rv2_legacy_init", accept_kwargs=False)
     fake_policy = TenantPolicy(tenant_id="t")
 
-    with _registered(engine_cls), _stubbed_cache([("rv2_legacy_init", "rv2_legacy_init")]):
+    with (
+        _registered(engine_cls),
+        _stubbed_cache([("rv2_legacy_init", "rv2_legacy_init")]),
+    ):
         with patch(
             "ocr_local.translation.router.get_tenant_policy",
             return_value=fake_policy,
@@ -512,14 +511,13 @@ def test_v2_same_lang_returns_passthrough_without_filtering():
 
 
 def test_v2_privilege_flag_drops_cloud_engines():
-    cloud = _make_fake_engine(
-        engine_id="rv2_cloud_priv", is_local=False, is_cloud=True
-    )
+    cloud = _make_fake_engine(engine_id="rv2_cloud_priv", is_local=False, is_cloud=True)
     local = _make_fake_engine(engine_id="rv2_local_priv")
     fake_policy = TenantPolicy(tenant_id="t", allow_cloud_translation=True)
 
-    with _registered(cloud, local), _stubbed_cache(
-        [("rv2_local_priv", "rv2_local_priv")]
+    with (
+        _registered(cloud, local),
+        _stubbed_cache([("rv2_local_priv", "rv2_local_priv")]),
     ):
         with patch(
             "ocr_local.translation.router.get_tenant_policy",
@@ -633,16 +631,27 @@ def api_client():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    from api.identity import AuthIdentity
     from api.routers.translation import router
 
     app = FastAPI()
+
+    @app.middleware("http")
+    async def _operator_identity(request, call_next):
+        request.state.identity = AuthIdentity(
+            subject="translation-router-test",
+            role="operator",
+            auth_method="test",
+        )
+        return await call_next(request)
+
     app.include_router(router)
     with TestClient(app) as c:
         yield c
 
 
 def test_rest_legacy_path_when_use_tenant_router_false(api_client):
-    """Legacy stub path returned when ``use_tenant_router=False``."""
+    """Legacy single-job path refuses to manufacture a queued job."""
     payload = {
         "source_text": "hello",
         "target_languages": ["fr"],
@@ -650,11 +659,9 @@ def test_rest_legacy_path_when_use_tenant_router_false(api_client):
         "use_tenant_router": False,
     }
     response = api_client.post("/api/v1/translation/jobs", json=payload)
-    assert response.status_code == 202
+    assert response.status_code == 501
     body = response.json()
-    assert body["status"] == "queued"
-    assert body["selected_engines"] is None  # legacy path doesn't populate
-    assert "Wave M1 stub" in body["message"]
+    assert "no job was created" in body["detail"]
 
 
 def test_rest_tenant_router_v2_returns_selected_engine(api_client):
@@ -662,8 +669,9 @@ def test_rest_tenant_router_v2_returns_selected_engine(api_client):
     engine_cls = _make_fake_engine(engine_id="rest_v2_engine")
     fake_policy = TenantPolicy(tenant_id="acme")
 
-    with _registered(engine_cls), _stubbed_cache(
-        [("rest_v2_engine", "rest_v2_engine")]
+    with (
+        _registered(engine_cls),
+        _stubbed_cache([("rest_v2_engine", "rest_v2_engine")]),
     ):
         with patch(
             "ocr_local.translation.router.get_tenant_policy",
@@ -678,10 +686,9 @@ def test_rest_tenant_router_v2_returns_selected_engine(api_client):
             }
             response = api_client.post("/api/v1/translation/jobs", json=payload)
 
-    assert response.status_code == 202
+    assert response.status_code == 501
     body = response.json()
-    assert body["status"] == "queued"
-    assert body["selected_engines"] == {"ja": "rest_v2_engine"}
+    assert body["detail"]["selected_engines"] == {"ja": "rest_v2_engine"}
 
 
 def test_rest_tenant_router_no_eligible_engine_records_failure(api_client):
@@ -703,11 +710,10 @@ def test_rest_tenant_router_no_eligible_engine_records_failure(api_client):
             }
             response = api_client.post("/api/v1/translation/jobs", json=payload)
 
-    assert response.status_code == 202
+    assert response.status_code == 501
     body = response.json()
-    assert body["status"] == "queued"
-    assert body["selected_engines"] is None
-    assert "qq" in body["message"]
+    assert body["detail"]["selected_engines"] is None
+    assert "qq" in " ".join(body["detail"]["routing_failures"])
 
 
 # ---------------------------------------------------------------------------

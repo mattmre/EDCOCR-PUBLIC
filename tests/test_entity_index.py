@@ -372,6 +372,31 @@ class TestStats:
         assert stats["total_extractions"] == 1
         assert stats["jobs_indexed"] == 1
 
+    def test_stats_empty_allowed_job_ids_returns_zeros(self, populated_index):
+        """Empty allowed_job_ids is fail-closed: zero stats, no global leak."""
+        stats = populated_index.stats(allowed_job_ids=[])
+        assert stats["total_entities"] == 0
+        assert stats["total_extractions"] == 0
+        assert stats["unique_entity_types"] == 0
+        assert stats["unique_field_names"] == 0
+        assert stats["jobs_indexed"] == 0
+
+    def test_stats_filtered_by_allowed_job_ids(self, populated_index):
+        """Non-empty allowed_job_ids restricts aggregates to those jobs only."""
+        stats_a = populated_index.stats(allowed_job_ids=["job_aaa111bbb222"])
+        assert stats_a["total_entities"] == 3
+        assert stats_a["total_extractions"] == 3
+        assert stats_a["unique_entity_types"] == 2  # PERSON, DATE
+        assert stats_a["unique_field_names"] == 3  # invoice_number, date, amount
+        assert stats_a["jobs_indexed"] == 1
+
+        stats_b = populated_index.stats(allowed_job_ids=["job_ccc333ddd444"])
+        assert stats_b["total_entities"] == 2
+        assert stats_b["total_extractions"] == 1
+        assert stats_b["unique_entity_types"] == 2  # ORG, PERSON
+        assert stats_b["unique_field_names"] == 1  # invoice_number
+        assert stats_b["jobs_indexed"] == 1
+
 
 # ---------------------------------------------------------------------------
 # Edge cases

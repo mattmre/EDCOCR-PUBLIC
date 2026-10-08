@@ -1,5 +1,5 @@
 /**
- * Shared type definitions for the EDCOCR operator console.
+ * Shared type definitions for the OCR_LOCAL operator console.
  *
  * These mirror the FastAPI Pydantic models in `api/models.py` (see
  * JobStatusResponse, JobListResponse, JobResultResponse), the WebSocket

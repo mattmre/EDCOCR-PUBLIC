@@ -18,7 +18,6 @@ writes a valid (but empty) sidecar.
 """
 
 import datetime
-import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -26,7 +25,8 @@ from typing import Optional
 
 from ocr_distributed.ocr_utils import (
     build_sidecar_base_name,
-    sanitize_path_segment,
+    resolve_safe_output_subfolder,
+    write_json_atomic,
 )
 
 logger = logging.getLogger(__name__)
@@ -446,36 +446,18 @@ def write_consolidated_entities_json(
     """
     try:
         entities_dir = os.path.join(output_folder, "EXPORT", "ENTITIES")
-        if subfolder and subfolder != ".":
-            safe_parts = [
-                sanitize_path_segment(p)
-                for p in subfolder.replace("\\", "/").split("/")
-                if p
-            ]
-            target_dir = (
-                os.path.join(entities_dir, *safe_parts)
-                if safe_parts
-                else entities_dir
-            )
-        else:
-            target_dir = entities_dir
-
-        # Path traversal protection
-        resolved = os.path.realpath(target_dir)
-        if not resolved.startswith(os.path.realpath(entities_dir)):
-            logger.error(
-                "Path traversal blocked in consolidated entities output: %s",
-                subfolder,
-            )
-            return None
+        target_dir = resolve_safe_output_subfolder(entities_dir, subfolder)
 
         os.makedirs(target_dir, exist_ok=True)
 
         base_name = build_sidecar_base_name(doc_name)
         json_path = os.path.join(target_dir, f"{base_name}.entities.json")
 
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(consolidated, f, indent=2, ensure_ascii=False, default=str)
+        write_json_atomic(
+            json_path,
+            consolidated,
+            allowed_root=entities_dir,
+        )
 
         return json_path
     except Exception as e:

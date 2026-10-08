@@ -1,3 +1,5 @@
+> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](../release-candidate.md) and the root installation guide.
+
 # S3 Storage Backend Rollout Runbook
 
 **Purpose**: Staged rollout procedure for enabling S3 storage backend in production, with explicit rollback gates and operator actions.

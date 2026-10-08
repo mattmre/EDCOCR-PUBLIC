@@ -1,8 +1,8 @@
 /**
- * @edcocr/sdk - TypeScript SDK for EDCOCR forensic-grade OCR pipeline.
+ * @edcocr/sdk - TypeScript SDK for OCR_LOCAL forensic-grade OCR pipeline.
  *
- * Zero runtime dependencies. Requires Node.js 18+ or a modern browser
- * with native `fetch` and `FormData` support.
+ * Zero runtime dependencies. Requires Node.js 20.19+ or 22.12+
+ * or a modern browser with native `fetch` and `FormData` support.
  *
  * @example
  * ```typescript

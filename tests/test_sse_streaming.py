@@ -25,6 +25,7 @@ from api.database import Job, get_engine, get_session_factory, reset_engine
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def client(tmp_path):
     """FastAPI TestClient with isolated DB, no auth, fast SSE polling."""
@@ -40,14 +41,22 @@ def client(tmp_path):
         patch("api.auth.OCR_API_KEY", ""),
         patch("api.config.ALLOW_UNAUTHENTICATED", True),
         patch("api.auth.ALLOW_UNAUTHENTICATED", True),
-        patch.dict(os.environ, {
-            "SSE_POLL_INTERVAL": "0.05",
-            "SSE_STREAM_TIMEOUT": "5",
-        }),
+        patch.dict(
+            os.environ,
+            {
+                "SSE_POLL_INTERVAL": "0.05",
+                "SSE_STREAM_TIMEOUT": "5",
+            },
+        ),
     ):
         from api.main import create_app
 
         app = create_app()
+        from api import limits as api_limits
+        from api import main as api_main
+
+        api_limits.limiter.enabled = False
+        api_main.limiter.enabled = False
         app.state.limiter.enabled = False
         yield TestClient(app)
 
@@ -67,14 +76,22 @@ def auth_client(tmp_path):
         patch("api.auth.OCR_API_KEY", "test-secret-key"),
         patch("api.config.ALLOW_UNAUTHENTICATED", False),
         patch("api.auth.ALLOW_UNAUTHENTICATED", False),
-        patch.dict(os.environ, {
-            "SSE_POLL_INTERVAL": "0.05",
-            "SSE_STREAM_TIMEOUT": "5",
-        }),
+        patch.dict(
+            os.environ,
+            {
+                "SSE_POLL_INTERVAL": "0.05",
+                "SSE_STREAM_TIMEOUT": "5",
+            },
+        ),
     ):
         from api.main import create_app
 
         app = create_app()
+        from api import limits as api_limits
+        from api import main as api_main
+
+        api_limits.limiter.enabled = False
+        api_main.limiter.enabled = False
         app.state.limiter.enabled = False
         yield TestClient(app)
 
@@ -125,10 +142,12 @@ def _parse_sse_stream(response) -> list[dict]:
             current_event = line.split(":", 1)[1].strip()
         elif line.startswith("data:"):
             data_str = line.split(":", 1)[1].strip()
-            events.append({
-                "event": current_event,
-                "data": json.loads(data_str),
-            })
+            events.append(
+                {
+                    "event": current_event,
+                    "data": json.loads(data_str),
+                }
+            )
             current_event = None
     return events
 
@@ -136,6 +155,7 @@ def _parse_sse_stream(response) -> list[dict]:
 # ---------------------------------------------------------------------------
 # SSE event formatter unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestSSEEventFormat:
     """Unit tests for the _sse_event helper function."""
@@ -169,6 +189,7 @@ class TestSSEEventFormat:
 # ---------------------------------------------------------------------------
 # Endpoint tests
 # ---------------------------------------------------------------------------
+
 
 class TestSSEStreamEndpoint:
     """Integration tests for GET /api/v1/jobs/{job_id}/stream."""
@@ -210,7 +231,8 @@ class TestSSEStreamEndpoint:
         result_data = result_events[0]["data"]
         assert result_data["job_id"] == "job_aabbccddeeff"
         assert result_data["status"] == "completed"
-        assert result_data["result_path"] == "/tmp/out"
+        assert result_data["result_available"] is True
+        assert "result_path" not in result_data
         assert result_data["processing_time_seconds"] == 12.5
         assert result_data["pages_processed"] == 10
 
@@ -347,24 +369,27 @@ class TestSSEStreamTimeout:
             patch("api.auth.OCR_API_KEY", ""),
             patch("api.config.ALLOW_UNAUTHENTICATED", True),
             patch("api.auth.ALLOW_UNAUTHENTICATED", True),
-            patch.dict(os.environ, {
-                "SSE_POLL_INTERVAL": "0.05",
-                "SSE_STREAM_TIMEOUT": "0.15",  # Very short timeout
-            }),
+            patch.dict(
+                os.environ,
+                {
+                    "SSE_POLL_INTERVAL": "0.05",
+                    "SSE_STREAM_TIMEOUT": "0.15",  # Very short timeout
+                },
+            ),
         ):
             reset_engine()
             (tmp_path / "src").mkdir(exist_ok=True)
             (tmp_path / "out").mkdir(exist_ok=True)
             get_engine(db_file)
 
-            # Create a job that stays in 'submitted' (non-terminal).
-            _create_job("job_aabbccddeeff", status="submitted")
-
             from api.main import create_app
 
             app = create_app()
             app.state.limiter.enabled = False
             tc = TestClient(app)
+
+            # Create after startup recovery so it remains a live submitted job.
+            _create_job("job_aabbccddeeff", status="submitted")
 
             with tc.stream("GET", "/api/v1/jobs/job_aabbccddeeff/stream") as resp:
                 assert resp.status_code == 200
@@ -376,6 +401,8 @@ class TestSSEStreamTimeout:
 
             # The last error should mention timeout
             error_events = [e for e in events if e["event"] == "error"]
-            assert any("timeout" in e["data"].get("error", "").lower() for e in error_events)
+            assert any(
+                "timeout" in e["data"].get("error", "").lower() for e in error_events
+            ), events
 
         reset_engine()

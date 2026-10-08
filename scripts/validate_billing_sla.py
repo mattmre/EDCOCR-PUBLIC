@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Validate billing and SLA policy alignment.
 
-Reads the production source files (cost_tracking.py, sla_monitoring.py,
-api/prometheus.py, Grafana dashboard) and verifies that their constants
-and configuration match the locked billing-sla-policy.md document.
+Reads the canonical production source files under ``ocr_local/features``
+(falling back to the legacy flat layout for compatibility), plus
+``api/prometheus.py`` and the Grafana dashboard. It verifies that their
+constants and configuration match the locked billing-sla-policy.md document.
 
 Usage:
     python scripts/validate_billing_sla.py [--project-root PATH] [--json] [--report PATH]
@@ -17,6 +18,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import sys
@@ -32,6 +34,13 @@ EXPECTED_COST_PER_GPU_SECOND = 0.001
 EXPECTED_COST_PER_GB_STORED = 0.05
 EXPECTED_COST_PER_API_CALL = 0.0001
 EXPECTED_BILLING_FORMULA_VERSION = "1.0.0"
+
+EXPECTED_API_COST_DEFAULTS = {
+    "TENANT_COST_PER_PAGE_USD": 0.0,
+    "TENANT_COST_PER_GIB_INGESTED_USD": 0.0,
+    "TENANT_COST_PER_API_CALL_USD": 0.0,
+    "TENANT_COST_PER_PROCESSING_HOUR_USD": 0.0,
+}
 
 EXPECTED_AVAILABILITY_TARGET = 99.5
 EXPECTED_THROUGHPUT_TARGET = 10.0
@@ -143,6 +152,22 @@ def _read_file(path: Path) -> str | None:
         return None
 
 
+def _feature_source_path(root: Path, filename: str) -> Path:
+    """Return the canonical feature module, with legacy-layout fallback."""
+    canonical = root / "ocr_local" / "features" / filename
+    if canonical.is_file():
+        return canonical
+    return root / filename
+
+
+def _cost_tracking_path(root: Path) -> Path:
+    return _feature_source_path(root, "cost_tracking.py")
+
+
+def _sla_monitoring_path(root: Path) -> Path:
+    return _feature_source_path(root, "sla_monitoring.py")
+
+
 def _extract_float_constant(source: str, name: str) -> float | None:
     """Extract a float constant from Python source of the form:
         NAME = float(os.environ.get("...", "DEFAULT"))
@@ -153,13 +178,20 @@ def _extract_float_constant(source: str, name: str) -> float | None:
     ``float(`` call wraps across lines).
     """
     # Pattern 1: float(os.environ.get("...", "DEFAULT")) — possibly multi-line
-    pattern = (
-        rf'{name}\s*=\s*float\(\s*os\.environ\.get\([^,]+,\s*"([^"]+)"\)\s*\)'
-    )
+    pattern = rf'{name}\s*=\s*float\(\s*os\.environ\.get\([^,]+,\s*"([^"]+)"\)\s*\)'
     m = re.search(pattern, source, re.DOTALL)
     if m:
         try:
             return float(m.group(1))
+        except ValueError:
+            pass
+
+    # Pattern 1b: bounded runtime rate helper with a literal policy default.
+    pattern_safe = rf'{name}\s*=\s*_safe_cost_rate\(\s*"[^"]+"\s*,\s*([0-9]+\.?[0-9]*)'
+    m_safe = re.search(pattern_safe, source)
+    if m_safe:
+        try:
+            return float(m_safe.group(1))
         except ValueError:
             pass
 
@@ -182,6 +214,33 @@ def _extract_string_constant(source: str, name: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _extract_safe_float_defaults(source: str) -> dict[str, float]:
+    """Extract ``NAME = _safe_float(..., DEFAULT)`` assignments via AST."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return {}
+
+    defaults: dict[str, float] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        call = node.value
+        if not isinstance(target, ast.Name) or not isinstance(call, ast.Call):
+            continue
+        if not isinstance(call.func, ast.Name) or call.func.id != "_safe_float":
+            continue
+        if len(call.args) < 2:
+            continue
+        default = call.args[1]
+        if isinstance(default, ast.Constant) and isinstance(
+            default.value, (int, float)
+        ):
+            defaults[target.id] = float(default.value)
+    return defaults
+
+
 # ---------------------------------------------------------------------------
 # Validation checks
 # ---------------------------------------------------------------------------
@@ -189,7 +248,7 @@ def _extract_string_constant(source: str, name: str) -> str | None:
 
 def check_cost_tracking_exists(root: Path) -> CheckResult:
     """Verify cost_tracking.py exists."""
-    path = root / "cost_tracking.py"
+    path = _cost_tracking_path(root)
     if path.is_file():
         return CheckResult("cost_tracking.py exists", True)
     return CheckResult("cost_tracking.py exists", False, f"Not found at {path}")
@@ -198,12 +257,10 @@ def check_cost_tracking_exists(root: Path) -> CheckResult:
 def check_cost_defaults(root: Path) -> list[CheckResult]:
     """Verify default cost rates in cost_tracking.py match policy."""
     results = []
-    source = _read_file(root / "cost_tracking.py")
+    source = _read_file(_cost_tracking_path(root))
     if source is None:
         results.append(
-            CheckResult(
-                "cost_tracking.py readable", False, "Cannot read file"
-            )
+            CheckResult("cost_tracking.py readable", False, "Cannot read file")
         )
         return results
 
@@ -224,9 +281,7 @@ def check_cost_defaults(root: Path) -> list[CheckResult]:
                 )
             )
         elif abs(actual - expected) < 1e-9:
-            results.append(
-                CheckResult(f"cost default {name}", True, f"{actual}")
-            )
+            results.append(CheckResult(f"cost default {name}", True, f"{actual}"))
         else:
             results.append(
                 CheckResult(
@@ -240,7 +295,7 @@ def check_cost_defaults(root: Path) -> list[CheckResult]:
 
 def check_billing_formula_version(root: Path) -> CheckResult:
     """Verify BILLING_FORMULA_VERSION matches policy."""
-    source = _read_file(root / "cost_tracking.py")
+    source = _read_file(_cost_tracking_path(root))
     if source is None:
         return CheckResult(
             "billing formula version", False, "Cannot read cost_tracking.py"
@@ -257,7 +312,7 @@ def check_billing_formula_version(root: Path) -> CheckResult:
 
 def check_billing_formula_locked(root: Path) -> CheckResult:
     """Verify BillingFormula has locked=True default."""
-    source = _read_file(root / "cost_tracking.py")
+    source = _read_file(_cost_tracking_path(root))
     if source is None:
         return CheckResult(
             "billing formula locked", False, "Cannot read cost_tracking.py"
@@ -273,7 +328,7 @@ def check_billing_formula_locked(root: Path) -> CheckResult:
 
 def check_sla_monitoring_exists(root: Path) -> CheckResult:
     """Verify sla_monitoring.py exists."""
-    path = root / "sla_monitoring.py"
+    path = _sla_monitoring_path(root)
     if path.is_file():
         return CheckResult("sla_monitoring.py exists", True)
     return CheckResult("sla_monitoring.py exists", False, f"Not found at {path}")
@@ -282,12 +337,10 @@ def check_sla_monitoring_exists(root: Path) -> CheckResult:
 def check_sla_defaults(root: Path) -> list[CheckResult]:
     """Verify default SLA targets in sla_monitoring.py match policy."""
     results = []
-    source = _read_file(root / "sla_monitoring.py")
+    source = _read_file(_sla_monitoring_path(root))
     if source is None:
         results.append(
-            CheckResult(
-                "sla_monitoring.py readable", False, "Cannot read file"
-            )
+            CheckResult("sla_monitoring.py readable", False, "Cannot read file")
         )
         return results
 
@@ -309,9 +362,7 @@ def check_sla_defaults(root: Path) -> list[CheckResult]:
                 )
             )
         elif abs(actual - expected) < 1e-9:
-            results.append(
-                CheckResult(f"SLA default {name}", True, f"{actual}")
-            )
+            results.append(CheckResult(f"SLA default {name}", True, f"{actual}"))
         else:
             results.append(
                 CheckResult(
@@ -325,7 +376,7 @@ def check_sla_defaults(root: Path) -> list[CheckResult]:
 
 def check_sla_formula_version(root: Path) -> CheckResult:
     """Verify SLA_FORMULA_VERSION matches policy."""
-    source = _read_file(root / "sla_monitoring.py")
+    source = _read_file(_sla_monitoring_path(root))
     if source is None:
         return CheckResult(
             "SLA formula version", False, "Cannot read sla_monitoring.py"
@@ -342,11 +393,9 @@ def check_sla_formula_version(root: Path) -> CheckResult:
 
 def check_sla_window_default(root: Path) -> CheckResult:
     """Verify MetricsWindow default window is 3600 seconds (1 hour)."""
-    source = _read_file(root / "sla_monitoring.py")
+    source = _read_file(_sla_monitoring_path(root))
     if source is None:
-        return CheckResult(
-            "SLA window default", False, "Cannot read sla_monitoring.py"
-        )
+        return CheckResult("SLA window default", False, "Cannot read sla_monitoring.py")
     # Look for MetricsWindow.__init__ default: window_seconds: int = 3600
     m = re.search(r"window_seconds[:\s]*int\s*=\s*(\d+)", source)
     if m and int(m.group(1)) == 3600:
@@ -368,18 +417,14 @@ def check_prometheus_metrics(root: Path) -> list[CheckResult]:
     source = _read_file(root / "api" / "prometheus.py")
     if source is None:
         results.append(
-            CheckResult(
-                "api/prometheus.py readable", False, "Cannot read file"
-            )
+            CheckResult("api/prometheus.py readable", False, "Cannot read file")
         )
         return results
 
     for metric_name in EXPECTED_PROMETHEUS_METRICS:
         # Look for the metric name in Gauge() or similar constructor
         if metric_name in source:
-            results.append(
-                CheckResult(f"Prometheus metric {metric_name}", True)
-            )
+            results.append(CheckResult(f"Prometheus metric {metric_name}", True))
         else:
             results.append(
                 CheckResult(
@@ -395,11 +440,7 @@ def check_grafana_panels(root: Path) -> list[CheckResult]:
     """Verify expected cost/SLA panels exist in the Grafana dashboard."""
     results = []
     dashboard_path = (
-        root
-        / "helm"
-        / "ocr-local"
-        / "templates"
-        / "grafana-dashboard-configmap.yaml"
+        root / "helm" / "ocr-local" / "templates" / "grafana-dashboard-configmap.yaml"
     )
     source = _read_file(dashboard_path)
     if source is None:
@@ -414,9 +455,7 @@ def check_grafana_panels(root: Path) -> list[CheckResult]:
 
     for panel_title in EXPECTED_GRAFANA_PANELS:
         if panel_title in source:
-            results.append(
-                CheckResult(f"Grafana panel '{panel_title}'", True)
-            )
+            results.append(CheckResult(f"Grafana panel '{panel_title}'", True))
         else:
             results.append(
                 CheckResult(
@@ -433,14 +472,12 @@ def check_policy_document(root: Path) -> CheckResult:
     path = root / "docs" / "operations" / "billing-sla-policy.md"
     if path.is_file():
         return CheckResult("billing-sla-policy.md exists", True)
-    return CheckResult(
-        "billing-sla-policy.md exists", False, f"Not found at {path}"
-    )
+    return CheckResult("billing-sla-policy.md exists", False, f"Not found at {path}")
 
 
 def check_tenant_override_mechanism(root: Path) -> CheckResult:
     """Verify set_tenant_slos exists in sla_monitoring.py for per-tenant overrides."""
-    source = _read_file(root / "sla_monitoring.py")
+    source = _read_file(_sla_monitoring_path(root))
     if source is None:
         return CheckResult(
             "tenant SLO override mechanism",
@@ -462,7 +499,7 @@ def check_tenant_override_mechanism(root: Path) -> CheckResult:
 
 def check_cost_persistence(root: Path) -> CheckResult:
     """Verify CostTracker supports persistence (persist_path parameter)."""
-    source = _read_file(root / "cost_tracking.py")
+    source = _read_file(_cost_tracking_path(root))
     if source is None:
         return CheckResult(
             "cost persistence mechanism",
@@ -482,9 +519,38 @@ def check_cost_persistence(root: Path) -> CheckResult:
     )
 
 
+def check_api_cost_defaults(root: Path) -> list[CheckResult]:
+    """Verify durable API cost knobs retain explicit safe-zero defaults."""
+    source = _read_file(root / "api" / "config.py")
+    if source is None:
+        return [
+            CheckResult(
+                "api/config.py readable",
+                False,
+                "Cannot read api/config.py",
+            )
+        ]
+
+    actual_defaults = _extract_safe_float_defaults(source)
+    results = []
+    for name, expected in EXPECTED_API_COST_DEFAULTS.items():
+        actual = actual_defaults.get(name)
+        if actual == expected:
+            results.append(CheckResult(f"API cost default {name}", True, str(actual)))
+        else:
+            results.append(
+                CheckResult(
+                    f"API cost default {name}",
+                    False,
+                    f"Expected {expected}, found {actual!r}",
+                )
+            )
+    return results
+
+
 def check_sla_report_export(root: Path) -> CheckResult:
     """Verify SLAMonitor has write_report_json for report export."""
-    source = _read_file(root / "sla_monitoring.py")
+    source = _read_file(_sla_monitoring_path(root))
     if source is None:
         return CheckResult(
             "SLA report export",
@@ -492,9 +558,7 @@ def check_sla_report_export(root: Path) -> CheckResult:
             "Cannot read sla_monitoring.py",
         )
     if "def write_report_json" in source:
-        return CheckResult(
-            "SLA report export", True, "write_report_json() found"
-        )
+        return CheckResult("SLA report export", True, "write_report_json() found")
     return CheckResult(
         "SLA report export",
         False,
@@ -518,6 +582,8 @@ def run_validation(root: Path) -> ValidationReport:
     report.add(check_billing_formula_version(root))
     report.add(check_billing_formula_locked(root))
     report.add(check_cost_persistence(root))
+    for r in check_api_cost_defaults(root):
+        report.add(r)
 
     # SLA monitoring
     report.add(check_sla_monitoring_exists(root))
@@ -553,7 +619,7 @@ def _resolve_project_root(arg: str | None) -> Path:
         return Path(arg).resolve()
     # Walk up from script location to find the repo root
     candidate = Path(__file__).resolve().parent.parent
-    if (candidate / "cost_tracking.py").is_file():
+    if _cost_tracking_path(candidate).is_file():
         return candidate
     # Fallback to cwd
     return Path.cwd()

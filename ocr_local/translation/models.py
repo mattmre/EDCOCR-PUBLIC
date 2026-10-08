@@ -2,7 +2,7 @@
 
 These types form the JSON-friendly data model emitted by the translation
 pipeline (see Plan B Wave M1 in
-``docs/planning/2026-04-24-translation-swarm/``).  They are deliberately
+``docs/release-candidate.md``).  They are deliberately
 stdlib-only so the contract test in
 ``tests/test_translation_engine_contract.py`` can run on the SDK CI lane
 without optional dependencies.

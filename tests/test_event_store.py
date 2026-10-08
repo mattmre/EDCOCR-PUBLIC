@@ -34,17 +34,45 @@ class TestStoreEvent:
 
     def test_store_returns_event_id(self, store):
         """store_event returns a unique event ID string."""
-        event_id = store.store_event("job.submitted", "job_aaaaaaaaaaaa", {"status": "submitted"})
+        event_id = store.store_event(
+            "job.submitted", "job_aaaaaaaaaaaa", {"status": "submitted"}
+        )
         assert event_id.startswith("evt_")
         assert len(event_id) == 20  # "evt_" + 16 hex chars
 
     def test_store_multiple_events(self, store):
         """Multiple events can be stored for the same job."""
-        id1 = store.store_event("job.submitted", "job_aaaaaaaaaaaa", {"status": "submitted"})
-        id2 = store.store_event("job.processing", "job_aaaaaaaaaaaa", {"status": "processing"})
-        id3 = store.store_event("job.completed", "job_aaaaaaaaaaaa", {"status": "completed"})
+        id1 = store.store_event(
+            "job.submitted", "job_aaaaaaaaaaaa", {"status": "submitted"}
+        )
+        id2 = store.store_event(
+            "job.processing", "job_aaaaaaaaaaaa", {"status": "processing"}
+        )
+        id3 = store.store_event(
+            "job.completed", "job_aaaaaaaaaaaa", {"status": "completed"}
+        )
 
         assert id1 != id2 != id3
+
+    def test_oversized_payload_is_rejected(self, store):
+        """A single event cannot consume unbounded durable-store space."""
+        from api.event_store import MAX_EVENT_PAYLOAD_BYTES
+
+        with pytest.raises(ValueError, match="exceeds"):
+            store.store_event(
+                "job.failed",
+                "job_aaaaaaaaaaaa",
+                {"error": "x" * (MAX_EVENT_PAYLOAD_BYTES + 1)},
+            )
+
+    def test_in_memory_database_path_is_supported(self):
+        """SQLite's common in-memory path does not require a parent directory."""
+        memory_store = EventStore(db_path=":memory:")
+        event_id = memory_store.store_event(
+            "job.submitted", "job_aaaaaaaaaaaa", {"ok": True}
+        )
+        assert memory_store.get_events_since("job_aaaaaaaaaaaa")[0]["id"] == event_id
+        memory_store.close()
 
     def test_stored_event_is_retrievable(self, store):
         """A stored event appears in get_events_since results."""
@@ -74,7 +102,9 @@ class TestGetEventsSince:
         """Only events after since_id are returned."""
         ids = []
         for i in range(5):
-            ids.append(store.store_event(f"job.event_{i}", "job_aaaaaaaaaaaa", {"seq": i}))
+            ids.append(
+                store.store_event(f"job.event_{i}", "job_aaaaaaaaaaaa", {"seq": i})
+            )
 
         events = store.get_events_since("job_aaaaaaaaaaaa", since_id=ids[2])
         assert len(events) == 2
@@ -89,9 +119,22 @@ class TestGetEventsSince:
     def test_since_id_nonexistent_returns_all(self, store):
         """If since_id event does not exist, return all events (seq > 0)."""
         store.store_event("job.submitted", "job_aaaaaaaaaaaa", {"status": "submitted"})
-        events = store.get_events_since("job_aaaaaaaaaaaa", since_id="evt_doesnotexist1234")
+        events = store.get_events_since(
+            "job_aaaaaaaaaaaa", since_id="evt_doesnotexist1234"
+        )
         # since_id not found -> since_seq=0, so all events with seq > 0 are returned
         assert len(events) == 1
+
+    def test_since_id_from_another_job_does_not_skip_this_job(self, store):
+        """Replay cursors are scoped to the job being replayed."""
+        foreign_id = store.store_event(
+            "job.foreign", "job_bbbbbbbbbbbb", {"job": "foreign"}
+        )
+        own_id = store.store_event("job.own", "job_aaaaaaaaaaaa", {"job": "own"})
+
+        events = store.get_events_since("job_aaaaaaaaaaaa", since_id=foreign_id)
+
+        assert [event["id"] for event in events] == [own_id]
 
     def test_respects_limit(self, store):
         """Limit parameter caps the number of returned events."""

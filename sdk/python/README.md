@@ -1,6 +1,6 @@
 # edcocr-sdk
 
-Python SDK for the [EDCOCR](https://github.com/mattmre/EDCOCR-PUBLIC) forensic-grade OCR pipeline.
+Python SDK for the [OCR_LOCAL](https://github.com/mattmre/EDCOCR-PUBLIC) forensic-grade OCR pipeline.
 
 ## Installation
 
@@ -56,7 +56,7 @@ from edcocr_sdk import EDCOCRClient
 
 with EDCOCRClient("http://localhost:8000", api_key=os.environ["OCR_API_KEY"]) as client:
     # Check API health
-    health = client.health_check
+    health = client.health_check()
     print(f"API version: {health.version}, status: {health.status}")
 
     # Submit a document for OCR
@@ -82,13 +82,13 @@ with EDCOCRClient("http://localhost:8000", api_key=os.environ["OCR_API_KEY"]) as
 import asyncio
 from edcocr_sdk import AsyncEDCOCRClient
 
-async def main:
+async def main():
     async with AsyncEDCOCRClient("http://localhost:8000", api_key=os.environ["OCR_API_KEY"]) as client:
         job = await client.submit_job("document.pdf")
         result = await client.wait_for_completion(job.job_id)
         content = await client.download_artifact(job.job_id, "pdf")
 
-asyncio.run(main)
+asyncio.run(main())
 ```
 
 ### One-liner: Submit and Wait
@@ -107,7 +107,7 @@ with EDCOCRClient("http://localhost:8000", api_key=os.environ["OCR_API_KEY"]) as
 
 | Method | Description |
 |---|---|
-| `health_check` | Check API health status |
+| `health_check()` | Check API health status |
 | `submit_job(file_path, ...)` | Submit a document for OCR |
 | `get_job(job_id)` | Get job status and progress |
 | `list_jobs(status, page, per_page)` | List jobs with pagination |
@@ -187,4 +187,12 @@ All response models are Pydantic v2 `BaseModel` instances with full type hints:
 
 ## License
 
-Apache-2.0
+MIT
+
+The original `edcocr` and `edcocr-mcp` console commands are retained.
+`edc-ocr` and `edc-ocr-mcp` are also available as aliases.
+
+Python runtime support is 3.9+ when installing a prebuilt wheel. Building or
+installing from an sdist/source checkout requires Python 3.10+ because the
+reviewed Hatchling build backend requires it. The OCR application itself uses
+Python 3.12.

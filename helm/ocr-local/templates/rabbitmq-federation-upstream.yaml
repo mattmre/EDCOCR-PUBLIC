@@ -1,8 +1,8 @@
 {{- if .Values.federation.enabled }}
 {{- /*
-RabbitMQ FederationUpstream resources.
+RabbitMQ FederationUpstream resources (Plan C Phase 1).
 
-, item C2: this template now ranges over the dynamic peer
+Plan C Phase 1, item C2: this template now ranges over the dynamic peer
 registry under `.Values.federation.clusters` (preferred, C2) and falls back
 to the static `.Values.federation.upstreamClusters` list (C1) when the
 new registry is empty. This preserves the C1 install path while letting
@@ -11,7 +11,7 @@ operators migrate to the C2 reconciler-driven workflow incrementally.
 One Federation CR is emitted per peer cluster; queue selection happens at the
 Policy level (see rabbitmq-federation-policy.yaml). Federation is overflow-only
 on the queue classes declared in `.Values.federation.queue_classes`; the
-coordinator queue is intentionally excluded (see  Section 4.4 --
+coordinator queue is intentionally excluded (see Plan C Section 4.4 --
 split-brain risk).
 */}}
 {{- $useDynamic := gt (len .Values.federation.clusters) 0 -}}

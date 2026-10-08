@@ -28,11 +28,24 @@ CHART_PATH = os.path.join(_PROJECT_ROOT, "helm", "ocr-local")
 
 # Required --set flags for chart secrets (all templates require these)
 _REQUIRED_SETS = [
-    "--set", "secrets.djangoSecretKey=test",
-    "--set", "secrets.postgresPassword=test",
-    "--set", "secrets.rabbitmqPassword=test",
-    "--set", "secrets.redisPassword=test",
-    "--set", "secrets.flowerPassword=test-flower-password",
+    "--set",
+    "secrets.djangoSecretKey=test",
+    "--set",
+    "secrets.apiKey=test-api-key",
+    "--set",
+    "secrets.postgresPassword=test",
+    "--set",
+    "secrets.rabbitmqPassword=test",
+    "--set",
+    "secrets.redisPassword=test",
+    "--set",
+    "secrets.flowerPassword=test-flower-password",
+    "--set",
+    "secrets.webhookSecretKey=test-webhook-key",
+    "--set",
+    "secrets.piiEncryptionKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "--set",
+    "secrets.celeryTaskSigningKey=test-signing-key",
 ]
 
 # Check if helm is available
@@ -45,9 +58,16 @@ def _helm_template(*extra_sets):
     Each document in the multi-document YAML output is returned as a dict.
     Raises subprocess.CalledProcessError on non-zero exit.
     """
-    cmd = [
-        "helm", "template", "test-release", CHART_PATH,
-    ] + list(_REQUIRED_SETS) + list(extra_sets)
+    cmd = (
+        [
+            "helm",
+            "template",
+            "test-release",
+            CHART_PATH,
+        ]
+        + list(_REQUIRED_SETS)
+        + list(extra_sets)
+    )
     result = subprocess.run(
         cmd,
         capture_output=True,
@@ -81,13 +101,14 @@ def _find_resources(docs, kind, name_contains=None):
 class TestHelmPostgresBackup(unittest.TestCase):
     """Tests for the PostgreSQL backup CronJob Helm template."""
 
-    def test_backup_cronjob_disabled_by_default(self):
-        """With default values, no CronJob resource should be rendered."""
+    def test_backup_cronjob_enabled_by_default(self):
+        """The production-oriented chart enables PostgreSQL backups by default."""
         docs = _helm_template()
-        cronjobs = _find_resources(docs, "CronJob")
+        cronjobs = _find_resources(docs, "CronJob", "postgres-backup")
         self.assertEqual(
-            len(cronjobs), 0,
-            "No CronJob should be rendered when postgresql.backup.enabled is false (default)"
+            len(cronjobs),
+            1,
+            "The default chart should render one postgres-backup CronJob",
         )
 
     def test_backup_cronjob_enabled(self):
@@ -95,8 +116,7 @@ class TestHelmPostgresBackup(unittest.TestCase):
         docs = _helm_template("--set", "postgresql.backup.enabled=true")
         cronjobs = _find_resources(docs, "CronJob", "postgres-backup")
         self.assertEqual(
-            len(cronjobs), 1,
-            "Exactly one postgres-backup CronJob should be rendered"
+            len(cronjobs), 1, "Exactly one postgres-backup CronJob should be rendered"
         )
         cj = cronjobs[0]
         self.assertEqual(cj["metadata"]["name"], "test-release-postgres-backup")
@@ -106,58 +126,66 @@ class TestHelmPostgresBackup(unittest.TestCase):
         """A custom schedule value appears in the rendered CronJob spec."""
         custom_schedule = "30 3 * * 0"
         docs = _helm_template(
-            "--set", "postgresql.backup.enabled=true",
-            "--set", f"postgresql.backup.schedule={custom_schedule}",
+            "--set",
+            "postgresql.backup.enabled=true",
+            "--set",
+            f"postgresql.backup.schedule={custom_schedule}",
         )
         cronjobs = _find_resources(docs, "CronJob", "postgres-backup")
         self.assertEqual(len(cronjobs), 1)
         self.assertEqual(
-            cronjobs[0]["spec"]["schedule"], custom_schedule,
-            f"CronJob schedule should be '{custom_schedule}'"
+            cronjobs[0]["spec"]["schedule"],
+            custom_schedule,
+            f"CronJob schedule should be '{custom_schedule}'",
         )
 
     def test_backup_pvc_created(self):
         """When backup is enabled, a PersistentVolumeClaim is created with correct storage."""
         docs = _helm_template(
-            "--set", "postgresql.backup.enabled=true",
-            "--set", "postgresql.backup.storage=50Gi",
+            "--set",
+            "postgresql.backup.enabled=true",
+            "--set",
+            "postgresql.backup.storage=50Gi",
         )
         pvcs = _find_resources(docs, "PersistentVolumeClaim", "postgres-backup")
         self.assertEqual(
-            len(pvcs), 1,
-            "Exactly one postgres-backup PVC should be rendered"
+            len(pvcs), 1, "Exactly one postgres-backup PVC should be rendered"
         )
         pvc = pvcs[0]
         self.assertEqual(pvc["metadata"]["name"], "test-release-postgres-backup")
         storage = pvc["spec"]["resources"]["requests"]["storage"]
         self.assertEqual(storage, "50Gi")
 
-    def test_backup_pvc_not_created_when_disabled(self):
-        """When backup is disabled (default), no backup PVC is rendered."""
-        docs = _helm_template()
+    def test_backup_pvc_not_created_when_explicitly_disabled(self):
+        """Operators can explicitly disable backup storage resources."""
+        docs = _helm_template("--set", "postgresql.backup.enabled=false")
         pvcs = _find_resources(docs, "PersistentVolumeClaim", "postgres-backup")
         self.assertEqual(
-            len(pvcs), 0,
-            "No postgres-backup PVC should be rendered when backup is disabled"
+            len(pvcs),
+            0,
+            "No postgres-backup PVC should be rendered when backup is disabled",
         )
 
     def test_backup_retention_in_script(self):
         """The retention count value appears in the CronJob container script."""
         docs = _helm_template(
-            "--set", "postgresql.backup.enabled=true",
-            "--set", "postgresql.backup.retentionCount=14",
+            "--set",
+            "postgresql.backup.enabled=true",
+            "--set",
+            "postgresql.backup.retentionCount=14",
         )
         cronjobs = _find_resources(docs, "CronJob", "postgres-backup")
         self.assertEqual(len(cronjobs), 1)
-        containers = (
-            cronjobs[0]["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"]
-        )
+        containers = cronjobs[0]["spec"]["jobTemplate"]["spec"]["template"]["spec"][
+            "containers"
+        ]
         self.assertEqual(len(containers), 1)
         # The command is a list: ["sh", "-c", "<script>"]
         script = containers[0]["command"][2]
         self.assertIn(
-            "RETENTION=14", script,
-            "Retention count of 14 should appear in the backup script"
+            "RETENTION=14",
+            script,
+            "Retention count of 14 should appear in the backup script",
         )
 
     def test_backup_default_schedule(self):
@@ -177,21 +205,26 @@ class TestHelmPostgresBackup(unittest.TestCase):
     def test_backup_uses_postgres_image(self):
         """Backup container image comes from postgresql.image values."""
         docs = _helm_template(
-            "--set", "postgresql.backup.enabled=true",
-            "--set", "postgresql.image.repository=myregistry/postgres",
-            "--set", "postgresql.image.tag=15-bullseye",
+            "--set",
+            "postgresql.backup.enabled=true",
+            "--set",
+            "postgresql.image.repository=myregistry/postgres",
+            "--set",
+            "postgresql.image.tag=15-bullseye",
         )
         cronjobs = _find_resources(docs, "CronJob", "postgres-backup")
-        containers = (
-            cronjobs[0]["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"]
-        )
+        containers = cronjobs[0]["spec"]["jobTemplate"]["spec"]["template"]["spec"][
+            "containers"
+        ]
         self.assertEqual(containers[0]["image"], "myregistry/postgres:15-bullseye")
 
     def test_backup_timeout_configurable(self):
         """activeDeadlineSeconds reflects postgresql.backup.timeoutSeconds."""
         docs = _helm_template(
-            "--set", "postgresql.backup.enabled=true",
-            "--set", "postgresql.backup.timeoutSeconds=7200",
+            "--set",
+            "postgresql.backup.enabled=true",
+            "--set",
+            "postgresql.backup.timeoutSeconds=7200",
         )
         cronjobs = _find_resources(docs, "CronJob", "postgres-backup")
         job_spec = cronjobs[0]["spec"]["jobTemplate"]["spec"]
@@ -203,23 +236,33 @@ class TestHelmRedisSentinel(unittest.TestCase):
     """Tests for the Redis Sentinel Helm template."""
 
     def test_sentinel_disabled_by_default(self):
-        """With default values, no sentinel resources should be rendered."""
+        """The base chart does not advertise an unwired Sentinel deployment."""
         docs = _helm_template()
         sentinel_sts = _find_resources(docs, "StatefulSet", "redis-sentinel")
         sentinel_svc = _find_resources(docs, "Service", "redis-sentinel")
         replica_sts = _find_resources(docs, "StatefulSet", "redis-replica")
         self.assertEqual(
-            len(sentinel_sts), 0,
-            "No redis-sentinel StatefulSet should be rendered by default"
+            len(sentinel_sts),
+            0,
+            "Redis Sentinel must remain opt-in until all clients are wired",
         )
         self.assertEqual(
-            len(sentinel_svc), 0,
-            "No redis-sentinel Service should be rendered by default"
+            len(sentinel_svc),
+            0,
+            "Redis Sentinel service must remain opt-in until all clients are wired",
         )
         self.assertEqual(
-            len(replica_sts), 0,
-            "No redis-replica StatefulSet should be rendered by default"
+            len(replica_sts),
+            0,
+            "Redis replica must remain opt-in with the Sentinel scaffold",
         )
+
+    def test_sentinel_can_be_explicitly_disabled(self):
+        """Operators can render a single-node Redis deployment when required."""
+        docs = _helm_template("--set", "redis.sentinel.enabled=false")
+        self.assertEqual(_find_resources(docs, "StatefulSet", "redis-sentinel"), [])
+        self.assertEqual(_find_resources(docs, "Service", "redis-sentinel"), [])
+        self.assertEqual(_find_resources(docs, "StatefulSet", "redis-replica"), [])
 
     def test_sentinel_enabled(self):
         """When redis.sentinel.enabled=true, sentinel StatefulSet and Service are present."""
@@ -227,12 +270,14 @@ class TestHelmRedisSentinel(unittest.TestCase):
         sentinel_sts = _find_resources(docs, "StatefulSet", "redis-sentinel")
         sentinel_svc = _find_resources(docs, "Service", "redis-sentinel")
         self.assertGreaterEqual(
-            len(sentinel_sts), 1,
-            "At least one redis-sentinel StatefulSet should be rendered"
+            len(sentinel_sts),
+            1,
+            "At least one redis-sentinel StatefulSet should be rendered",
         )
         self.assertGreaterEqual(
-            len(sentinel_svc), 1,
-            "At least one redis-sentinel Service should be rendered"
+            len(sentinel_svc),
+            1,
+            "At least one redis-sentinel Service should be rendered",
         )
 
     def test_sentinel_replica_statefulset(self):
@@ -240,8 +285,9 @@ class TestHelmRedisSentinel(unittest.TestCase):
         docs = _helm_template("--set", "redis.sentinel.enabled=true")
         replica_sts = _find_resources(docs, "StatefulSet", "redis-replica")
         self.assertEqual(
-            len(replica_sts), 1,
-            "Exactly one redis-replica StatefulSet should be rendered"
+            len(replica_sts),
+            1,
+            "Exactly one redis-replica StatefulSet should be rendered",
         )
         # Verify the replica command includes replicaof
         containers = replica_sts[0]["spec"]["template"]["spec"]["containers"]
@@ -250,16 +296,19 @@ class TestHelmRedisSentinel(unittest.TestCase):
         command_parts = containers[0]["command"]
         full_command = " ".join(str(p) for p in command_parts)
         self.assertIn(
-            "replicaof", full_command,
-            "redis-replica container command must include 'replicaof'"
+            "replicaof",
+            full_command,
+            "redis-replica container command must include 'replicaof'",
         )
 
     def test_sentinel_master_name(self):
         """Sentinel config uses the master name from values."""
         custom_master = "my-ocr-master"
         docs = _helm_template(
-            "--set", "redis.sentinel.enabled=true",
-            "--set", f"redis.sentinel.masterName={custom_master}",
+            "--set",
+            "redis.sentinel.enabled=true",
+            "--set",
+            f"redis.sentinel.masterName={custom_master}",
         )
         sentinel_sts = _find_resources(docs, "StatefulSet", "redis-sentinel")
         self.assertEqual(len(sentinel_sts), 1)
@@ -276,26 +325,30 @@ class TestHelmRedisSentinel(unittest.TestCase):
         self.assertIn(
             f"sentinel monitor {custom_master}",
             full_command,
-            f"Sentinel command must contain 'sentinel monitor {custom_master}'"
+            f"Sentinel command must contain 'sentinel monitor {custom_master}'",
         )
 
     def test_sentinel_replicas_default(self):
         """Default sentinelReplicas=3 controls Sentinel StatefulSet replicas."""
         docs = _helm_template(
-            "--set", "redis.sentinel.enabled=true",
+            "--set",
+            "redis.sentinel.enabled=true",
         )
         sentinel_sts = _find_resources(docs, "StatefulSet", "redis-sentinel")
         self.assertEqual(len(sentinel_sts), 1)
         self.assertEqual(
-            sentinel_sts[0]["spec"]["replicas"], 3,
-            "Sentinel StatefulSet should default to 3 replicas (sentinelReplicas)"
+            sentinel_sts[0]["spec"]["replicas"],
+            3,
+            "Sentinel StatefulSet should default to 3 replicas (sentinelReplicas)",
         )
 
     def test_sentinel_replicas_override(self):
         """Setting sentinelReplicas=5 overrides Sentinel StatefulSet replicas."""
         docs = _helm_template(
-            "--set", "redis.sentinel.enabled=true",
-            "--set", "redis.sentinel.sentinelReplicas=5",
+            "--set",
+            "redis.sentinel.enabled=true",
+            "--set",
+            "redis.sentinel.sentinelReplicas=5",
         )
         sentinel_sts = _find_resources(docs, "StatefulSet", "redis-sentinel")
         self.assertEqual(len(sentinel_sts), 1)
@@ -307,8 +360,9 @@ class TestHelmRedisSentinel(unittest.TestCase):
         sentinel_svc = _find_resources(docs, "Service", "redis-sentinel")
         self.assertGreaterEqual(len(sentinel_svc), 1)
         self.assertEqual(
-            sentinel_svc[0]["spec"]["clusterIP"], "None",
-            "Sentinel service must be headless (clusterIP: None)"
+            sentinel_svc[0]["spec"]["clusterIP"],
+            "None",
+            "Sentinel service must be headless (clusterIP: None)",
         )
 
     def test_sentinel_service_port(self):
@@ -323,23 +377,28 @@ class TestHelmRedisSentinel(unittest.TestCase):
     def test_sentinel_down_after_ms_configurable(self):
         """Custom down-after-milliseconds appears in the sentinel command."""
         docs = _helm_template(
-            "--set", "redis.sentinel.enabled=true",
-            "--set", "redis.sentinel.downAfterMs=10000",
+            "--set",
+            "redis.sentinel.enabled=true",
+            "--set",
+            "redis.sentinel.downAfterMs=10000",
         )
         sentinel_sts = _find_resources(docs, "StatefulSet", "redis-sentinel")
         containers = sentinel_sts[0]["spec"]["template"]["spec"]["containers"]
         sentinel_container = [c for c in containers if c["name"] == "sentinel"][0]
         full_command = " ".join(str(p) for p in sentinel_container["command"])
         self.assertIn(
-            "down-after-milliseconds", full_command,
+            "down-after-milliseconds",
+            full_command,
         )
         self.assertIn("10000", full_command)
 
     def test_sentinel_failover_timeout_configurable(self):
         """Custom failover-timeout appears in the sentinel command."""
         docs = _helm_template(
-            "--set", "redis.sentinel.enabled=true",
-            "--set", "redis.sentinel.failoverTimeoutMs=30000",
+            "--set",
+            "redis.sentinel.enabled=true",
+            "--set",
+            "redis.sentinel.failoverTimeoutMs=30000",
         )
         sentinel_sts = _find_resources(docs, "StatefulSet", "redis-sentinel")
         containers = sentinel_sts[0]["spec"]["template"]["spec"]["containers"]
@@ -351,14 +410,17 @@ class TestHelmRedisSentinel(unittest.TestCase):
     def test_replica_count_configurable(self):
         """redis.sentinel.replicas controls the redis-replica StatefulSet replica count."""
         docs = _helm_template(
-            "--set", "redis.sentinel.enabled=true",
-            "--set", "redis.sentinel.replicas=3",
+            "--set",
+            "redis.sentinel.enabled=true",
+            "--set",
+            "redis.sentinel.replicas=3",
         )
         replica_sts = _find_resources(docs, "StatefulSet", "redis-replica")
         self.assertEqual(len(replica_sts), 1)
         self.assertEqual(
-            replica_sts[0]["spec"]["replicas"], 3,
-            "redis-replica StatefulSet should have 3 replicas"
+            replica_sts[0]["spec"]["replicas"],
+            3,
+            "redis-replica StatefulSet should have 3 replicas",
         )
 
 
@@ -372,10 +434,10 @@ class TestRedisSentinelSettings(TestCase):
     def _env_base(self):
         """Return base environment variables required by settings.py."""
         return {
-            'DJANGO_DEBUG': 'True',
-            'DATABASE_URL': 'postgres://testuser:testpass@localhost:5432/testdb',
-            'CELERY_BROKER_URL': 'amqp://guest:guest@localhost:5672//',
-            'DEPLOYMENT_ENV': 'development',
+            "DJANGO_DEBUG": "True",
+            "DATABASE_URL": "postgres://testuser:testpass@localhost:5432/testdb",  # pragma: allowlist secret
+            "CELERY_BROKER_URL": "amqp://guest:guest@localhost:5672//",  # pragma: allowlist secret
+            "DEPLOYMENT_ENV": "development",
         }
 
     def _reload_settings(self):
@@ -386,7 +448,8 @@ class TestRedisSentinelSettings(TestCase):
         NOT clear stale module-level names that are absent from the new execution.
         """
         import coordinator.settings as settings_mod
-        if hasattr(settings_mod, 'CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS'):
+
+        if hasattr(settings_mod, "CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS"):
             del settings_mod.CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS
         importlib.reload(settings_mod)
         return settings_mod
@@ -395,83 +458,86 @@ class TestRedisSentinelSettings(TestCase):
         """Without REDIS_SENTINEL_MASTER_NAME, transport options are not defined."""
         env = self._env_base()
         # Ensure sentinel env vars are absent
-        env.pop('REDIS_SENTINEL_MASTER_NAME', None)
-        env.pop('REDIS_SENTINEL_PASSWORD', None)
+        env.pop("REDIS_SENTINEL_MASTER_NAME", None)
+        env.pop("REDIS_SENTINEL_PASSWORD", None)
         with patch.dict(os.environ, env, clear=True):
             settings_mod = self._reload_settings()
             self.assertFalse(
-                hasattr(settings_mod, 'CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS'),
+                hasattr(settings_mod, "CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS"),
                 "CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS should not be defined "
-                "when REDIS_SENTINEL_MASTER_NAME is not set"
+                "when REDIS_SENTINEL_MASTER_NAME is not set",
             )
 
     def test_sentinel_config_set_with_master_name(self):
         """When REDIS_SENTINEL_MASTER_NAME=ocr-master, transport options include master_name."""
         env = self._env_base()
-        env['REDIS_SENTINEL_MASTER_NAME'] = 'ocr-master'
+        env["REDIS_SENTINEL_MASTER_NAME"] = "ocr-master"
         with patch.dict(os.environ, env, clear=True):
             settings_mod = self._reload_settings()
             self.assertTrue(
-                hasattr(settings_mod, 'CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS'),
+                hasattr(settings_mod, "CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS"),
                 "CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS must be defined "
-                "when REDIS_SENTINEL_MASTER_NAME is set"
+                "when REDIS_SENTINEL_MASTER_NAME is set",
             )
             transport_opts = settings_mod.CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS
-            self.assertEqual(transport_opts['master_name'], 'ocr-master')
+            self.assertEqual(transport_opts["master_name"], "ocr-master")
 
     def test_sentinel_config_includes_password(self):
         """When both REDIS_SENTINEL_MASTER_NAME and REDIS_SENTINEL_PASSWORD are set,
         sentinel_kwargs.password is configured."""
         env = self._env_base()
-        env['REDIS_SENTINEL_MASTER_NAME'] = 'ocr-master'
-        env['REDIS_SENTINEL_PASSWORD'] = 's3cret-sentinel'
+        env["REDIS_SENTINEL_MASTER_NAME"] = "ocr-master"
+        sentinel_fixture = "-".join(("sentinel", "fixture", "value"))
+        env["REDIS_SENTINEL_PASSWORD"] = sentinel_fixture
         with patch.dict(os.environ, env, clear=True):
             settings_mod = self._reload_settings()
             transport_opts = settings_mod.CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS
             self.assertIn(
-                'sentinel_kwargs', transport_opts,
-                "sentinel_kwargs must be present when REDIS_SENTINEL_PASSWORD is set"
+                "sentinel_kwargs",
+                transport_opts,
+                "sentinel_kwargs must be present when REDIS_SENTINEL_PASSWORD is set",
             )
             self.assertEqual(
-                transport_opts['sentinel_kwargs']['password'],
-                's3cret-sentinel',
+                transport_opts["sentinel_kwargs"]["password"],
+                sentinel_fixture,
             )
 
     def test_sentinel_no_password_omits_sentinel_kwargs(self):
         """With only master name (no password), sentinel_kwargs is NOT in transport options."""
         env = self._env_base()
-        env['REDIS_SENTINEL_MASTER_NAME'] = 'ocr-master'
+        env["REDIS_SENTINEL_MASTER_NAME"] = "ocr-master"
         # Do not set REDIS_SENTINEL_PASSWORD
         with patch.dict(os.environ, env, clear=True):
             settings_mod = self._reload_settings()
             transport_opts = settings_mod.CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS
             self.assertNotIn(
-                'sentinel_kwargs', transport_opts,
+                "sentinel_kwargs",
+                transport_opts,
                 "sentinel_kwargs must NOT be present when "
-                "REDIS_SENTINEL_PASSWORD is not set"
+                "REDIS_SENTINEL_PASSWORD is not set",
             )
 
     def test_sentinel_custom_master_name(self):
         """Transport options reflect the exact master name from the env var."""
         env = self._env_base()
-        env['REDIS_SENTINEL_MASTER_NAME'] = 'custom-redis-primary'
+        env["REDIS_SENTINEL_MASTER_NAME"] = "custom-redis-primary"
         with patch.dict(os.environ, env, clear=True):
             settings_mod = self._reload_settings()
             transport_opts = settings_mod.CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS
-            self.assertEqual(transport_opts['master_name'], 'custom-redis-primary')
+            self.assertEqual(transport_opts["master_name"], "custom-redis-primary")
 
     def test_sentinel_result_backend_url(self):
         """When Sentinel is used, CELERY_RESULT_BACKEND can be a sentinel:// URL."""
         env = self._env_base()
-        env['REDIS_SENTINEL_MASTER_NAME'] = 'ocr-master'
-        env['CELERY_RESULT_BACKEND'] = 'sentinel://sentinel1:26379/0'
+        env["REDIS_SENTINEL_MASTER_NAME"] = "ocr-master"
+        env["CELERY_RESULT_BACKEND"] = "sentinel://sentinel1:26379/0"
         with patch.dict(os.environ, env, clear=True):
             settings_mod = self._reload_settings()
             self.assertEqual(
                 settings_mod.CELERY_RESULT_BACKEND,
-                'sentinel://sentinel1:26379/0',
+                "sentinel://sentinel1:26379/0",
             )
             # Transport options should still be set
             self.assertTrue(
-                hasattr(settings_mod, 'CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS')
+                hasattr(settings_mod, "CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS")
             )

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://ocr-local.dev/schemas/glossary.schema.json",
   "title": "Translation Glossary Bundle",
-  "description": "Tenant-scoped translation glossary bundle.  Used by  endpoints (9-12) to import / export per-tenant term overrides and to pin a frozen `glossary_hash` into TRANSLATION_APPLIED custody events.  All entries within a single bundle share a (source_lang, target_lang) pair.",
+  "description": "Tenant-scoped translation glossary bundle.  Used by Plan B Wave M2 PR B16 endpoints (9-12) to import / export per-tenant term overrides and to pin a frozen `glossary_hash` into TRANSLATION_APPLIED custody events.  All entries within a single bundle share a (source_lang, target_lang) pair.",
   "type": "object",
   "additionalProperties": false,
   "required": [

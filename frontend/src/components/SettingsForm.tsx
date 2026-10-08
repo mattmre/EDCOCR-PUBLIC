@@ -38,7 +38,7 @@ interface DeepPartialSettingsHelper {
 export interface SettingsFormProps {
   settings: Settings;
   onUpdate: (patch: DeepPartialSettingsHelper) => void;
-  onSave: => boolean;
+  onSave: () => boolean;
   lastSavedAt: number | null;
 }
 
@@ -77,7 +77,7 @@ export function SettingsForm({
   // Re-render once a second so the "Last saved Xs ago" label stays fresh.
   useEffect(() => {
     const id = setInterval(() => setTickNow(Date.now()), 1000);
-    return => clearInterval(id);
+    return () => clearInterval(id);
   }, []);
 
   function attemptSave(tab: TabId, evt: FormEvent<HTMLFormElement>): void {

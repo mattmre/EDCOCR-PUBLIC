@@ -1,4 +1,4 @@
-"""Runtime feature registry for the OCR pipeline.
+"""Runtime feature registry for the OCR pipeline (maintenance review).
 
 Queries which optional modules are importable at startup without
 modifying any existing _FEATURE_AVAILABLE flag patterns.

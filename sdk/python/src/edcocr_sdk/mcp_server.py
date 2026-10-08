@@ -1,4 +1,4 @@
-"""Dependency-light MCP-style tool server for EDCOCR / EDCOCR.
+"""Dependency-light MCP-style tool server for OCR_LOCAL / EDC_OCR.
 
 The server exposes OCR operator tools over newline-delimited JSON-RPC so it can
 be wrapped by MCP adapters without duplicating OCR client logic.
@@ -11,12 +11,10 @@ import json
 import os
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence, TextIO
 
 from edcocr_sdk.client import EDCOCRClient
 from edcocr_sdk.exceptions import OCRLocalError
-
 
 ToolHandler = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -35,7 +33,7 @@ def _string_property(description: str) -> dict[str, str]:
 TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = (
     ToolDefinition(
         name="ocr_submit_document",
-        description="Submit one document to EDCOCR.",
+        description="Submit one document to EDC_OCR.",
         input_schema={
             "type": "object",
             "properties": {
@@ -47,7 +45,7 @@ TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = (
     ),
     ToolDefinition(
         name="ocr_submit_batch",
-        description="Submit multiple documents to EDCOCR as a batch.",
+        description="Submit multiple documents to EDC_OCR as a batch.",
         input_schema={
             "type": "object",
             "properties": {
@@ -131,7 +129,9 @@ class OCRToolServer:
             for tool in TOOL_DEFINITIONS
         ]
 
-    def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    def call_tool(
+        self, name: str, arguments: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Dispatch a tool call by name."""
         if name not in self._handlers:
             raise ValueError(f"Unknown OCR tool: {name}")
@@ -187,7 +187,11 @@ def _success(request_id: Any, result: Any) -> dict[str, Any]:
 
 
 def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {"code": code, "message": message},
+    }
 
 
 def handle_jsonrpc(server: OCRToolServer, request: dict[str, Any]) -> dict[str, Any]:
@@ -244,7 +248,9 @@ def serve_json_lines(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the EDCOCR MCP-style tool server.")
+    parser = argparse.ArgumentParser(
+        description="Run the EDC_OCR MCP-style tool server."
+    )
     parser.add_argument(
         "--api-url",
         default=os.environ.get("EDCOCR_API_URL", "http://localhost:8000"),
@@ -261,7 +267,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    with EDCOCRClient(args.api_url, api_key=args.api_key, timeout=args.timeout) as client:
+    with EDCOCRClient(
+        args.api_url, api_key=args.api_key, timeout=args.timeout
+    ) as client:
         server = OCRToolServer(client)
         return serve_json_lines(server, sys.stdin, sys.stdout)
 

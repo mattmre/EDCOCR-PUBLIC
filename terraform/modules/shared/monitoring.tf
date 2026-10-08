@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 # Monitoring Stack (Prometheus + Grafana) via Helm
-# EDCOCR — Observability
+# Industrial Adaptive OCR — Observability
 #
 # Deploys kube-prometheus-stack for metrics collection, alerting, and
 # dashboard visualization of OCR pipeline performance.

@@ -1,6 +1,6 @@
 {{- if and .Values.federation.enabled .Values.federation.discovery.enabled }}
 # =============================================================================
-# Federation DNS-SD Discovery CronJob (item C7)
+# Federation DNS-SD Discovery CronJob (Plan C Phase 1, item C7)
 #
 # Periodically queries DNS-SD (RFC 6763) for peer clusters advertising the
 # `_ocr-federation._tcp` service type, validates each record, and reconciles
@@ -11,9 +11,11 @@
 # writes to the same ConfigMap that ClusterRegistry reads on startup.
 # Default-OFF: enable via `federation.discovery.enabled=true`.
 # =============================================================================
-{{- $repo := default .Values.image.coordinator.repository .Values.federation.reconciler.image.repository -}}
-{{- $tag := default (default .Chart.AppVersion .Values.image.coordinator.tag) .Values.federation.reconciler.image.tag -}}
-{{- $pullPolicy := default (default "IfNotPresent" .Values.image.coordinator.pullPolicy) .Values.federation.reconciler.image.pullPolicy -}}
+{{- $repo := default .Values.image.coordinator.repository .Values.federation.reconciler.image.repository }}
+{{- $tag := default (default .Chart.AppVersion .Values.image.coordinator.tag) .Values.federation.reconciler.image.tag }}
+{{- $digest := .Values.federation.reconciler.image.digest }}
+{{- $pullPolicy := default (default "IfNotPresent" .Values.image.coordinator.pullPolicy) .Values.federation.reconciler.image.pullPolicy }}
+{{- $discoveryImage := dict "repository" $repo "tag" $tag "digest" $digest }}
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -39,6 +41,7 @@ spec:
         spec:
           restartPolicy: OnFailure
           serviceAccountName: {{ .Release.Name }}-federation-discovery
+          {{- include "ocr-local.imagePullSecrets" . | nindent 10 }}
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -47,7 +50,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: discovery
-              image: "{{ $repo }}:{{ $tag }}"
+              image: {{ include "ocr-local.imageRef" (dict "image" $discoveryImage "defaultTag" .Chart.AppVersion "requireDigest" .Values.image.requireDigest "name" "federation-discovery") | quote }}
               imagePullPolicy: {{ $pullPolicy }}
               command:
                 - python

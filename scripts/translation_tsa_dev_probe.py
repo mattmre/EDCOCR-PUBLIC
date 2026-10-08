@@ -17,7 +17,10 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ocr_local.translation.tsa import HTTPRFC3161TSAClient, anchor_certification_payload  # noqa: E402
+from ocr_local.translation.tsa import (  # noqa: E402
+    HTTPRFC3161TSAClient,
+    anchor_certification_payload,
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

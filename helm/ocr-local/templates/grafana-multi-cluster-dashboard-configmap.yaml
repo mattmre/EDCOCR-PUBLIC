@@ -1,9 +1,9 @@
 {{- if and .Values.observability .Values.observability.federation .Values.observability.federation.enabled }}
 {{- if .Values.observability.grafana.multi_cluster_dashboard.enabled }}
 # =============================================================================
-#  -- C3 Federated Observability (multi-cluster Grafana)
+# Plan C Phase 1 -- C3 Federated Observability (multi-cluster Grafana)
 #
-# 12-panel dashboard for cross-cluster EDCOCR fleets. Variables:
+# 12-panel dashboard for cross-cluster OCR_LOCAL fleets. Variables:
 #   * cluster -- list of `external_labels.cluster` values
 #   * region  -- list of `external_labels.region` values (optional)
 #
@@ -33,7 +33,7 @@ data:
       "fiscalYearStartMonth": 0,
       "graphTooltip": 1,
       "id": null,
-      "title": "EDCOCR -- Multi-Cluster Federation",
+      "title": "OCR_LOCAL -- Multi-Cluster Federation",
       "uid": "ocr-multi-cluster",
       "schemaVersion": 38,
       "version": 1,

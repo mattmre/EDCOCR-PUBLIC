@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 # AWS EKS Cluster Module
-# EDCOCR — Cloud-Native Deployment
+# Industrial Adaptive OCR — Cloud-Native Deployment
 #
 # Provisions:
 #   - VPC with public/private subnets
@@ -205,7 +205,9 @@ resource "aws_eks_cluster" "main" {
   vpc_config {
     subnet_ids              = concat(aws_subnet.private[*].id, aws_subnet.public[*].id)
     endpoint_private_access = true
-    endpoint_public_access  = true
+    # LT-06 / S2-19: private-by-default API endpoint. Opt-in public access via
+    # var.endpoint_public_access (default false).
+    endpoint_public_access  = var.endpoint_public_access
   }
 
   tags = var.tags

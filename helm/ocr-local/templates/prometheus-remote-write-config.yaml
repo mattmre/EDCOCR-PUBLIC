@@ -1,7 +1,7 @@
 {{- if and .Values.observability .Values.observability.federation .Values.observability.federation.enabled }}
 {{- if eq .Values.observability.federation.mode "remote_write" }}
 # =============================================================================
-#  -- C3 Federated Observability (remote_write mode)
+# Plan C Phase 1 -- C3 Federated Observability (remote_write mode)
 #
 # This ConfigMap ships a drop-in `additionalScrapeConfigs` / remote_write
 # fragment that an external Prometheus operator deployment can consume

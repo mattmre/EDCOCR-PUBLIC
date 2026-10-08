@@ -1,5 +1,6 @@
 """Tests for VLM inference gateway client."""
 
+import socket
 from unittest import mock
 
 import httpx
@@ -21,6 +22,9 @@ def _make_config(**overrides) -> VLMConfig:
     defaults = {
         "enabled": True,
         "endpoint_url": "http://vlm-test:8080",
+        "allowed_hosts": ("vlm-test",),
+        "allow_insecure_local": True,
+        "allow_private_egress": True,
         "api_key": "test-key",
         "model_name": "test-model",
         "max_context_pages": 5,
@@ -133,10 +137,116 @@ class TestVLMGatewayAnalyzeDocument:
         assert result["confidence"] == 0.95
         assert "processing_time_ms" in result
 
+    def test_inline_image_payload_rejected_by_default(self):
+        gw = VLMGateway(_make_config())
+        with pytest.raises(VLMGatewayError, match="Inline VLM image payloads"):
+            gw.analyze_document(
+                pages=[
+                    {
+                        "page_number": 1,
+                        "text": "",
+                        "image_b64": "ZmFrZS1pbWFnZQ==",
+                    }
+                ]
+            )
+
+    def test_url_handoff_payload_rejected_by_default(self):
+        gw = VLMGateway(_make_config())
+        with pytest.raises(VLMGatewayError, match="URL handoff"):
+            gw.analyze_document(
+                pages=[
+                    {
+                        "page_number": 1,
+                        "text": "",
+                        "image_url": "https://storage.example.com/page.png",
+                    }
+                ]
+            )
+
+    def test_nested_url_handoff_payload_rejected_by_default(self):
+        gw = VLMGateway(_make_config())
+        with pytest.raises(VLMGatewayError, match="URL handoff"):
+            gw.analyze_document(
+                pages=[
+                    {
+                        "page_number": 1,
+                        "text": "",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": "http://169.254.169.254/latest/meta-data"
+                                },
+                            }
+                        ],
+                    }
+                ]
+            )
+
+    @pytest.mark.parametrize("field", ["image_uri", "href", "src"])
+    def test_urlish_page_fields_rejected_by_gateway_schema(self, field):
+        gw = VLMGateway(_make_config())
+        with pytest.raises(VLMGatewayError, match="URL handoff"):
+            gw.analyze_document(
+                pages=[
+                    {
+                        "page_number": 1,
+                        "text": "",
+                        field: "https://storage.example.com/page.png",
+                    }
+                ]
+            )
+
+    def test_unsupported_page_fields_rejected_by_gateway_schema(self):
+        gw = VLMGateway(_make_config())
+        with pytest.raises(VLMGatewayError, match="unsupported fields"):
+            gw.analyze_document(
+                pages=[
+                    {
+                        "page_number": 1,
+                        "text": "",
+                        "metadata": {"source": "operator-note"},
+                    }
+                ]
+            )
+
+    @pytest.mark.parametrize("page_number", ["1", True])
+    def test_page_number_rejects_coercible_values(self, page_number):
+        gw = VLMGateway(_make_config())
+        with pytest.raises(VLMGatewayError, match="page_number"):
+            gw.analyze_document(pages=[{"page_number": page_number, "text": "hello"}])
+
+    @pytest.mark.parametrize("pages", [[], None])
+    def test_empty_pages_rejected(self, pages):
+        gw = VLMGateway(_make_config())
+        with pytest.raises(VLMGatewayError, match="at least one page"):
+            gw.analyze_document(pages=pages)
+
+    def test_inline_image_payload_requires_explicit_opt_in(self):
+        gw = VLMGateway(_make_config(allow_inline_images=True))
+        mock_resp = mock.MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"entities": []}
+
+        with mock.patch.object(gw, "_get_client") as mock_client:
+            mock_client.return_value.request.return_value = mock_resp
+            gw.analyze_document(
+                pages=[
+                    {
+                        "page_number": 1,
+                        "text": "",
+                        "image_b64": "ZmFrZS1pbWFnZQ==",
+                    }
+                ]
+            )
+
+        sent_payload = mock_client.return_value.request.call_args.kwargs["json"]
+        assert sent_payload["pages"][0]["image_b64"] == "ZmFrZS1pbWFnZQ=="
+
     def test_page_truncation(self):
         """Pages beyond max_context_pages are truncated."""
         gw = VLMGateway(_make_config(max_context_pages=2))
-        pages = [{"page_number": i, "text": f"page {i}"} for i in range(5)]
+        pages = [{"page_number": i, "text": f"page {i}"} for i in range(1, 6)]
 
         mock_resp = mock.MagicMock()
         mock_resp.status_code = 200
@@ -171,6 +281,17 @@ class TestVLMGatewayAnalyzeDocument:
         with mock.patch.object(gw, "_get_client") as mock_client:
             mock_client.return_value.request.return_value = mock_resp
             with pytest.raises(VLMServerError):
+                gw.analyze_document(pages=[{"page_number": 1, "text": "test"}])
+
+    def test_non_object_json_response_raises_controlled_error(self):
+        gw = VLMGateway(_make_config(retry_attempts=0))
+        mock_resp = mock.MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = []
+
+        with mock.patch.object(gw, "_get_client") as mock_client:
+            mock_client.return_value.request.return_value = mock_resp
+            with pytest.raises(VLMGatewayError, match="JSON object"):
                 gw.analyze_document(pages=[{"page_number": 1, "text": "test"}])
 
     def test_connection_error(self):
@@ -237,6 +358,17 @@ class TestVLMGatewaySemanticSearch:
             results = gw.semantic_search(query="nonexistent content")
 
         assert results == []
+
+    def test_missing_results_field_is_rejected(self):
+        gw = VLMGateway(_make_config())
+        mock_resp = mock.MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+
+        with mock.patch.object(gw, "_get_client") as mock_client:
+            mock_client.return_value.request.return_value = mock_resp
+            with pytest.raises(VLMGatewayError, match="results list"):
+                gw.semantic_search(query="malformed")
 
     def test_search_with_document_scope(self):
         gw = VLMGateway(_make_config())
@@ -354,6 +486,31 @@ class TestVLMGatewayRetry:
 class TestVLMGatewayHTTPClient:
     """Tests for the HTTP client initialization."""
 
+    @pytest.fixture(autouse=True)
+    def _resolve_test_hosts_to_loopback(self, monkeypatch):
+        """Keep SSRF endpoint pinning deterministic and entirely local."""
+        import ocr_distributed.ssrf as ssrf
+
+        def resolve_loopback(
+            hostname,
+            _port,
+            _family,
+            _socktype,
+            _protocol=0,
+            _flags=0,
+        ):
+            return [
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    socket.IPPROTO_TCP,
+                    hostname,
+                    ("127.0.0.1", 0),
+                )
+            ]
+
+        monkeypatch.setattr(ssrf, "_ORIG_GETADDRINFO", resolve_loopback)
+
     def test_client_sets_auth_header(self):
         gw = VLMGateway(_make_config(api_key="my-secret-key"))
         client = gw._get_client()
@@ -365,6 +522,13 @@ class TestVLMGatewayHTTPClient:
         gw = VLMGateway(_make_config(api_key=""))
         client = gw._get_client()
         assert "Authorization" not in client.headers
+        gw.close()
+
+    def test_client_does_not_inherit_proxy_or_redirect_policy(self):
+        gw = VLMGateway(_make_config())
+        client = gw._get_client()
+        assert client.trust_env is False
+        assert client.follow_redirects is False
         gw.close()
 
     def test_client_reused(self):
@@ -382,8 +546,82 @@ class TestVLMGatewayHTTPClient:
         assert gw._client is None
 
     def test_client_base_url(self):
-        gw = VLMGateway(_make_config(endpoint_url="http://vlm:9090/v1/"))
+        gw = VLMGateway(
+            _make_config(
+                endpoint_url="http://vlm:9090/v1/",
+                allowed_hosts=("vlm:9090",),
+            )
+        )
         client = gw._get_client()
         # httpx normalizes base_url
         assert "vlm" in str(client.base_url)
+        gw.close()
+
+    def test_client_rejects_host_not_in_allowlist(self):
+        gw = VLMGateway(
+            _make_config(
+                endpoint_url="http://evil.example:9090",
+                allowed_hosts=("vlm-test",),
+            )
+        )
+        with pytest.raises(VLMGatewayError, match="not in VLM_ALLOWED_HOSTS"):
+            gw._get_client()
+
+    def test_client_rejects_mismatched_allowlist_port(self):
+        gw = VLMGateway(
+            _make_config(
+                endpoint_url="https://vlm.example.com:443/v1",
+                allowed_hosts=("vlm.example.com:8443",),
+                allow_private_egress=False,
+            )
+        )
+        with pytest.raises(VLMGatewayError, match="host/port"):
+            gw._get_client()
+
+    def test_client_rejects_public_http_with_local_only_flag(self):
+        gw = VLMGateway(
+            _make_config(
+                endpoint_url="http://example.com/v1",
+                allowed_hosts=("example.com",),
+                allow_insecure_local=True,
+                allow_private_egress=False,
+            )
+        )
+        with pytest.raises(VLMGatewayError, match="private/local"):
+            gw._get_client()
+
+    def test_client_rejects_http_without_local_dev_opt_in(self):
+        gw = VLMGateway(
+            _make_config(
+                endpoint_url="http://vlm-test:9090",
+                allowed_hosts=("vlm-test",),
+                allow_insecure_local=False,
+                allow_private_egress=True,
+            )
+        )
+        with pytest.raises(VLMGatewayError, match="SSRF policy"):
+            gw._get_client()
+
+    def test_client_rejects_private_host_without_local_dev_opt_in(self):
+        gw = VLMGateway(
+            _make_config(
+                endpoint_url="https://127.0.0.1:9090",
+                allowed_hosts=("127.0.0.1",),
+                allow_private_egress=False,
+            )
+        )
+        with pytest.raises(VLMGatewayError, match="SSRF policy"):
+            gw._get_client()
+
+    def test_client_allows_private_https_without_allowing_http(self):
+        gw = VLMGateway(
+            _make_config(
+                endpoint_url="https://127.0.0.1:9090",
+                allowed_hosts=("127.0.0.1:9090",),
+                allow_insecure_local=False,
+                allow_private_egress=True,
+            )
+        )
+        client = gw._get_client()
+        assert "127.0.0.1" in str(client.base_url)
         gw.close()

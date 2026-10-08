@@ -1,4 +1,4 @@
-"""Tests for assembler parallelism.
+"""Tests for assembler parallelism (maintenance review).
 
 Validates:
 - NUM_ASSEMBLER_WORKERS constant defaults to 4
@@ -106,8 +106,8 @@ def test_finalize_doc_empty_snap_does_not_raise(
     }
 
     # Should not raise
-    with patch("os.path.exists", return_value=False), \
-         patch("os.makedirs"), \
+    with patch("os.path.exists", return_value=False),\
+         patch("os.makedirs"),\
          patch("builtins.open", MagicMock()):
         _finalize_doc(doc, "test_doc_id", page_data_snap)
 

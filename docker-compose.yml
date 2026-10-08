@@ -2,11 +2,17 @@ services:
   ocr-gpu:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: coordinator/Dockerfile.worker.gpu
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        SOURCE_TREE_SHA256: ${SOURCE_TREE_SHA256:-unknown}
     image: ocr-gpu-local
     container_name: ocr_gpu_processor
+    # S1-A12: drain budget 300s requires stop_grace >= 360s
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-360s}
     volumes:
-      - ./ocr_source:/app/ocr_source
+      # Forensic precondition: source evidence is immutable to the OCR service.
+      - ./ocr_source:/app/ocr_source:ro
       - ./ocr_output:/app/ocr_output
       - ./ocr_gpu_async.py:/app/ocr_gpu_async.py:ro
       - ./optimize_pdfs.py:/app/optimize_pdfs.py:ro
@@ -16,20 +22,27 @@ services:
       - ./reprocess:/app/reprocess:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+      - HEALTHCHECK_FILE=/tmp/ocr_healthcheck
       # Pipeline tuning for RTX 3090 (24GB VRAM) but limited by host RAM:
       - NUM_WORKERS=8
       - NUM_EXTRACTORS=8
       - NUM_COMPRESSORS=4
       - IMAGE_QUEUE_SIZE=50
       - EXTRACTOR_MODE=thread
-      - EXTERNAL_TRANSLATION_PREFER=${EXTERNAL_TRANSLATION_PREFER:-false}
-      - EXTERNAL_TRANSLATION_URL=${EXTERNAL_TRANSLATION_URL:-http://external-translation:8080}
-      - EXTERNAL_TRANSLATION_PROVIDER_ID=${EXTERNAL_TRANSLATION_PROVIDER_ID:-passthrough}
-      - EXTERNAL_TRANSLATION_TIMEOUT_SECONDS=${EXTERNAL_TRANSLATION_TIMEOUT_SECONDS:-30}
-      - EXTERNAL_TRANSLATION_READINESS_PATH=${EXTERNAL_TRANSLATION_READINESS_PATH:-/health}
+      - EDC_TRANSLATION_PREFER_EXTERNAL=${EDC_TRANSLATION_PREFER_EXTERNAL:-false}
+      - EDC_TRANSLATION_URL=${EDC_TRANSLATION_URL:-http://edc-translation:8080}
+      - EDC_TRANSLATION_PROVIDER_ID=${EDC_TRANSLATION_PROVIDER_ID:-passthrough}
+      - EDC_TRANSLATION_TIMEOUT_SECONDS=${EDC_TRANSLATION_TIMEOUT_SECONDS:-30}
+      - EDC_TRANSLATION_READINESS_PATH=${EDC_TRANSLATION_READINESS_PATH:-/health}
       # - DPI=300
     shm_size: '8gb'
     command: python3 -u /app/ocr_gpu_async.py
+    healthcheck:
+      test: ["CMD", "sh", "/app/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     deploy:
       resources:
         reservations:
@@ -40,15 +53,15 @@ services:
     stdin_open: true # docker run -i
     tty: true # docker run -t
 
-  external-translation:
+  edc-translation:
     profiles:
-      - external-translation
+      - edc-translation
     build:
-      context: ${EXTERNAL_TRANSLATION_REPO:-../EXTERNAL_TRANSLATION}
+      context: ${EDC_TRANSLATION_REPO:-../EDC_TRANSLATION}
       dockerfile: Dockerfile
-    image: ${EXTERNAL_TRANSLATION_IMAGE:-external-translation:0.1.0}
+    image: ${EDC_TRANSLATION_IMAGE:-edc-translation:0.1.0}
     ports:
-      - "127.0.0.1:${EXTERNAL_TRANSLATION_HOST_PORT:-8080}:8080"
+      - "127.0.0.1:${EDC_TRANSLATION_HOST_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)\""]
       interval: 10s

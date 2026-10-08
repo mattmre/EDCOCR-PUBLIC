@@ -89,7 +89,7 @@ def emit_quality_estimated(
     -----
     Custody emission MUST never raise; failures are logged at DEBUG
     level only.  This mirrors the fail-open contract the rest of the
-    translation pipeline follows (cf. ).
+    translation pipeline follows (cf. docs/release-candidate.md).
     """
     if chain is None:
         return

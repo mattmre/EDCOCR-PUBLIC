@@ -26,20 +26,33 @@ import os
 
 logger = logging.getLogger(__name__)
 
+
+def _bounded_int_env(name, default, minimum, maximum):
+    """Read an embedding expansion setting without allowing loop abuse."""
+    try:
+        value = int(os.environ.get(name, str(default)) or str(default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-ENABLE_EMBEDDINGS = os.environ.get(
-    'ENABLE_EMBEDDINGS', 'false'
-).lower() in ('true', '1', 'yes')
-
-EMBEDDING_MODEL = os.environ.get(
-    'EMBEDDING_MODEL', 'all-MiniLM-L6-v2'
+ENABLE_EMBEDDINGS = os.environ.get("ENABLE_EMBEDDINGS", "false").lower() in (
+    "true",
+    "1",
+    "yes",
 )
 
-EMBEDDING_CHUNK_SIZE = int(os.environ.get('EMBEDDING_CHUNK_SIZE', '500'))
-EMBEDDING_CHUNK_OVERLAP = int(os.environ.get('EMBEDDING_CHUNK_OVERLAP', '50'))
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+
+EMBEDDING_CHUNK_SIZE = _bounded_int_env("EMBEDDING_CHUNK_SIZE", 500, 1, 1_000_000)
+EMBEDDING_CHUNK_OVERLAP = min(
+    EMBEDDING_CHUNK_SIZE - 1,
+    _bounded_int_env("EMBEDDING_CHUNK_OVERLAP", 50, 0, 1_000_000),
+)
 
 # ---------------------------------------------------------------------------
 # Guarded sentence-transformers import
@@ -79,8 +92,21 @@ class ChunkEmbedder:
                 Defaults to EMBEDDING_CHUNK_OVERLAP.
         """
         self._model_name = model_name or EMBEDDING_MODEL
-        self._chunk_size = chunk_size or EMBEDDING_CHUNK_SIZE
-        self._chunk_overlap = chunk_overlap or EMBEDDING_CHUNK_OVERLAP
+        self._chunk_size = _bounded_int_env(
+            "embedding chunk size",
+            EMBEDDING_CHUNK_SIZE if chunk_size is None else chunk_size,
+            1,
+            1_000_000,
+        )
+        self._chunk_overlap = min(
+            self._chunk_size - 1,
+            _bounded_int_env(
+                "embedding chunk overlap",
+                EMBEDDING_CHUNK_OVERLAP if chunk_overlap is None else chunk_overlap,
+                0,
+                1_000_000,
+            ),
+        )
         self._model = None
         self._load_attempted = False
 
@@ -147,17 +173,19 @@ class ChunkEmbedder:
 
             # Try to break at word boundary (look back up to 50 chars)
             if end < text_len:
-                last_space = chunk.rfind(' ', max(0, len(chunk) - 50))
+                last_space = chunk.rfind(" ", max(0, len(chunk) - 50))
                 if last_space > 0:
                     chunk = chunk[:last_space]
                     end = start + last_space
 
             if chunk.strip():
-                chunks.append({
-                    'chunk_text': chunk.strip(),
-                    'chunk_index': chunk_index,
-                    'page_num': page_num,
-                })
+                chunks.append(
+                    {
+                        "chunk_text": chunk.strip(),
+                        "chunk_index": chunk_index,
+                        "page_num": page_num,
+                    }
+                )
                 chunk_index += 1
 
             # If we've reached the end of the text, stop
@@ -214,11 +242,11 @@ class ChunkEmbedder:
             # Return chunks without embeddings
             return [
                 {
-                    'chunk_text': c['chunk_text'],
-                    'embedding': None,
-                    'chunk_index': c['chunk_index'],
-                    'page_num': c['page_num'],
-                    'model': '',
+                    "chunk_text": c["chunk_text"],
+                    "embedding": None,
+                    "chunk_index": c["chunk_index"],
+                    "page_num": c["page_num"],
+                    "model": "",
                 }
                 for c in chunks
             ]
@@ -226,40 +254,42 @@ class ChunkEmbedder:
         if not self._ensure_model():
             return [
                 {
-                    'chunk_text': c['chunk_text'],
-                    'embedding': None,
-                    'chunk_index': c['chunk_index'],
-                    'page_num': c['page_num'],
-                    'model': '',
+                    "chunk_text": c["chunk_text"],
+                    "embedding": None,
+                    "chunk_index": c["chunk_index"],
+                    "page_num": c["page_num"],
+                    "model": "",
                 }
                 for c in chunks
             ]
 
-        texts = [c['chunk_text'] for c in chunks]
+        texts = [c["chunk_text"] for c in chunks]
         try:
             embeddings = self._model.encode(texts, convert_to_numpy=True)
         except Exception as exc:
             logger.warning("Batch embedding generation failed: %s", exc)
             return [
                 {
-                    'chunk_text': c['chunk_text'],
-                    'embedding': None,
-                    'chunk_index': c['chunk_index'],
-                    'page_num': c['page_num'],
-                    'model': '',
+                    "chunk_text": c["chunk_text"],
+                    "embedding": None,
+                    "chunk_index": c["chunk_index"],
+                    "page_num": c["page_num"],
+                    "model": "",
                 }
                 for c in chunks
             ]
 
         results = []
         for i, chunk in enumerate(chunks):
-            results.append({
-                'chunk_text': chunk['chunk_text'],
-                'embedding': embeddings[i].tolist(),
-                'chunk_index': chunk['chunk_index'],
-                'page_num': chunk['page_num'],
-                'model': self._model_name,
-            })
+            results.append(
+                {
+                    "chunk_text": chunk["chunk_text"],
+                    "embedding": embeddings[i].tolist(),
+                    "chunk_index": chunk["chunk_index"],
+                    "page_num": chunk["page_num"],
+                    "model": self._model_name,
+                }
+            )
 
         return results
 
@@ -285,13 +315,15 @@ class ChunkEmbedder:
 
         records = []
         for item in embedded:
-            records.append({
-                'job_id': job_id,
-                'page_number': item['page_num'],
-                'chunk_index': item['chunk_index'],
-                'chunk_text': item['chunk_text'],
-                'embedding_json': item['embedding'],
-                'embedding_model': item['model'],
-                'metadata_json': {},
-            })
+            records.append(
+                {
+                    "job_id": job_id,
+                    "page_number": item["page_num"],
+                    "chunk_index": item["chunk_index"],
+                    "chunk_text": item["chunk_text"],
+                    "embedding_json": item["embedding"],
+                    "embedding_model": item["model"],
+                    "metadata_json": {},
+                }
+            )
         return records

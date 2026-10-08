@@ -1,7 +1,13 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Builder — compile Python packages with C extensions
 # ---------------------------------------------------------------------------
-FROM python:3.11-slim AS builder
+# Keep Django 6 on Python 3.12 while moving off the mutable Debian 13 default.
+# This is the official multi-architecture index digest for
+# python:3.12.13-slim-bookworm published 2026-08-05. A digest change is a new
+# qualified base, never an implicit rebuild of the same release identity.
+ARG PYTHON_BASE_IMAGE=python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+
+FROM ${PYTHON_BASE_IMAGE} AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -11,27 +17,43 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir --upgrade "pip>=25.3,<26" "setuptools>=82,<83" "wheel>=0.46.3,<0.47"
+COPY coordinator/requirements.txt ./requirements.txt
+COPY coordinator/requirements-api.txt ./requirements-api.txt
+RUN python3 -m pip install --no-cache-dir --upgrade "pip==26.2.1"
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-api.txt
+RUN pip install --no-cache-dir --upgrade "setuptools>=83,<84" "wheel>=0.46.3,<0.47"
 
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime — production image without build tools
 # ---------------------------------------------------------------------------
-FROM python:3.11-slim
+FROM ${PYTHON_BASE_IMAGE}
 
-# Runtime-only system dependency (no build-essential)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    postgresql-client \
+ARG PYTHON_BASE_IMAGE
+
+RUN apt-get update && apt-get install -y --no-install-recommends tini \
     && rm -rf /var/lib/apt/lists/*
+
+# Remove the base image's pip distribution metadata before overlaying the
+# builder's /usr/local. Otherwise both base and builder pip versions appear
+# installed even though only the builder's module is imported.
+RUN python3 -m pip uninstall --yes pip
 
 # Copy compiled Python packages from builder
 COPY --from=builder /usr/local /usr/local
 
 WORKDIR /app/coordinator
 
-# Copy coordinator project
-COPY . .
+# The coordinator task module imports shared policy, language, filesystem,
+# and PDF helpers during Celery autodiscovery. Keep the image lightweight by
+# installing coordinator/requirements.txt only, but copy the complete source
+# closure from the repository-root build context.
+COPY coordinator/ /app/coordinator/
+COPY ocr_distributed/ /app/ocr_distributed/
+COPY ocr_local/ /app/ocr_local/
+COPY schemas/ /app/schemas/
+COPY optimize_pdfs.py /app/optimize_pdfs.py
+
+ENV PYTHONPATH=/app:/app/coordinator
 
 # Collect static files
 RUN python manage.py collectstatic --noinput 2>/dev/null || true
@@ -46,13 +68,28 @@ RUN groupadd -r -g 1000 ocr && \
     mkdir -p /app/coordinator/staticfiles /home/ocr && \
     chown -R ocr:ocr /app/coordinator/staticfiles /home/ocr
 
+ARG SOURCE_REVISION=unknown
+ARG SOURCE_TREE_SHA256=unknown
+RUN if [ -z "$SOURCE_REVISION" ] || [ "$SOURCE_REVISION" = "unknown" ] || \
+       [ -z "$SOURCE_TREE_SHA256" ] || [ "$SOURCE_TREE_SHA256" = "unknown" ]; then \
+      printf '%s\n' 'ERROR: pass SOURCE_REVISION and SOURCE_TREE_SHA256 (coordinator profile); see docs/setup/FARM-STANDUP.md' >&2; \
+      exit 1; \
+    fi
+
+LABEL org.opencontainers.image.base.name="$PYTHON_BASE_IMAGE" \
+      org.opencontainers.image.role="ocr-coordinator-base" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      io.ocr_local.runtime-source-sha256="${SOURCE_TREE_SHA256}" \
+      io.ocr_local.runtime-profile="coordinator"
+
 USER ocr
 
 # ---------------------------------------------------------------------------
-# Docker HEALTHCHECK — Django/Gunicorn HTTP probe
+# Docker HEALTHCHECK — Django/Gunicorn HTTP probe (maintenance review)
 # ---------------------------------------------------------------------------
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')" || exit 1
 
 # Default command (overridden per service)
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
 CMD ["gunicorn", "coordinator.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120"]

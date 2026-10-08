@@ -99,7 +99,7 @@ export default function TenantsListPage() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return => {
+    return () => {
       cancelled = true;
     };
   }, []);

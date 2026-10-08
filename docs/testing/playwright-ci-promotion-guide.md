@@ -1,3 +1,5 @@
+> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](../release-candidate.md) and the root installation guide.
+
 # Playwright CI Gate Promotion Guide
 
 This document explains how the Playwright PR gate workflow was promoted from an

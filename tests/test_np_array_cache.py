@@ -1,38 +1,44 @@
-"""Tests for np.array() caching for DocIntel when preprocessing is disabled.
+"""Tests for maintenance review: np.array() caching for DocIntel when preprocessing is disabled.
 
 Verifies the conditional reuse logic in the GPU worker thread's Document
-Intelligence block. When preprocessing is disabled, ``ocr_img is task.image``
-holds and the already-computed ``img_np`` can be reused instead of calling
-``np.array()`` a second time.
+Intelligence block. When preprocessing is disabled,
+``attempt.ocr_img is task.image`` holds and the already-computed
+``attempt.img_np`` can be reused instead of calling ``np.array()`` a second
+time. ``img_np`` is initialized to None on ``_WorkerAttempt`` at bind time.
 
 Covers:
 - Preprocessing disabled: di_img_np reuses img_np (identity check)
 - Preprocessing enabled: di_img_np is a fresh conversion of task.image
-- PaddleOCR failed (img_np is None): di_img_np is a fresh conversion
-- img_np is None AND ocr_img is task.image: still converts fresh (safe guard)
+- PaddleOCR failed (attempt.img_np is None): di_img_np is a fresh conversion
+- attempt.img_np is None AND attempt.ocr_img is task.image: still converts fresh
 
 Run with: python -m pytest tests/test_np_array_cache.py -v
 """
 
+import ast
+import inspect
 import os
 
 import numpy as np
 import pytest
 from PIL import Image
 
+import ocr_gpu_async as pipe
+
 # Add project root to path
 
 
 def _resolve_di_img_np(img_np, ocr_img, task_image):
-    """Reproduce the conditional from ocr_gpu_async.py DocIntel block.
+    """Reproduce the DocIntel np.array reuse predicate from ocr_gpu_async.py.
 
-    This mirrors the exact logic at the Document Intelligence (Phase 3A)
-    section of ``gpu_worker_thread``:
+    Production (``worker_thread`` / ``_WorkerAttempt``) is:
 
-        if img_np is not None and ocr_img is task.image:
-            di_img_np = img_np
+        if attempt.img_np is not None and attempt.ocr_img is task.image:
+            di_img_np = attempt.img_np
         else:
             di_img_np = np.array(task.image)
+
+    This helper models the same boolean logic with bare locals.
     """
     if img_np is not None and ocr_img is task_image:
         return img_np
@@ -178,41 +184,91 @@ class TestNpArrayCacheEdgeCases:
         assert di_img_np.shape == (3300, 2550, 3)
 
 
+def _is_attempt_attr(node, name):
+    return (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "attempt"
+        and node.attr == name
+    )
+
+
 class TestSourceCodeConditional:
     """Verify the actual conditional exists in ocr_gpu_async.py source."""
 
     def test_docintel_block_has_cache_conditional(self):
         """The DocIntel block must contain the identity-check optimization."""
-        src_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "ocr_gpu_async.py",
-        )
-        with open(src_path, "r", encoding="utf-8") as f:
-            source = f.read()
+        source = inspect.getsource(pipe.worker_thread)
+        assert (
+            "if attempt.img_np is not None and attempt.ocr_img is task.image:" in source
+        ), "Expected identity-check conditional for np.array cache in DocIntel block"
+        assert (
+            "di_img_np = attempt.img_np" in source
+        ), "Expected reuse assignment 'di_img_np = attempt.img_np'"
 
-        # Verify the conditional reuse pattern exists
-        assert "if img_np is not None and ocr_img is task.image:" in source, (
-            "Expected identity-check conditional for np.array cache in DocIntel block"
+        tree = ast.parse(source)
+        reuse_if = False
+        reuse_assign = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If) and isinstance(node.test, ast.BoolOp):
+                test = node.test
+                if not isinstance(test.op, ast.And) or len(test.values) != 2:
+                    continue
+                left, right = test.values
+                left_ok = (
+                    isinstance(left, ast.Compare)
+                    and _is_attempt_attr(left.left, "img_np")
+                    and len(left.ops) == 1
+                    and isinstance(left.ops[0], ast.IsNot)
+                    and isinstance(left.comparators[0], ast.Constant)
+                    and left.comparators[0].value is None
+                )
+                right_ok = (
+                    isinstance(right, ast.Compare)
+                    and _is_attempt_attr(right.left, "ocr_img")
+                    and len(right.ops) == 1
+                    and isinstance(right.ops[0], ast.Is)
+                    and isinstance(right.comparators[0], ast.Attribute)
+                    and isinstance(right.comparators[0].value, ast.Name)
+                    and right.comparators[0].value.id == "task"
+                    and right.comparators[0].attr == "image"
+                )
+                if left_ok and right_ok:
+                    reuse_if = True
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target = node.targets[0]
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == "di_img_np"
+                    and _is_attempt_attr(node.value, "img_np")
+                ):
+                    reuse_assign = True
+        assert reuse_if, (
+            "DocIntel identity-check must be an AST If on attempt.img_np / "
+            "attempt.ocr_img, not a comment"
         )
-        assert "di_img_np = img_np" in source, (
-            "Expected reuse assignment 'di_img_np = img_np'"
+        assert reuse_assign, (
+            "DocIntel reuse must assign di_img_np = attempt.img_np in AST, "
+            "not a comment"
         )
 
     def test_img_np_initialized_to_none(self):
-        """img_np must be initialized to None before the OCR try block."""
-        src_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "ocr_gpu_async.py",
-        )
-        with open(src_path, "r", encoding="utf-8") as f:
-            source = f.read()
-
-        assert "img_np = None" in source, (
-            "img_np must be pre-initialized to None for safe guard when PaddleOCR fails"
-        )
+        """img_np must start as None on each _WorkerAttempt after queue receive."""
+        tree = ast.parse(inspect.getsource(pipe._WorkerAttempt))
+        img_np_default = None
+        found = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                if node.target.id == "img_np":
+                    found = True
+                    img_np_default = node.value
+        assert found, "img_np must be a _WorkerAttempt field"
+        assert isinstance(img_np_default, ast.Constant) and img_np_default.value is None
+        worker_src = inspect.getsource(pipe.worker_thread)
+        assert "attempt = _bind_worker_attempt(task)" in worker_src
 
     def test_two_pass_documentation_comment(self):
-        """Two-pass language detection has an explanatory comment."""
+        """maintenance review: Two-pass language detection has an explanatory comment."""
         src_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "ocr_gpu_async.py",
@@ -220,9 +276,9 @@ class TestSourceCodeConditional:
         with open(src_path, "r", encoding="utf-8") as f:
             source = f.read()
 
-        assert "paddle_lines is NOT" in source, (
-            "Expected two-pass documentation comment explaining paddle_lines scope"
-        )
-        assert "second pass is only" in source, (
-            "Expected two-pass comment explaining the purpose of the second pass"
-        )
+        assert (
+            "replaces attempt.paddle_lines" in source
+        ), "Expected two-pass comment stating accepted rerun replaces paddle_lines"
+        assert (
+            "paddle_lines is NOT" not in source
+        ), "Two-pass must not claim first-pass paddle_lines are left in place"

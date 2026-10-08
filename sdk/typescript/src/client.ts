@@ -1,12 +1,12 @@
 /**
- * EDCOCR SDK client for TypeScript / JavaScript.
+ * OCR_LOCAL SDK client for TypeScript / JavaScript.
  *
  * Provides a typed, ergonomic interface for submitting OCR jobs,
  * polling for results, streaming progress via WebSocket, and
  * downloading processed documents.
  *
- * Uses the native `fetch` API available in Node.js 18+ and modern
- * browsers. Zero runtime dependencies.
+ * Uses the native `fetch` API available in Node.js 20.19+ or 22.12+
+ * and modern browsers. Zero runtime dependencies.
  *
  * @example
  * ```typescript
@@ -14,7 +14,7 @@
  *
  * const client = new EDCOCRClient({
  *   baseUrl: 'http://localhost:8000',
- *   apiKey: 'my-api-key',
+ *   apiKey: process.env.OCR_API_KEY,
  * });
  *
  * const job = await client.submitJob({ filePath: 'document.pdf' });
@@ -51,7 +51,7 @@ import type {
 } from './models.js';
 
 /** SDK version string. */
-export const SDK_VERSION = '4.1.0';
+export const SDK_VERSION = '4.2.0-rc.1';
 
 /** Default User-Agent header value. */
 const USER_AGENT = `ocr-local-typescript-sdk/${SDK_VERSION}`;
@@ -73,7 +73,7 @@ function isTerminalStatus(status: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Main SDK client for the EDCOCR REST API.
+ * Main SDK client for the OCR_LOCAL REST API.
  *
  * All methods are async and return strongly-typed results.
  * The client uses the native `fetch` API and has zero runtime dependencies.
@@ -158,7 +158,8 @@ export class EDCOCRClient {
   async getResult(jobId: string): Promise<JobResultResponse> {
     return this.request<JobResultResponse>(
       'GET',
-      `/api/v1/jobs/${encodeURIComponent(jobId)}/result`);
+      `/api/v1/jobs/${encodeURIComponent(jobId)}/result`,
+    );
   }
 
   /**
@@ -190,7 +191,8 @@ export class EDCOCRClient {
   async cancelJob(jobId: string): Promise<JobStatusResponse> {
     return this.request<JobStatusResponse>(
       'DELETE',
-      `/api/v1/jobs/${encodeURIComponent(jobId)}`);
+      `/api/v1/jobs/${encodeURIComponent(jobId)}`,
+    );
   }
 
   /**
@@ -204,7 +206,8 @@ export class EDCOCRClient {
   async retryJob(jobId: string): Promise<JobSubmitResponse> {
     return this.request<JobSubmitResponse>(
       'POST',
-      `/api/v1/jobs/${encodeURIComponent(jobId)}/retry`);
+      `/api/v1/jobs/${encodeURIComponent(jobId)}/retry`,
+    );
   }
 
   /**
@@ -239,7 +242,8 @@ export class EDCOCRClient {
    */
   async waitForCompletion(
     jobId: string,
-    options: WaitOptions = {}): Promise<JobStatusResponse> {
+    options: WaitOptions = {},
+  ): Promise<JobStatusResponse> {
     const pollInterval = options.pollIntervalMs ?? 2_000;
     const timeout = options.timeoutMs ?? 600_000;
     const start = Date.now();
@@ -258,7 +262,8 @@ export class EDCOCRClient {
       const elapsed = Date.now() - start;
       if (elapsed >= timeout) {
         throw new TimeoutError(
-          `Job ${jobId} did not complete within ${timeout}ms (status: ${status.status})`);
+          `Job ${jobId} did not complete within ${timeout}ms (status: ${status.status})`,
+        );
       }
 
       await sleep(pollInterval);
@@ -276,7 +281,8 @@ export class EDCOCRClient {
    */
   async submitAndWait(
     submitOptions: SubmitOptions,
-    waitOptions: WaitOptions = {}): Promise<JobStatusResponse> {
+    waitOptions: WaitOptions = {},
+  ): Promise<JobStatusResponse> {
     const job = await this.submitJob(submitOptions);
     return this.waitForCompletion(job.job_id, waitOptions);
   }
@@ -305,15 +311,23 @@ export class EDCOCRClient {
     }
 
     const wsUrl = this.baseUrl.replace(/^http/, 'ws');
-    let url = `${wsUrl}/ws/jobs/${encodeURIComponent(jobId)}`;
+    const url = `${wsUrl}/ws/jobs/${encodeURIComponent(jobId)}`;
+    const socket = new WebSocket(url);
 
-    // WebSocket does not support custom headers in browsers, so pass token
-    // as query parameter if an API key is configured.
+    // Browser WebSockets cannot set X-API-Key during the handshake.  Send the
+    // credential in the first frame instead; query parameters are routinely
+    // retained by proxy/access logs and must never carry long-lived keys.
     if (this.apiKey) {
-      url += `?token=${encodeURIComponent(this.apiKey)}`;
+      socket.addEventListener(
+        'open',
+        () => {
+          socket.send(JSON.stringify({ type: 'auth', api_key: this.apiKey }));
+        },
+        { once: true },
+      );
     }
 
-    return new WebSocket(url);
+    return socket;
   }
 
   /**
@@ -395,7 +409,8 @@ export class EDCOCRClient {
   private async fetchWithTimeout(
     url: string,
     init: RequestInit,
-    timeoutMs?: number): Promise<Response> {
+    timeoutMs?: number,
+  ): Promise<Response> {
     const ms = timeoutMs ?? this.timeoutMs;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ms);
@@ -421,14 +436,16 @@ export class EDCOCRClient {
   private async request<T>(
     method: string,
     path: string,
-    options: { body?: BodyInit; isMultipart?: boolean } = {}): Promise<T> {
+    options: { body?: BodyInit; isMultipart?: boolean } = {},
+  ): Promise<T> {
     if (this.closed) {
       throw new ClientClosedError();
     }
 
     const url = `${this.baseUrl}${path}`;
     const headers = this.buildHeaders(
-      options.isMultipart ? {} : { 'Content-Type': 'application/json' });
+      options.isMultipart ? {} : { 'Content-Type': 'application/json' },
+    );
 
     let lastError: unknown;
 
@@ -490,7 +507,8 @@ export class EDCOCRClient {
     }
 
     throw new OCRLocalError(
-      `Request failed after ${this.maxRetries} retries: ${lastError}`);
+      `Request failed after ${this.maxRetries} retries: ${lastError}`,
+    );
   }
 
   /**
@@ -514,7 +532,8 @@ export class EDCOCRClient {
       throw new AuthenticationError(
         `Authentication failed (HTTP ${status})`,
         status,
-        body);
+        body,
+      );
     }
 
     if (status === 404) {
@@ -525,7 +544,8 @@ export class EDCOCRClient {
       throw new ConflictError(
         `Conflict (HTTP 409)`,
         409,
-        body);
+        body,
+      );
     }
 
     if (status === 429) {
@@ -535,7 +555,8 @@ export class EDCOCRClient {
         `Rate limit exceeded (HTTP 429)`,
         429,
         body,
-        Number.isNaN(retrySeconds) ? null : retrySeconds);
+        Number.isNaN(retrySeconds) ? null : retrySeconds,
+      );
     }
 
     if (status >= 500) {

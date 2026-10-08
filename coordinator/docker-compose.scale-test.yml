@@ -15,14 +15,22 @@
 #                  exec django python /app/scale_test.py --mode live --jobs 50
 #
 # Note: Worker images are self-bootstrapping from Python slim base.
-# See coordinator/Dockerfile.worker for build instructions.
+# See coordinator/Dockerfile.worker.gpu for build instructions.
 
 services:
   ocr-worker:
     build:
       context: ..
-      dockerfile: coordinator/Dockerfile.worker
+      dockerfile: coordinator/Dockerfile.worker.gpu
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        SOURCE_TREE_SHA256: ${SOURCE_TREE_SHA256:-unknown}
     environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
+      CELERY_TASK_SIGNING_KEY: ${CELERY_TASK_SIGNING_KEY:?Set CELERY_TASK_SIGNING_KEY in .env}
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY:?Set PII_ENCRYPTION_KEY in .env}
+      WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY:?Set WEBHOOK_SECRET_KEY in .env}
+      S3_PRESIGNED_TASK_KEY: ${S3_PRESIGNED_TASK_KEY:-}
       DJANGO_SETTINGS_MODULE: coordinator.coordinator.settings
       DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-staging}
       PRODUCTION_READINESS_ACK: ${PRODUCTION_READINESS_ACK:-false}

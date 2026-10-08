@@ -1,4 +1,4 @@
-# Pre-commit hooks for EDCOCR
+# Pre-commit hooks for OCR_LOCAL
 # Install: pip install pre-commit && pre-commit install
 # Run manually: pre-commit run --all-files
 # Skip hooks: git commit --no-verify (use sparingly)
@@ -19,6 +19,8 @@ repos:
     rev: v5.0.0
     hooks:
       - id: check-yaml
+        # Helm templates are not pure YAML (Go template syntax).
+        exclude: ^helm/ocr-local/templates/
       - id: check-json
       - id: check-toml
       - id: check-merge-conflict
@@ -27,6 +29,7 @@ repos:
       - id: no-commit-to-branch
         args: [--branch=main]
       - id: detect-private-key
+        exclude: ^(?:tests/|v3[.]5/tests/)
 
   # Security checks
   - repo: https://github.com/Yelp/detect-secrets
@@ -37,6 +40,7 @@ repos:
         exclude: >
           (?x)^(
             tests/.*|
+            v3[.]5/tests/.*|
             docs/.*|
             .*\.lock$|
             coordinator/\.env\.example$|

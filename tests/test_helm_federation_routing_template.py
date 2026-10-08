@@ -30,7 +30,11 @@ EXAMPLE_VALUES = CHART_PATH / "values-federation-example.yaml"
 # Minimal secret overrides to bypass `required` template guards.
 MIN_SECRETS = {
     "secrets.djangoSecretKey": "test-django-key",
+    "secrets.apiKey": "test-api-key",
     "secrets.postgresPassword": "test-pg",
+    "secrets.webhookSecretKey": "test-webhook",
+    "secrets.piiEncryptionKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "secrets.celeryTaskSigningKey": "test-signing",
     "secrets.rabbitmqPassword": "test-rmq",
     "secrets.redisPassword": "test-redis",
     "secrets.flowerPassword": "test-flower",
@@ -129,11 +133,16 @@ def test_federation_enabled_routing_disabled_renders_disabled_flag():
 # ---------------------------------------------------------------------------
 def test_routing_enabled_emits_all_env_vars():
     rendered = _helm_template(
-        "--set", "federation.routing.enabled=true",
-        "--set", "federation.routing.strategy=priority",
-        "--set", "federation.routing.registry_poll_seconds=15",
-        "--set", "federation.routing.load_aware_cache_seconds=7",
-        "--set", "federation.routing.custom_callable=mypkg.router:pick",
+        "--set",
+        "federation.routing.enabled=true",
+        "--set",
+        "federation.routing.strategy=priority",
+        "--set",
+        "federation.routing.registry_poll_seconds=15",
+        "--set",
+        "federation.routing.load_aware_cache_seconds=7",
+        "--set",
+        "federation.routing.custom_callable=mypkg.router:pick",
         values_files=[EXAMPLE_VALUES],
     )
     docs = _parse_docs(rendered)
@@ -154,8 +163,10 @@ def test_routing_enabled_emits_all_env_vars():
 def test_deployments_envfrom_overlay_when_routing_enabled(deployment_name):
     """All three pod kinds must envFrom-mount the overlay so the C4 env vars surface."""
     rendered = _helm_template(
-        "--set", "federation.routing.enabled=true",
-        "--set", "federation.routing.strategy=round_robin",
+        "--set",
+        "federation.routing.enabled=true",
+        "--set",
+        "federation.routing.strategy=round_robin",
         values_files=[EXAMPLE_VALUES],
     )
     docs = _parse_docs(rendered)
@@ -164,33 +175,39 @@ def test_deployments_envfrom_overlay_when_routing_enabled(deployment_name):
     container = deployment["spec"]["template"]["spec"]["containers"][0]
     env_from = container.get("envFrom", [])
     overlay_refs = [
-        ef for ef in env_from
-        if (ef.get("configMapRef") or {}).get("name", "").endswith(
-            "-federation-overlay"
-        )
+        ef
+        for ef in env_from
+        if (ef.get("configMapRef") or {})
+        .get("name", "")
+        .endswith("-federation-overlay")
     ]
-    assert len(overlay_refs) == 1, (
-        f"{deployment_name} must envFrom-mount federation overlay"
-    )
+    assert (
+        len(overlay_refs) == 1
+    ), f"{deployment_name} must envFrom-mount federation overlay"
 
 
 def test_routing_disabled_renders_no_routing_envfrom_when_federation_off():
     """No federation -> no overlay -> no routing env vars on any deployment."""
     rendered = _helm_template()
     docs = _parse_docs(rendered)
-    for name in ("ocr-local-coordinator", "ocr-local-gpu-worker", "ocr-local-cpu-worker"):
+    for name in (
+        "ocr-local-coordinator",
+        "ocr-local-gpu-worker",
+        "ocr-local-cpu-worker",
+    ):
         d = _deployment_by_name(docs, name)
         assert d is not None
         env_from = d["spec"]["template"]["spec"]["containers"][0].get("envFrom", [])
         overlay_refs = [
-            ef for ef in env_from
-            if (ef.get("configMapRef") or {}).get("name", "").endswith(
-                "-federation-overlay"
-            )
+            ef
+            for ef in env_from
+            if (ef.get("configMapRef") or {})
+            .get("name", "")
+            .endswith("-federation-overlay")
         ]
-        assert overlay_refs == [], (
-            f"{name} must NOT envFrom-mount federation overlay when federation=off"
-        )
+        assert (
+            overlay_refs == []
+        ), f"{name} must NOT envFrom-mount federation overlay when federation=off"
 
 
 # ---------------------------------------------------------------------------
@@ -202,8 +219,10 @@ def test_routing_disabled_renders_no_routing_envfrom_when_federation_off():
 )
 def test_all_strategies_render(strategy):
     rendered = _helm_template(
-        "--set", "federation.routing.enabled=true",
-        "--set", f"federation.routing.strategy={strategy}",
+        "--set",
+        "federation.routing.enabled=true",
+        "--set",
+        f"federation.routing.strategy={strategy}",
         values_files=[EXAMPLE_VALUES],
     )
     docs = _parse_docs(rendered)

@@ -16,7 +16,7 @@ Usage:
     python scripts/validate_cjk_vertical.py --validate --synthetic
     python scripts/validate_cjk_vertical.py --validate --synthetic --output results.json
 
-Requires: vertical_text.py (from EDCOCR project root)
+Requires: vertical_text.py (from OCR_LOCAL project root)
 """
 
 from __future__ import annotations

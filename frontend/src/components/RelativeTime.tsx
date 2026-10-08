@@ -30,7 +30,7 @@ export function RelativeTime({ epochSeconds, intervalMs = 1000, className }: Rel
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), intervalMs);
-    return => window.clearInterval(id);
+    return () => window.clearInterval(id);
   }, [intervalMs]);
 
   return (

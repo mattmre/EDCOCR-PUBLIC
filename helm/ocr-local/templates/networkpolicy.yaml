@@ -1,4 +1,7 @@
 {{- if .Values.networkPolicy.enabled }}
+{{- if and .Values.networkPolicy.externalDependencies.rabbitmq.enabled (or (not .Values.networkPolicy.externalDependencies.rabbitmq.namespaceSelector.matchLabels) (not .Values.networkPolicy.externalDependencies.rabbitmq.podSelector.matchLabels)) }}
+{{- fail "networkPolicy.externalDependencies.rabbitmq requires nonempty namespaceSelector.matchLabels and podSelector.matchLabels" }}
+{{- end }}
 # =============================================================================
 # NetworkPolicy: Worker pods — restricted egress, no ingress
 # =============================================================================
@@ -16,8 +19,13 @@ spec:
         values:
           - gpu-worker
           - cpu-worker
+          - cpu-ocr-worker
           - layout-cpu-worker
+          - layoutlm-worker
           - nlp-gpu-worker
+          - ocr-render
+          - ocr-finalize
+          - tesseract-worker
   policyTypes:
     - Ingress
     - Egress
@@ -26,35 +34,70 @@ spec:
   egress:
     # PostgreSQL
     - to:
+        {{- if .Values.networkPolicy.externalDependencies.postgresql.enabled }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.externalDependencies.postgresql.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.externalDependencies.postgresql.podSelector | nindent 12 }}
+        {{- else }}
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: postgres
+        {{- end }}
       ports:
         - protocol: TCP
-          port: 5432
+          port: {{ .Values.networkPolicy.externalDependencies.postgresql.port }}
     # RabbitMQ
     - to:
+        {{- if .Values.networkPolicy.externalDependencies.rabbitmq.enabled }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.externalDependencies.rabbitmq.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.externalDependencies.rabbitmq.podSelector | nindent 12 }}
+        {{- else }}
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: rabbitmq
+        {{- end }}
       ports:
+        {{- if .Values.networkPolicy.externalDependencies.rabbitmq.enabled }}
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.externalDependencies.rabbitmq.port }}
+        {{- else }}
+        {{- if not .Values.tls.enabled }}
         - protocol: TCP
           port: 5672
+        {{- end }}
         {{- if .Values.tls.enabled }}
         - protocol: TCP
           port: 5671
         {{- end }}
+        {{- end }}
     # Redis
     - to:
+        {{- if .Values.networkPolicy.externalDependencies.redis.enabled }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.externalDependencies.redis.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.externalDependencies.redis.podSelector | nindent 12 }}
+        {{- else }}
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: redis
+        {{- end }}
       ports:
+        {{- if .Values.networkPolicy.externalDependencies.redis.enabled }}
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.externalDependencies.redis.port }}
+        {{- else }}
+        {{- if not .Values.tls.enabled }}
         - protocol: TCP
           port: 6379
+        {{- end }}
         {{- if .Values.tls.enabled }}
         - protocol: TCP
           port: 6380
+        {{- end }}
         {{- end }}
     {{- if .Values.redis.sentinel.enabled }}
     # Redis Sentinel
@@ -73,6 +116,28 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    {{- if eq .Values.storage.backend "s3" }}
+    {{- if and (not .Values.networkPolicy.externalDependencies.s3.enabled) (not .Values.storage.s3.networkPolicy.allowedCidrs) }}
+    {{- fail "storage.s3.networkPolicy.allowedCidrs must be explicitly set when storage.backend=s3" }}
+    {{- end }}
+    # S3/presigned workers perform direct HTTPS I/O. The explicit CIDR list is
+    # required so the chart cannot silently grant internet-wide egress.
+    - to:
+        {{- if .Values.networkPolicy.externalDependencies.s3.enabled }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.externalDependencies.s3.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.externalDependencies.s3.podSelector | nindent 12 }}
+        {{- else }}
+        {{- range .Values.storage.s3.networkPolicy.allowedCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.externalDependencies.s3.port }}
+    {{- end }}
 ---
 # =============================================================================
 # NetworkPolicy: Coordinator pods — ingress from any, egress to infra + any
@@ -85,67 +150,65 @@ metadata:
     {{- include "ocr-local.labels" . | nindent 4 }}
 spec:
   podSelector:
-    matchLabels:
-      app.kubernetes.io/component: coordinator
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          - coordinator
+          - celery-coordinator
+          - celery-beat
   policyTypes:
     - Ingress
     - Egress
   ingress:
-    # Allow from any source (Ingress controller, other services)
+    # Same-namespace services and the explicitly configured ingress namespace.
     - ports:
         - protocol: TCP
           port: 8000
+      from:
+        - podSelector: {}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingressNamespaceSelector | nindent 12 }}
   egress:
-    # PostgreSQL
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: postgres
-      ports:
-        - protocol: TCP
-          port: 5432
-    # RabbitMQ
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: rabbitmq
-      ports:
-        - protocol: TCP
-          port: 5672
-        {{- if .Values.tls.enabled }}
-        - protocol: TCP
-          port: 5671
-        {{- end }}
-    # Redis
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: redis
-      ports:
-        - protocol: TCP
-          port: 6379
-        {{- if .Values.tls.enabled }}
-        - protocol: TCP
-          port: 6380
-        {{- end }}
-    {{- if .Values.redis.sentinel.enabled }}
-    # Redis Sentinel
-    - to:
-        - podSelector:
-            matchLabels:
-              {{- include "ocr-local.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: redis-sentinel
-      ports:
-        - protocol: TCP
-          port: 26379
-    {{- end }}
-    # DNS (kube-dns / CoreDNS)
-    - ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
+    {{- include "ocr-local.applicationDependencyEgress" . | nindent 4 }}
     # Any external (webhooks, external APIs)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+{{- end }}
+{{- if and .Values.api.enabled .Values.networkPolicy.enabled }}
+---
+# FastAPI ingress is a distinct workload from the Django coordinator.  Keep
+# the API reachable by the ingress controller while retaining the same
+# explicit egress posture as the job pipeline.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-api-netpol
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8000
+      from:
+        - podSelector: {}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingressNamespaceSelector | nindent 12 }}
+  egress:
+    {{- include "ocr-local.applicationDependencyEgress" . | nindent 4 }}
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

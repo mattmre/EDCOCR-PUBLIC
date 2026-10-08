@@ -1,0 +1,119 @@
+# VTM SOLO topology — single-machine, self-contained OCR stack.
+#
+# Same core engine as production (ocr_gpu_async.py / worker image). No
+# Kubernetes. Peer repos call the optional API or mount ocr_source/ocr_output.
+#
+# Usage:
+#   docker compose -f docker-compose.solo.yml up -d --build
+#   docker compose -f docker-compose.solo.yml --profile api up -d --build
+#   docker compose -f docker-compose.solo.yml down
+#
+# Resource knobs (env):
+#   SOLO_NUM_WORKERS, SOLO_NUM_EXTRACTORS, SOLO_NUM_COMPRESSORS
+#   SOLO_IMAGE_QUEUE_SIZE, SOLO_SHM_SIZE, SOLO_GPU_COUNT
+#   CPU hosts: also pass -f docker-compose.solo.cpu.yml (Compose >= 2.24.4).
+#   OCR_AUTO_TUNE=true|false  (process-level ES-2 best-fit; default false;
+#     generate SOLO_* from host: python scripts/vtm_es2_solo_profile.py)
+#
+# See: docs/operations/vtm-solo-profile.md
+# Goal: docs/release-candidate.md
+
+x-solo-env: &solo-env
+  NUM_WORKERS: ${SOLO_NUM_WORKERS:-4}
+  NUM_EXTRACTORS: ${SOLO_NUM_EXTRACTORS:-4}
+  NUM_COMPRESSORS: ${SOLO_NUM_COMPRESSORS:-2}
+  IMAGE_QUEUE_SIZE: ${SOLO_IMAGE_QUEUE_SIZE:-25}
+  EXTRACTOR_MODE: ${SOLO_EXTRACTOR_MODE:-thread}
+  ENABLE_VALIDATION: ${SOLO_ENABLE_VALIDATION:-true}
+  OCR_INFERENCE_BACKEND: ${SOLO_OCR_INFERENCE_BACKEND:-paddle}
+  OCR_AUTO_TUNE: ${OCR_AUTO_TUNE:-false}
+  NVIDIA_VISIBLE_DEVICES: ${SOLO_NVIDIA_VISIBLE_DEVICES:-all}
+  # The monolithic monitor writes this heartbeat.  Keep it in a path writable
+  # by the non-root worker image rather than under the root-owned /app tree.
+  HEALTHCHECK_FILE: /tmp/ocr_healthcheck
+
+services:
+  ocr-solo:
+    build:
+      context: .
+      dockerfile: ${SOLO_DOCKERFILE:-coordinator/Dockerfile.worker.gpu}
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        SOURCE_TREE_SHA256: ${SOURCE_TREE_SHA256:-unknown}
+    image: ${SOLO_IMAGE:-ocr-solo-local}
+    container_name: ocr_solo
+    # S1-A12: drain budget 300s requires stop_grace >= 360s
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-360s}
+    volumes:
+      - ./ocr_source:/app/ocr_source:ro
+      - ./ocr_output:/app/ocr_output
+      - ./ocr_temp:/app/ocr_temp
+    environment:
+      <<: *solo-env
+    shm_size: ${SOLO_SHM_SIZE:-4gb}
+    command: python3 -u /app/ocr_gpu_async.py
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: ${SOLO_MEMORY_LIMIT:-12g}
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${SOLO_GPU_COUNT:-1}
+              capabilities: [gpu]
+    healthcheck:
+      # SOLO overrides the GPU image's Celery command with ocr_gpu_async.py, so
+      # health must follow the monolithic monitor heartbeat rather than ping a
+      # Celery nodename that does not exist in this topology.
+      test: ["CMD", "sh", "/app/healthcheck.sh"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  # Optional REST API sidecar for sibling-repo consumption (same machine).
+  ocr-api:
+    profiles: ["api"]
+    build:
+      context: .
+      # Use the standalone API image contract. The API must not inherit the
+      # monolithic worker command/healthcheck from the root OCR image.
+      dockerfile: Dockerfile.api
+      # Compose must build the worker before resolving the API's FROM image.
+      additional_contexts:
+        solo-runtime: service:ocr-solo
+      args:
+        BASE_IMAGE: ${SOLO_API_BASE_IMAGE:-solo-runtime}
+    image: ${SOLO_API_IMAGE:-ocr-api-local}
+    container_name: ocr_solo_api
+    depends_on:
+      - ocr-solo
+    ports:
+      - "127.0.0.1:${SOLO_API_PORT:-8088}:8000"
+    volumes:
+      # Keep API staging outside the monolithic worker's recursive scan root.
+      - ./ocr_api_source:/app/api_source
+      - ./ocr_output:/app/ocr_output
+    environment:
+      OCR_API_KEY: ${OCR_API_KEY:-solo-dev-key-change-me}
+      SOURCE_FOLDER: /app/api_source
+      OUTPUT_FOLDER: /app/ocr_output
+      MAX_CONCURRENT_JOBS: ${SOLO_MAX_CONCURRENT_JOBS:-1}
+      NUM_WORKERS: ${SOLO_API_NUM_WORKERS:-1}
+      NUM_EXTRACTORS: ${SOLO_API_NUM_EXTRACTORS:-2}
+      NUM_COMPRESSORS: ${SOLO_API_NUM_COMPRESSORS:-1}
+      IMAGE_QUEUE_SIZE: ${SOLO_API_IMAGE_QUEUE_SIZE:-8}
+      CUDA_VISIBLE_DEVICES: ""
+      NVIDIA_VISIBLE_DEVICES: void
+      REVIEW_STRONG_AUTH_VERIFIER_URL: ${REVIEW_STRONG_AUTH_VERIFIER_URL:-}
+      REVIEW_STRONG_AUTH_CA_FILE: ${REVIEW_STRONG_AUTH_CA_FILE:-}
+    command: >
+      python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped

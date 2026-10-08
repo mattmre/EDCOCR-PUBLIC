@@ -29,7 +29,11 @@ OBSERVABILITY_VALUES = CHART_PATH / "values-observability.yaml"
 
 MIN_SECRETS = {
     "secrets.djangoSecretKey": "test-django-key",
+    "secrets.apiKey": "test-api-key",
     "secrets.postgresPassword": "test-pg",
+    "secrets.webhookSecretKey": "test-webhook",
+    "secrets.piiEncryptionKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "secrets.celeryTaskSigningKey": "test-signing",
     "secrets.rabbitmqPassword": "test-rmq",
     "secrets.redisPassword": "test-redis",
     "secrets.flowerPassword": "test-flower",
@@ -92,19 +96,27 @@ def test_remote_write_mode_renders_configmap_and_secret():
     rendered = _helm_template(
         values_files=[OBSERVABILITY_VALUES],
         *[
-            "--set", "observability.federation.enabled=true",
-            "--set", "observability.federation.mode=remote_write",
-            "--set", "observability.federation.cluster_label=test-cluster",
-            "--set", "observability.federation.remote_write.endpoints[0].name=primary",
-            "--set", "observability.federation.remote_write.endpoints[0].url=https://prom-a.example/api/v1/write",
-            "--set", "observability.federation.remote_write.endpoints[1].name=secondary",
-            "--set", "observability.federation.remote_write.endpoints[1].url=https://prom-b.example/api/v1/write",
+            "--set",
+            "observability.federation.enabled=true",
+            "--set",
+            "observability.federation.mode=remote_write",
+            "--set",
+            "observability.federation.cluster_label=test-cluster",
+            "--set",
+            "observability.federation.remote_write.endpoints[0].name=primary",
+            "--set",
+            "observability.federation.remote_write.endpoints[0].url=https://prom-a.example/api/v1/write",
+            "--set",
+            "observability.federation.remote_write.endpoints[1].name=secondary",
+            "--set",
+            "observability.federation.remote_write.endpoints[1].url=https://prom-b.example/api/v1/write",
         ],
     )
     docs = _parse_docs(rendered)
 
     cms = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "ConfigMap"
         and d.get("metadata", {}).get("name", "").endswith("-prom-remote-write")
     ]
@@ -112,10 +124,11 @@ def test_remote_write_mode_renders_configmap_and_secret():
     body = cms[0]["data"]["remote-write.yaml"]
     assert "https://prom-a.example/api/v1/write" in body
     assert "https://prom-b.example/api/v1/write" in body
-    assert "cluster: \"test-cluster\"" in body or "cluster: 'test-cluster'" in body
+    assert 'cluster: "test-cluster"' in body or "cluster: 'test-cluster'" in body
 
     secrets = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "Secret"
         and d.get("metadata", {}).get("name", "").endswith("-prom-remote-write-auth")
     ]
@@ -124,7 +137,8 @@ def test_remote_write_mode_renders_configmap_and_secret():
     assert "kubectl edit" in annotations.get("ocr-local.io/note", "")
 
     sidecars = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "StatefulSet"
         and d.get("metadata", {}).get("name", "").endswith("-thanos-sidecar")
     ]
@@ -136,16 +150,21 @@ def test_thanos_sidecar_mode_renders_statefulset_and_service():
     rendered = _helm_template(
         values_files=[OBSERVABILITY_VALUES],
         *[
-            "--set", "observability.federation.enabled=true",
-            "--set", "observability.federation.mode=thanos_sidecar",
-            "--set", "observability.federation.thanos_sidecar.enabled=true",
-            "--set", "observability.federation.cluster_label=ts-cluster",
+            "--set",
+            "observability.federation.enabled=true",
+            "--set",
+            "observability.federation.mode=thanos_sidecar",
+            "--set",
+            "observability.federation.thanos_sidecar.enabled=true",
+            "--set",
+            "observability.federation.cluster_label=ts-cluster",
         ],
     )
     docs = _parse_docs(rendered)
 
     sts = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "StatefulSet"
         and d.get("metadata", {}).get("name", "").endswith("-thanos-sidecar")
     ]
@@ -157,7 +176,8 @@ def test_thanos_sidecar_mode_renders_statefulset_and_service():
     assert "grpc" in ports and "http" in ports
 
     svcs = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "Service"
         and d.get("metadata", {}).get("name", "").endswith("-thanos-sidecar")
     ]
@@ -167,7 +187,8 @@ def test_thanos_sidecar_mode_renders_statefulset_and_service():
     assert svc_ports.get("http") == 10902
 
     cms = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "ConfigMap"
         and d.get("metadata", {}).get("name", "").endswith("-prom-remote-write")
     ]
@@ -179,17 +200,23 @@ def test_multi_cluster_grafana_dashboard_has_all_panels():
     rendered = _helm_template(
         values_files=[OBSERVABILITY_VALUES],
         *[
-            "--set", "observability.federation.enabled=true",
-            "--set", "observability.federation.mode=remote_write",
-            "--set", "observability.grafana.multi_cluster_dashboard.enabled=true",
+            "--set",
+            "observability.federation.enabled=true",
+            "--set",
+            "observability.federation.mode=remote_write",
+            "--set",
+            "observability.grafana.multi_cluster_dashboard.enabled=true",
         ],
     )
     docs = _parse_docs(rendered)
 
     cms = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "ConfigMap"
-        and d.get("metadata", {}).get("name", "").endswith("-grafana-multi-cluster-dashboard")
+        and d.get("metadata", {})
+        .get("name", "")
+        .endswith("-grafana-multi-cluster-dashboard")
     ]
     assert len(cms) == 1, "expected exactly one multi-cluster grafana ConfigMap"
 
@@ -226,7 +253,9 @@ def test_observability_values_file_exists_and_disabled_by_default():
         data = yaml.safe_load(f)
     assert data["observability"]["federation"]["enabled"] is False
     assert data["observability"]["federation"]["mode"] == "remote_write"
-    assert data["observability"]["grafana"]["multi_cluster_dashboard"]["enabled"] is False
+    assert (
+        data["observability"]["grafana"]["multi_cluster_dashboard"]["enabled"] is False
+    )
 
 
 def test_observability_networkpolicy_renders_when_enabled():
@@ -234,19 +263,27 @@ def test_observability_networkpolicy_renders_when_enabled():
     rendered = _helm_template(
         values_files=[OBSERVABILITY_VALUES],
         *[
-            "--set", "observability.federation.enabled=true",
-            "--set", "observability.federation.mode=thanos_sidecar",
-            "--set", "observability.federation.thanos_sidecar.enabled=true",
-            "--set", "observability.networkPolicy.enabled=true",
+            "--set",
+            "observability.federation.enabled=true",
+            "--set",
+            "observability.federation.mode=thanos_sidecar",
+            "--set",
+            "observability.federation.thanos_sidecar.enabled=true",
+            "--set",
+            "observability.networkPolicy.enabled=true",
         ],
     )
     docs = _parse_docs(rendered)
     netpols = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "NetworkPolicy"
         and d.get("metadata", {}).get("name", "").endswith("-observability-fed")
     ]
     assert len(netpols) == 1
     spec = netpols[0]["spec"]
-    assert spec["podSelector"]["matchLabels"]["app.kubernetes.io/component"] == "thanos-sidecar"
+    assert (
+        spec["podSelector"]["matchLabels"]["app.kubernetes.io/component"]
+        == "thanos-sidecar"
+    )
     assert "Ingress" in spec["policyTypes"] and "Egress" in spec["policyTypes"]

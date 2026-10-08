@@ -21,10 +21,11 @@ async function collectWebSocketMessages(page, options) {
       const socket = new WebSocket(wsUrl);
       const timer = window.setTimeout(() => {
         rejectWith(
-          new Error(`Timed out waiting for WebSocket messages from ${wsUrl}`));
+          new Error(`Timed out waiting for WebSocket messages from ${wsUrl}`),
+        );
       }, timeoutMs);
 
-      const cleanup = => {
+      const cleanup = () => {
         if (settled) {
           return;
         }
@@ -48,7 +49,7 @@ async function collectWebSocketMessages(page, options) {
         reject(error);
       };
 
-      socket.addEventListener("open", => {
+      socket.addEventListener("open", () => {
         if (apiKey) {
           socket.send(JSON.stringify({ type: "auth", api_key: apiKey }));
         }
@@ -60,7 +61,8 @@ async function collectWebSocketMessages(page, options) {
           payload = JSON.parse(event.data);
         } catch {
           rejectWith(
-            new Error(`Expected JSON WebSocket payload but received: ${event.data}`));
+            new Error(`Expected JSON WebSocket payload but received: ${event.data}`),
+          );
           return;
         }
 
@@ -79,13 +81,13 @@ async function collectWebSocketMessages(page, options) {
         }
       });
 
-      socket.addEventListener("error", => {
+      socket.addEventListener("error", () => {
         if (!settled) {
           resolveWith(messages);
         }
       });
 
-      socket.addEventListener("close", => {
+      socket.addEventListener("close", () => {
         if (!settled) {
           resolveWith(messages);
         }

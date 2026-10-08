@@ -49,7 +49,7 @@ def test_evidence_markdown_keeps_scores_separate(tmp_path):
         product,
         tmp_path,
     )
-    assert "Existing local remediation release score remains **99/100**" in text
+    assert "Existing local remediation BHS score remains **99/100**" in text
     assert "Product E2E score for this lane" in text
     assert "not production/live evidence" in text
 

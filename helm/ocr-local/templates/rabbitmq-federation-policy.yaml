@@ -1,8 +1,8 @@
 {{- if .Values.federation.enabled }}
 # =============================================================================
-# RabbitMQ Federation Policy
+# RabbitMQ Federation Policy (Plan C Phase 1)
 #
-# , item C2: when the dynamic peer registry
+# Plan C Phase 1, item C2: when the dynamic peer registry
 # (`.Values.federation.clusters`) is populated, this template emits one Policy
 # per (cluster x queue-class) combo. Each Policy targets a single peer's
 # upstream and a single queue class (`ocr_gpu`, `ocr_cpu`, `nlp`,

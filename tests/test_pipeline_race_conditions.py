@@ -1,4 +1,4 @@
-"""Pipeline thread race condition coverage.
+"""maintenance review: Pipeline thread race condition coverage.
 
 Stress-tests pipeline shared state under concurrent access to verify
 that the locking discipline in ocr_gpu_async.py prevents data races.

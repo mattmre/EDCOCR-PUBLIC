@@ -1,6 +1,6 @@
 {{- if and .Values.federation.enabled .Values.federation.mtls.enabled (not .Values.federation.mtls.caRef) }}
 # =============================================================================
-# Federation mTLS — Root CA Certificate (item C8)
+# Federation mTLS — Root CA Certificate (Plan C Phase 1, item C8)
 #
 # Long-lived self-signed root CA minted by the bootstrap Issuer. The resulting
 # Secret (`<release>-federation-mtls-ca-secret`) is referenced by the

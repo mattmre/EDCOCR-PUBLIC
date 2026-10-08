@@ -41,11 +41,14 @@ function formatDuration(job: Job): string {
   return `${hours}h ${remMin}m`;
 }
 
+/** Detail route. The jobs list does not read a `selected` query. */
+export function jobDetailPath(jobId: string): string {
+  return `/jobs/${encodeURIComponent(jobId)}`;
+}
+
 /**
- * Compact table of recent jobs. Rows are keyboard-navigable and route to
- * the job detail page when activated. The detail route lands in PR D3;
- * for now we link to `/jobs?selected={id}` so the link is forward-
- * compatible.
+ * Compact table of recent jobs. Row click, Enter/Space, and the id link
+ * all open that job's detail page.
  */
 export function RecentJobsTable({
   jobs,
@@ -55,7 +58,7 @@ export function RecentJobsTable({
   const router = useRouter();
 
   const navigateTo = (jobId: string) => {
-    router.push(`/jobs?selected=${encodeURIComponent(jobId)}`);
+    router.push(jobDetailPath(jobId));
   };
 
   const onRowKeyDown =
@@ -109,7 +112,7 @@ export function RecentJobsTable({
             >
               <td className="px-3 py-2 font-mono text-xs">
                 <Link
-                  href={`/jobs?selected=${encodeURIComponent(job.job_id)}`}
+                  href={jobDetailPath(job.job_id)}
                   className="text-primary hover:underline"
                   // Stop bubble so the row click handler doesn't fire twice.
                   onClick={(e) => e.stopPropagation()}

@@ -127,7 +127,8 @@ export function AlertRuleEditor({
     setDraft(initialDraft(rule));
   }, [rule]);
 
-  const parsedThreshold = useMemo( => parseThreshold(rule.threshold_unit, draft.thresholdInput),
+  const parsedThreshold = useMemo(
+    () => parseThreshold(rule.threshold_unit, draft.thresholdInput),
     [rule.threshold_unit, draft.thresholdInput]
   );
   const thresholdValid = Number.isFinite(parsedThreshold);

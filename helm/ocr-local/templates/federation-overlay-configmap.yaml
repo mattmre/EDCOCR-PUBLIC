@@ -1,6 +1,6 @@
 {{- if .Values.federation.enabled }}
 # =============================================================================
-# Federation Overlay ConfigMap
+# Federation Overlay ConfigMap (Plan C Phase 1)
 #
 # Cluster-identity values consumed by coordinator and workers as env vars.
 # Mounted only when federation is enabled; otherwise this resource is omitted
@@ -25,7 +25,7 @@ data:
       {{- $peers = append $peers (printf "%s=%s" .name .presignedEndpoint) }}
     {{- end }}
     {{ join "," $peers | quote }}
-  {{- /* , item C4 -- cross-cluster routing flags. Always render
+  {{- /* Plan C Phase 1, item C4 -- cross-cluster routing flags. Always render
         these keys so coordinator/worker pods see consistent env surface; the
         ENABLED flag gates the router instantiation in coordinator/coordinator/celery.py. */}}
   {{- $routing := .Values.federation.routing | default dict }}
@@ -34,7 +34,7 @@ data:
   OCR_FEDERATION_REGISTRY_POLL_SECONDS: {{ $routing.registry_poll_seconds | default 30 | quote }}
   OCR_FEDERATION_LOAD_AWARE_CACHE_SECONDS: {{ $routing.load_aware_cache_seconds | default 5 | quote }}
   OCR_FEDERATION_ROUTER_CALLABLE: {{ $routing.custom_callable | default "" | quote }}
-  {{- /* , item C8 -- federation mTLS env. Surfaces cert mount paths
+  {{- /* Plan C Phase 1, item C8 -- federation mTLS env. Surfaces cert mount paths
         when `federation.mtls.enabled=true`. The client cert Secret is shared
         between the RabbitMQ federation upstream and the custody replication
         HTTP client, so a single set of paths is sufficient. */}}

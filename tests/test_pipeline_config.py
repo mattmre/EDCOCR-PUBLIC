@@ -1,4 +1,4 @@
-"""Tests for :mod:`pipeline_config`.
+"""Tests for :mod:`pipeline_config` (maintenance review).
 
 Covers defaults, env-var parsing (int/float/bool), validation ranges, and
 a smoke check that ``ocr_gpu_async`` can resolve the factory symbol.

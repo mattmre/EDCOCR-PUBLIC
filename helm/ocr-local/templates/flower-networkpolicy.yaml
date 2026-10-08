@@ -1,6 +1,6 @@
 {{- if and .Values.flower.enabled .Values.flower.networkPolicy.enabled }}
 # =============================================================================
-# NetworkPolicy: Flower monitoring dashboard
+# NetworkPolicy: Flower monitoring dashboard (maintenance review)
 #
 # Restricts Flower ingress to pods running inside the release namespace.
 # Flower exposes Celery task queue internals (job IDs, arguments, timing,

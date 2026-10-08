@@ -1,6 +1,6 @@
 {{- if and .Values.federation.enabled .Values.federation.reconciler.enabled .Values.federation.prometheus.enabled }}
 # =============================================================================
-# Federation Reconciler Service (item C2)
+# Federation Reconciler Service (Plan C Phase 1, item C2)
 #
 # ClusterIP service exposing /metrics on port 9100 for the federation
 # reconciler. Wired to ServiceMonitor when monitoring.enabled=true via the

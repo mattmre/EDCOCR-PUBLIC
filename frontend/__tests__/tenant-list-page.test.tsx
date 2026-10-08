@@ -4,7 +4,7 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import TenantsListPage from "@/app/admin/tenants/page";
 import { setApiKey } from "@/lib/auth";
 
-vi.mock("next/link", => ({
+vi.mock("next/link", () => ({
   __esModule: true,
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
     <a href={href} {...rest}>
@@ -64,7 +64,7 @@ const glossaryList = (total: number) => ({
   page_size: 1,
 });
 
-describe("<TenantsListPage />", => {
+describe("<TenantsListPage />", () => {
   beforeEach(() => {
     setApiKey("test-key");
   });
@@ -73,7 +73,7 @@ describe("<TenantsListPage />", => {
     vi.restoreAllMocks();
   });
 
-  it("renders rows when /admin/tenants succeeds", async => {
+  it("renders rows when /admin/tenants succeeds", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/admin/tenants")) {
@@ -106,7 +106,7 @@ describe("<TenantsListPage />", => {
     fetchMock.mockRestore();
   });
 
-  it("falls back to manual mode on 404 from /admin/tenants", async => {
+  it("falls back to manual mode on 404 from /admin/tenants", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/admin/tenants")) {
@@ -142,7 +142,7 @@ describe("<TenantsListPage />", => {
     });
   });
 
-  it("creates a tenant via the dialog and shows the new row", async => {
+  it("creates a tenant via the dialog and shows the new row", async () => {
     let createdConfig: object | null = null;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input);

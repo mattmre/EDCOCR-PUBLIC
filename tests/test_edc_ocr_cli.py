@@ -133,3 +133,11 @@ def test_verify_custody_returns_zero_when_valid(capsys):
     payload = _json_from_stdout(capsys)
     assert payload["custody_available"] is True
     assert payload["custody_valid"] is True
+
+
+def test_public_environment_configuration_is_retained(monkeypatch):
+    monkeypatch.setenv("EDCOCR_API_URL", "https://owned-api.example.invalid")
+    monkeypatch.setenv("EDCOCR_API_KEY", "owned-fixture-key")
+    args = cli.build_parser().parse_args(["status", "owned-job"])
+    assert args.api_url == "https://owned-api.example.invalid"
+    assert args.api_key == "owned-fixture-key"

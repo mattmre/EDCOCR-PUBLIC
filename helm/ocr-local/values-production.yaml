@@ -1,15 +1,32 @@
 # Production environment overrides
 # Secrets MUST be provided via --set or values-secret.yaml at deploy time
 
+productionMode: true
+
+# Do not permit mutable tags in a production render. Supply the six
+# application digests plus PostgreSQL/RabbitMQ/Redis digests in the release
+# values-secret/registry overlay before installing.
+image:
+  requireDigest: true
+
 coordinator:
   replicas: 2
+  healthTenantId: "replace-with-scoped-health-tenant"
+  env:
+    DATABASE_SCHEMA: "ocr_processing"
 
-externalTranslation:
+celeryCoordinator:
+  replicas: 2
+
+edcTranslation:
   preferExternal: "false"
   readinessPath: "/health"
 
 gpuWorker:
   replicas: 3
+  # S2-01: templates gate KEDA on *.autoscaling.enabled (not keda.gpuScaler).
+  autoscaling:
+    enabled: true
   resources:
     limits:
       nvidia.com/gpu: 1
@@ -19,6 +36,8 @@ gpuWorker:
 
 cpuWorker:
   replicas: 3
+  autoscaling:
+    enabled: true
 
 postgresql:
   backup:
@@ -28,8 +47,18 @@ postgresql:
 
 redis:
   sentinel:
-    enabled: true
+    # The bundled chart does not wire every Redis consumer (Celery, streams,
+    # context store, API cache) through Sentinel discovery.  Production keeps
+    # the incomplete HA scaffold disabled; an operator-managed Sentinel
+    # overlay must supply sentinel-aware URLs/options before enabling it.
+    enabled: false
     replicas: 3
+
+rabbitmq:
+  # Production KEDA uses an operator-managed broker with a pre-provisioned,
+  # monitoring-only account. Configure the external endpoint and selectors.
+  enabled: false
+  replicas: 1
 
 prometheus:
   enabled: true
@@ -38,11 +67,42 @@ prometheus:
   alerts:
     enabled: true
 
-tls:
-  enabled: false  # Disabled until cert-manager is available; enable once cluster issuers are provisioned.
+ingress:
+  enabled: true
+  tls: true
 
+networkPolicy:
+  enabled: true
+  externalDependencies:
+    rabbitmq:
+      enabled: true
+      # Set these to the actual operator-managed broker's namespace/pod labels;
+      # empty selectors fail closed in the chart.
+      namespaceSelector: {}
+      podSelector: {}
+      port: 5671
+
+tls:
+  # Production cutover requires cert-manager and the configured issuer to be
+  # provisioned before this overlay is applied.
+  enabled: true
+
+# S2-01: keda.* keys below are documentation aliases only — ScaledObjects are
+# gated by gpuWorker/cpuWorker.autoscaling.enabled (set true above). Kept so
+# operators grepping values-production still see intent; do not treat as
+# template switches. Production deployment must supply the broker URL, HTTPS
+# management endpoint, optional external CA Secret, and pre-provisioned
+# monitoring-only account.
 keda:
+  rabbitmqManagementHost: ""
+  rabbitmqManagementCaSecretName: ""
+  rabbitmqManagementCaSecretKey: ca.crt
   gpuScaler:
-    enabled: true
+    enabled: true   # alias of gpuWorker.autoscaling.enabled
   cpuScaler:
-    enabled: true
+    enabled: true   # alias of cpuWorker.autoscaling.enabled
+
+secrets:
+  celeryBrokerUrl: ""             # required: operator-managed AMQPS endpoint
+  rabbitmqManagementUser: ""      # required: dedicated monitoring-only account
+  rabbitmqManagementPassword: ""  # required: matching monitoring-only password

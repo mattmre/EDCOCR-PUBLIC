@@ -11,15 +11,17 @@ const {
 const TRANSFORMS_ENABLED = getExpectedFlag("PLAYWRIGHT_EXPECT_TRANSFORMS_ENABLED");
 const STAMPING_ENABLED = getExpectedFlag("PLAYWRIGHT_EXPECT_STAMPING_ENABLED");
 
-test.describe("Phase 7 transform and stamp feature matrix", => {
+test.describe("Phase 7 transform and stamp feature matrix", () => {
   test.skip(
     !hasEnv("PLAYWRIGHT_API_BASE_URL"),
-    "Set PLAYWRIGHT_API_BASE_URL to run feature-flag request tests.");
+    "Set PLAYWRIGHT_API_BASE_URL to run feature-flag request tests.",
+  );
 
-  test.describe("transforms", => {
+  test.describe("transforms", () => {
     test.skip(
       TRANSFORMS_ENABLED === null,
-      "Set PLAYWRIGHT_EXPECT_TRANSFORMS_ENABLED to declare the local transform matrix state.");
+      "Set PLAYWRIGHT_EXPECT_TRANSFORMS_ENABLED to declare the local transform matrix state.",
+    );
 
     test("transform list reflects expected flag state", async ({ request, baseURL }) => {
       const response = await request.get(`${baseURL}/api/v1/transforms`);
@@ -58,10 +60,12 @@ test.describe("Phase 7 transform and stamp feature matrix", => {
       test.skip(!TRANSFORMS_ENABLED, "Transform execution only applies when transforms are enabled.");
       test.skip(
         Object.keys(buildFeatureFlagHeaders()).length === 0,
-        "Set PLAYWRIGHT_FEATURE_FLAGS_API_KEY or PLAYWRIGHT_OCR_API_KEY for transform execution coverage.");
+        "Set PLAYWRIGHT_FEATURE_FLAGS_API_KEY or PLAYWRIGHT_OCR_API_KEY for transform execution coverage.",
+      );
       test.skip(
         !hasFeatureExecutionPaths(),
-        "Set PLAYWRIGHT_FEATURE_SAMPLE_INPUT_PATH and PLAYWRIGHT_FEATURE_OUTPUT_DIR for transform execution coverage.");
+        "Set PLAYWRIGHT_FEATURE_SAMPLE_INPUT_PATH and PLAYWRIGHT_FEATURE_OUTPUT_DIR for transform execution coverage.",
+      );
 
       const outputPath = buildServerOutputPath("playwright-transform");
       const response = await request.post(`${baseURL}/api/v1/transforms/execute`, {
@@ -84,10 +88,11 @@ test.describe("Phase 7 transform and stamp feature matrix", => {
     });
   });
 
-  test.describe("stamps", => {
+  test.describe("stamps", () => {
     test.skip(
       STAMPING_ENABLED === null,
-      "Set PLAYWRIGHT_EXPECT_STAMPING_ENABLED to declare the local stamping matrix state.");
+      "Set PLAYWRIGHT_EXPECT_STAMPING_ENABLED to declare the local stamping matrix state.",
+    );
 
     test("stamp list reflects expected flag state", async ({ request, baseURL }) => {
       const response = await request.get(`${baseURL}/api/v1/stamps`);
@@ -126,10 +131,12 @@ test.describe("Phase 7 transform and stamp feature matrix", => {
       test.skip(!STAMPING_ENABLED, "Stamp execution only applies when stamping is enabled.");
       test.skip(
         Object.keys(buildFeatureFlagHeaders()).length === 0,
-        "Set PLAYWRIGHT_FEATURE_FLAGS_API_KEY or PLAYWRIGHT_OCR_API_KEY for stamp execution coverage.");
+        "Set PLAYWRIGHT_FEATURE_FLAGS_API_KEY or PLAYWRIGHT_OCR_API_KEY for stamp execution coverage.",
+      );
       test.skip(
         !hasFeatureExecutionPaths(),
-        "Set PLAYWRIGHT_FEATURE_SAMPLE_INPUT_PATH and PLAYWRIGHT_FEATURE_OUTPUT_DIR for stamp execution coverage.");
+        "Set PLAYWRIGHT_FEATURE_SAMPLE_INPUT_PATH and PLAYWRIGHT_FEATURE_OUTPUT_DIR for stamp execution coverage.",
+      );
 
       const outputPath = buildServerOutputPath("playwright-stamp");
       const response = await request.post(`${baseURL}/api/v1/stamps/execute`, {

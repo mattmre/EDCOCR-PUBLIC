@@ -34,26 +34,32 @@ jobs:
         include:
           - dockerfile: Dockerfile
             context: .
+            profile: root-cpu
             image: ocr-local
             build_args: --build-arg SKIP_MODEL_PRELOAD=1
           - dockerfile: coordinator/Dockerfile.coordinator
-            context: coordinator
+            context: .
+            profile: coordinator
             image: ocr-coordinator
             build_args: ""
           - dockerfile: coordinator/Dockerfile.worker
-            context: coordinator
+            context: .
+            profile: worker
             image: ocr-worker
             build_args: --build-arg SKIP_MODEL_PRELOAD=1
           - dockerfile: coordinator/Dockerfile.worker.ocr
-            context: coordinator
+            context: .
+            profile: worker
             image: ocr-worker-ocr
             build_args: --build-arg SKIP_MODEL_PRELOAD=1
           - dockerfile: coordinator/Dockerfile.worker.nlp
-            context: coordinator
+            context: .
+            profile: worker
             image: ocr-worker-nlp
             build_args: --build-arg SKIP_MODEL_PRELOAD=1
           - dockerfile: coordinator/Dockerfile.worker.layoutlm
-            context: coordinator
+            context: .
+            profile: worker
             image: ocr-worker-layoutlm
             build_args: --build-arg SKIP_MODEL_PRELOAD=1
     steps:
@@ -74,7 +80,10 @@ jobs:
 
       - name: Build image
         run: |
+          source_sha=$(python3 scripts/runtime_source_fingerprint.py --profile "${{ matrix.profile }}")
           docker buildx build ${{ matrix.build_args }} \
+            --build-arg SOURCE_REVISION="${{ github.sha }}" \
+            --build-arg SOURCE_TREE_SHA256="$source_sha" \
             --cache-from type=local,src=/tmp/.buildx-cache \
             --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
             --load \
@@ -107,12 +116,12 @@ jobs:
 
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
-        if: always
+        if: always()
         with:
           sarif_file: 'trivy-results-${{ matrix.image }}.sarif'
 
       - name: Run Trivy (table output for PR comment)
-        if: always
+        if: always()
         run: |
           docker run --rm \
             -v "${{ runner.temp }}:/work" \

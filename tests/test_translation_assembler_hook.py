@@ -6,10 +6,58 @@ and use mocks throughout for the engine registry and tenant policy
 hooks.  The goal is to verify the fail-open semantics + the data flow
 the assembler hook in ``ocr_gpu_async.py`` depends on.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+from ocr_local.translation.models import EngineCapability, SpanTranslation
+
+
+class _RealOutputTestEngine:
+    capability = EngineCapability(
+        id="test-real-output",
+        is_local=True,
+        is_cloud=False,
+        supports_pairs="any",
+        quality_class="standard",
+        latency_class="standard",
+        license="internal-test",
+        provider_retention_class="local_only",
+        deployment_envs=["test"],
+    )
+
+    def translate_spans(self, spans, src, tgt):
+        return [
+            SpanTranslation(
+                span_id=span.get("span_id", f"s{index}"),
+                source_text=span["text"],
+                target_text=f"translated:{span['text']}",
+                source_bbox=span.get("bbox", [0.0, 0.0, 100.0, 12.0]),
+                source_bboxes=[span.get("bbox", [0.0, 0.0, 100.0, 12.0])],
+                source_language=src,
+                target_language=tgt,
+                confidence=1.0,
+                quality_score=None,
+                engine_id=self.capability.id,
+            )
+            for index, span in enumerate(spans)
+        ]
+
+    def model_provenance(self):
+        return {"weights_sha256": "test-fixture"}
+
+
+@pytest.fixture
+def real_output_engine():
+    with patch(
+        "ocr_local.translation.api._instantiate_engine",
+        return_value=_RealOutputTestEngine(),
+    ):
+        yield
 
 
 def test_translate_document_returns_list():
@@ -46,7 +94,7 @@ def test_translate_document_fails_open():
     assert result == []
 
 
-def test_translate_document_certified_false():
+def test_translate_document_certified_false(real_output_engine):
     """All returned docs have certified=False (NEVER True from raw output)."""
     from ocr_local.translation.api import translate_document
 
@@ -60,7 +108,7 @@ def test_translate_document_certified_false():
     assert all(doc.certified is False for doc in result)
 
 
-def test_translate_document_multiple_targets():
+def test_translate_document_multiple_targets(real_output_engine):
     """Two targets -> two DocumentTranslation instances."""
     from ocr_local.translation.api import translate_document
 
@@ -134,15 +182,16 @@ def test_noop_chain_has_log_event():
     chain.append_event("ANYTHING_ELSE", {"k": "v"})
 
 
-def test_translate_document_uses_policy():
+def test_translate_document_uses_policy(real_output_engine):
     """Tenant policy is loaded once and passed through router."""
     from ocr_local.translation.api import translate_document
 
-    with patch(
-        "ocr_local.translation.api.load_tenant_policy"
-    ) as mock_load, patch(
-        "ocr_local.translation.api.compute_policy_hash",
-        return_value="hash_xyz",
+    with (
+        patch("ocr_local.translation.api.get_tenant_policy") as mock_load,
+        patch(
+            "ocr_local.translation.api.compute_policy_hash",
+            return_value="hash_xyz",
+        ),
     ):
         mock_load.return_value = MagicMock()
         result = translate_document(
@@ -156,7 +205,7 @@ def test_translate_document_uses_policy():
     assert result[0].custody["tenant_policy_hash"] == "hash_xyz"
 
 
-def test_translate_to_language_assembles_document():
+def test_translate_to_language_assembles_document(real_output_engine):
     """Returned DocumentTranslation has schema_version='1.0' + source_file set."""
     from ocr_local.translation.api import translate_document
 
@@ -172,7 +221,7 @@ def test_translate_to_language_assembles_document():
     assert doc.source_file == "foo.pdf"
 
 
-def test_translate_document_tenant_id_forwarded():
+def test_translate_document_tenant_id_forwarded(real_output_engine):
     """tenant_id is recorded in custody block of every returned doc."""
     from ocr_local.translation.api import translate_document
 
@@ -284,17 +333,21 @@ def test_translate_document_external_preferred_by_env(monkeypatch):
     assert len(result) == 1
     assert result[0].pages[0].spans[0].target_text == "Bonjour."
     assert result[0].engine["id"] == "stub"
-    assert result[0].custody["source_ocr_sha256"] == captured["document_bundle"][
-        "source_ocr_sha256"
-    ]
-    assert result[0].custody["tenant_policy_hash"] == captured["document_bundle"][
-        "tenant_policy_hash"
-    ]
+    assert (
+        result[0].custody["source_ocr_sha256"]
+        == captured["document_bundle"]["source_ocr_sha256"]
+    )
+    assert (
+        result[0].custody["tenant_policy_hash"]
+        == captured["document_bundle"]["tenant_policy_hash"]
+    )
     assert captured["base_url"] == "http://translation.local"
     assert captured["provider_id"] == "stub"
 
 
-def test_translate_document_external_failure_falls_back(monkeypatch):
+def test_translate_document_external_failure_falls_back(
+    monkeypatch, real_output_engine
+):
     """External service errors do not remove the existing local fail-open path."""
     from ocr_local.translation.api import translate_document
 
@@ -320,7 +373,9 @@ def test_translate_document_external_failure_falls_back(monkeypatch):
     assert result[0].processing.get("translation_service") != "external"
 
 
-def test_translate_document_external_readiness_blocks_dispatch(monkeypatch):
+def test_translate_document_external_readiness_blocks_dispatch(
+    monkeypatch, real_output_engine
+):
     """Preference alone is not enough; readiness must be green."""
     from ocr_local.translation.api import translate_document
     from ocr_local.translation.external_client import TranslationReadinessStatus

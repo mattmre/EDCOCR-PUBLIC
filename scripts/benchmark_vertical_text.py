@@ -37,7 +37,7 @@ Sidecar JSON schema:
       "expected_rotation": "ccw"
     }
 
-Requires: vertical_text.py (from EDCOCR project root)
+Requires: vertical_text.py (from OCR_LOCAL project root)
 """
 
 import argparse

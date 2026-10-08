@@ -1,0 +1,63 @@
+{
+  "rabbit_version": "3.13.0",
+  "rabbitmq_version": "3.13.0",
+  "users": [
+    {
+      "name": "ocr_admin",
+      "password_hash": "",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": [
+        "administrator"
+      ]
+    },
+    {
+      "name": "ocr_publisher",
+      "password_hash": "",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": [
+        "management"
+      ]
+    },
+    {
+      "name": "ocr_worker",
+      "password_hash": "",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": []
+    }
+  ],
+  "vhosts": [
+    {
+      "name": "/"
+    }
+  ],
+  "permissions": [
+    {
+      "user": "ocr_admin",
+      "vhost": "/",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    },
+    {
+      "user": "ocr_publisher",
+      "vhost": "/",
+      "configure": "^(coordinator|celery.*|.*\\.pidbox|celeryev.*|celery\\.pidbox|ocr_.*|cpu_.*|nlp_.*|amq\\..*)$",
+      "write": "^(coordinator|celery.*|.*\\.pidbox|celeryev.*|celery\\.pidbox|ocr_.*|cpu_.*|nlp_.*|amq\\..*)$",
+      "read": "^(coordinator|celery.*|.*\\.pidbox|celeryev.*|celery\\.pidbox|ocr_.*|cpu_.*|nlp_.*|amq\\..*)$"
+    },
+    {
+      "user": "ocr_worker",
+      "vhost": "/",
+      "configure": "^(ocr_.*|cpu_.*|nlp_.*|coordinator|celery.*|amq\\..*|.*\\.pidbox|celeryev.*|celery\\.pidbox)$",
+      "write": "^(celery.*|.*\\.pidbox|celeryev.*|celery\\.pidbox|amq\\..*)$",
+      "read": "^(ocr_.*|cpu_.*|nlp_.*|coordinator|celery.*|amq\\..*|.*\\.pidbox|celeryev.*|celery\\.pidbox)$"
+    }
+  ],
+  "topic_permissions": [],
+  "parameters": [],
+  "global_parameters": [],
+  "policies": [],
+  "queues": [],
+  "exchanges": [],
+  "bindings": []
+}

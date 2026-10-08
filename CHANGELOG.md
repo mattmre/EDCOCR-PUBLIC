@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0-rc.1] - 2026-10-08
+
+### Release candidate
+
+- Repair single-host API ownership, background drain, and CPU SOLO installation.
+- Separate API upload staging from batch input; preserve job/output state on restart.
+- Require native-PDF completeness and preserve searchable Latin lines with script-specific fonts.
+- Add refreshable IAM credentials, control-plane identity separation, and presigned hostname policy.
+- Reject unsupported federation mutual TLS; correct NFS mount paths and PostgreSQL TLS/schema restore handling.
+- Preserve staged capacity during deletion and retain cleanup authority for delayed S3 uploads.
+- Update frontend and SDK dependencies while preserving public SDK package names.
+
+See [candidate scope and limitations](docs/release-candidate.md). This is a bounded
+release candidate; actual cloud, physical GPU/farm, mesh, NFS and replicated
+recovery qualifications remain target-specific. Package/image publication is separate.
+
 ## [4.1.0] - 2026-05-21
 
 ### Summary

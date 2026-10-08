@@ -182,7 +182,8 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   // node:crypto for the client and fail with UnhandledSchemeError).
   const moduleName = "node:" + "crypto";
   const dynamicImport = new Function("m", "return import(m)") as (
-    m: string) => Promise<typeof import("crypto")>;
+    m: string,
+  ) => Promise<typeof import("crypto")>;
   const nodeCrypto = await dynamicImport(moduleName);
   return nodeCrypto.createHash("sha256").update(bytes).digest("hex");
 }

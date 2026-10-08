@@ -1,4 +1,4 @@
-"""Tests for Coordinator Job model alignment.
+"""Tests for maintenance review: Coordinator Job model alignment.
 
 Verifies the api_job_id cross-reference field exists on the coordinator
 Job model.  Requires Django to be configured — skipped otherwise.
@@ -24,7 +24,6 @@ import django as _django  # noqa: E402
 _django.setup()
 
 from django.db import models as django_models  # noqa: E402
-
 from jobs.models import Job  # noqa: E402
 
 

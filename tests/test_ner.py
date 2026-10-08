@@ -122,7 +122,7 @@ class TestEntityExtraction:
         mock_nlp = MockNLP(mock_ents)
 
         import ner as ner_module
-        with mock.patch.object(ner_module, "_SPACY_AVAILABLE", True), \
+        with mock.patch.object(ner_module, "_SPACY_AVAILABLE", True),\
              mock.patch.object(ner_module, "_load_nlp", return_value=mock_nlp):
             result = extract_entities("John Smith works at Acme Corp.", 1)
 
@@ -145,7 +145,7 @@ class TestEntityExtraction:
         mock_nlp = MockNLP(mock_ents)
 
         import ner as ner_module
-        with mock.patch.object(ner_module, "_SPACY_AVAILABLE", True), \
+        with mock.patch.object(ner_module, "_SPACY_AVAILABLE", True),\
              mock.patch.object(ner_module, "_load_nlp", return_value=mock_nlp):
             result = extract_entities("John something USA", 2)
 
@@ -163,7 +163,7 @@ class TestEntityExtraction:
         mock_nlp = MockNLP(mock_ents)
 
         import ner as ner_module
-        with mock.patch.object(ner_module, "_SPACY_AVAILABLE", True), \
+        with mock.patch.object(ner_module, "_SPACY_AVAILABLE", True),\
              mock.patch.object(ner_module, "_load_nlp", return_value=mock_nlp):
             result = extract_entities("January 1, 2024 -- $1,000,000", 5)
 
@@ -177,7 +177,7 @@ class TestEntityExtraction:
         mock_nlp = MockNLP(mock_ents)
 
         import ner as ner_module
-        with mock.patch.object(ner_module, "_SPACY_AVAILABLE", True), \
+        with mock.patch.object(ner_module, "_SPACY_AVAILABLE", True),\
              mock.patch.object(ner_module, "_load_nlp", return_value=mock_nlp):
             result = extract_entities("Test Person", 1)
 
@@ -187,7 +187,7 @@ class TestEntityExtraction:
         mock_nlp = MockNLP([])
 
         import ner as ner_module
-        with mock.patch.object(ner_module, "_SPACY_AVAILABLE", True), \
+        with mock.patch.object(ner_module, "_SPACY_AVAILABLE", True),\
              mock.patch.object(ner_module, "_load_nlp", return_value=mock_nlp):
             result = extract_entities("", 1)
 
@@ -200,7 +200,7 @@ class TestEntityExtraction:
             raise RuntimeError("model crashed")
 
         import ner as ner_module
-        with mock.patch.object(ner_module, "_SPACY_AVAILABLE", True), \
+        with mock.patch.object(ner_module, "_SPACY_AVAILABLE", True),\
              mock.patch.object(ner_module, "_load_nlp", return_value=failing_nlp):
             result = extract_entities("some text", 1)
 
@@ -288,6 +288,13 @@ class TestCustomEntities:
         assert len(bates_entities) == 0, (
             f"Expected no Bates match for 'on 2024', got: {bates_entities}"
         )
+
+    def test_bates_number_rejects_person_names_followed_by_year(self):
+        """Title-cased names plus four-digit years are not Bates stamps."""
+        text = "Alice Johnson 2026 and Robert Chen 2026 reviewed the table."
+        result = extract_custom_entities(text, 1)
+        bates_entities = [e for e in result if e.entity_type == "BATES_NUMBER"]
+        assert bates_entities == []
 
     # --- EXHIBIT_REF ---
 
@@ -576,13 +583,13 @@ class TestWriteNERJson:
         assert entity["end"] == 55
 
     def test_path_traversal_protection(self, tmp_path):
-        """Subfolder with '..' segments is neutralized by sanitization."""
+        """Subfolder traversal tokens are rejected."""
         doc = DocumentNER(document_id="traversal_test", source_file="evil.pdf")
         doc = finalize_ner(doc)
         ner_dir = str(tmp_path / "NER")
         result = write_ner_json(doc, ner_dir, "../../etc", "0.5.0")
-        assert result is not None
-        assert os.path.realpath(result).startswith(os.path.realpath(ner_dir))
+        assert result is None
+        assert not (tmp_path / "etc").exists()
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,3 @@
+# Exact Python closure added to the coordinator provider for the isolated
+# Tesseract lane. Pillow/PyMuPDF/numpy are inherited from the provider image.
+pytesseract==0.3.13

@@ -1,0 +1,78 @@
+# Syntax: docker/dockerfile:1.7
+
+# Parse-valid fail-closed sentinel; the build wrapper always replaces this
+# with the digest-qualified provider image.
+ARG BASE_IMAGE=scratch
+FROM ${BASE_IMAGE}
+
+ARG BASE_IMAGE
+ARG BASE_IMAGE_DIGEST
+ARG SOURCE_REVISION
+ARG RELEASE_VERSION
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      fonts-noto-core \
+      libgl1 \
+      libglib2.0-0 \
+      libgomp1 \
+      tesseract-ocr-all \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-processing-worker-cpu.lock /tmp/requirements-processing-worker-cpu.lock
+
+RUN python -m pip install --no-cache-dir --upgrade "pip==26.2.1"
+RUN python -m pip install --no-cache-dir \
+      --requirement /tmp/requirements-processing-worker-cpu.lock \
+    && python -m pip check \
+    && rm /tmp/requirements-processing-worker-cpu.lock
+
+COPY scripts/harden_processing_worker_runtime.py /tmp/harden_processing_worker_runtime.py
+COPY security/processing_worker_sitecustomize.py /tmp/processing_worker_sitecustomize.py
+RUN python /tmp/harden_processing_worker_runtime.py \
+      --template /tmp/processing_worker_sitecustomize.py \
+    && python /tmp/harden_processing_worker_runtime.py --verify \
+    && rm /tmp/harden_processing_worker_runtime.py \
+      /tmp/processing_worker_sitecustomize.py
+
+COPY scripts/verify_processing_model_bundle.py /usr/local/bin/verify_processing_model_bundle.py
+COPY security/processing_paddle_models.lock.json /usr/share/ocr-processing/processing_paddle_models.lock.json
+
+ENV HOME=/home/ocr \
+    PADDLE_HOME=/home/ocr/.paddle \
+    PADDLEOCR_HOME=/home/ocr/.paddleocr \
+    CUDA_VISIBLE_DEVICES="" \
+    OCR_HARDEN_MEDIA_RUNTIME=1 \
+    OCR_TASK_ROUTING=cpu \
+    OCR_INFERENCE_BACKEND=paddle \
+    WORKER_QUEUES=ocr_cpu
+
+RUN test -n "$SOURCE_REVISION" \
+    && test -n "$BASE_IMAGE_DIGEST" \
+    && case "$BASE_IMAGE" in *@"$BASE_IMAGE_DIGEST") ;; *) exit 64 ;; esac \
+    && test -n "$RELEASE_VERSION" \
+    && mkdir -p /home/ocr/.paddle /home/ocr/.paddleocr \
+    && chown -R 1000:1000 /home/ocr \
+    && python -c "import cv2; assert cv2.VideoCapture.__name__ == '_blocked_capability'" \
+    && python -c "import imgaug.multicore as m; m.BackgroundAugmenter(None)" \
+       2>&1 | grep -F "imgaug background multiprocessing are disabled" \
+    && su -s /bin/sh -c \
+      "python -c \"from paddleocr import PaddleOCR; PaddleOCR(lang='en', use_gpu=False, show_log=False)\"" \
+      ocr \
+    && python /usr/local/bin/verify_processing_model_bundle.py verify \
+      --root /home/ocr/.paddleocr \
+      --lock /usr/share/ocr-processing/processing_paddle_models.lock.json
+
+LABEL org.opencontainers.image.revision="$SOURCE_REVISION" \
+      org.opencontainers.image.version="$RELEASE_VERSION" \
+      org.opencontainers.image.base.name="$BASE_IMAGE" \
+      org.opencontainers.image.base.digest="$BASE_IMAGE_DIGEST" \
+      org.opencontainers.image.ocr.models.digest="sha256:c7b8cfe468bd0ae993c15af2b6d2154aa7af3a29df4a913c082792604f67e2dc" \
+      org.opencontainers.image.role="ocr-cpu-worker"
+
+USER 1000:1000
+WORKDIR /app/coordinator
+
+CMD ["celery", "-A", "coordinator.coordinator", "worker", "--loglevel=info", "--queues=ocr_cpu", "--concurrency=2", "--max-tasks-per-child=100", "--hostname=ocr-cpu@%h"]

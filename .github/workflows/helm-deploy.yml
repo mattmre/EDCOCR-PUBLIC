@@ -53,7 +53,7 @@ jobs:
             $DRY_RUN
 
       - name: Rollback on failure
-        if: ${{ failure && steps.deploy.outcome == 'failure' && !inputs.dry_run }}
+        if: ${{ failure() && steps.deploy.outcome == 'failure' && !inputs.dry_run }}
         env:
           RELEASE_NAME: ocr-local
           NAMESPACE: ${{ inputs.environment == 'production' && 'ocr-production' || 'ocr-staging' }}

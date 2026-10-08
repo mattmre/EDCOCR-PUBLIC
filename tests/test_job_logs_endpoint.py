@@ -23,10 +23,17 @@ pytest.importorskip("sqlalchemy")
 
 @pytest.fixture(autouse=True)
 def _setup(tmp_path, monkeypatch):
+    from api import auth as auth_mod
+    from api import config as config_mod
+
     monkeypatch.setenv("OCR_API_KEY", "test-key-d7")
     monkeypatch.setenv("OCR_OUTPUT_DIR", str(tmp_path / "output"))
     monkeypatch.setenv("OCR_SOURCE_DIR", str(tmp_path / "source"))
-    monkeypatch.setenv("ALLOW_UNAUTHENTICATED", "true")
+    monkeypatch.setenv("ALLOW_UNAUTHENTICATED", "false")
+    monkeypatch.setattr(config_mod, "OCR_API_KEY", "test-key-d7")
+    monkeypatch.setattr(config_mod, "ALLOW_UNAUTHENTICATED", False)
+    monkeypatch.setattr(auth_mod, "OCR_API_KEY", "test-key-d7")
+    monkeypatch.setattr(auth_mod, "ALLOW_UNAUTHENTICATED", False)
     (tmp_path / "output").mkdir(exist_ok=True)
     (tmp_path / "source").mkdir(exist_ok=True)
     return tmp_path
@@ -41,7 +48,9 @@ def client():
     app = create_app()
     app.state.limiter.enabled = False
     app.state.limiter.reset()
-    return TestClient(app)
+    test_client = TestClient(app)
+    test_client.headers.update({"X-API-Key": "test-key-d7"})
+    return test_client
 
 
 def _seed_log(tmp_path: Path, job_id: str, records):
@@ -124,6 +133,22 @@ class TestWriter:
         rec = parse_log_line(path.read_text(encoding="utf-8").splitlines()[0])
         assert rec["level"] == "INFO"
 
+    def test_oversized_record_is_not_written(self, _setup):
+        from api.job_log_writer import (
+            _MAX_LOG_RECORD_BYTES,
+            job_log_path,
+            write_job_log,
+        )
+
+        job_id = "job_aaaaaaaa7777"
+        write_job_log(
+            job_id,
+            {"message": "x" * (_MAX_LOG_RECORD_BYTES + 1)},
+            base_dir=str(_setup / "output"),
+        )
+
+        assert not job_log_path(job_id, base_dir=str(_setup / "output")).exists()
+
 
 # ---------------------------------------------------------------------------
 # Endpoint tests
@@ -144,6 +169,60 @@ class TestEndpoint404:
 
 
 class TestEndpoint200:
+    def test_reads_logs_written_at_the_pipeline_job_output_path(self, client, _setup):
+        from api.job_log_writer import write_job_log
+
+        job_id = "job_aaaaaaaa4321"
+        write_job_log(job_id, {"code": "JOB_STARTED", "message": "pipeline"},
+                      base_dir=str(_setup / "output" / job_id))
+        response = client.get(f"/api/v1/jobs/{job_id}/logs")
+        assert response.status_code == 200
+        assert json.loads(response.text)["code"] == "JOB_STARTED"
+
+    def test_job_directory_symlink_cannot_redirect_logs(self, client, _setup):
+        from api.job_log_writer import write_job_log
+
+        own_id, foreign_id = "job_aaaaaaaa1234", "job_bbbbbbbb1234"
+        foreign = _setup / "output" / foreign_id
+        write_job_log(own_id, {"message": "foreign bytes"}, base_dir=str(foreign))
+        (_setup / "output" / own_id).symlink_to(foreign, target_is_directory=True)
+        response = client.get(f"/api/v1/jobs/{own_id}/logs")
+        assert response.status_code == 404
+        assert "foreign bytes" not in response.text
+
+    def test_output_variable_precedence_matches_api_config(self, _setup, monkeypatch):
+        from api.job_log_writer import job_log_path
+
+        monkeypatch.setenv("OUTPUT_FOLDER", str(_setup / "canonical"))
+        monkeypatch.setenv("OCR_OUTPUT_DIR", str(_setup / "legacy"))
+        assert job_log_path("job_aaaaaaaa1234").is_relative_to(_setup / "canonical")
+
+    def test_skips_oversized_line_without_hiding_following_record(self, client, _setup):
+        from api.job_log_writer import _MAX_LOG_RECORD_BYTES
+
+        path = _seed_log(
+            _setup,
+            "job_aaaaaaaa8888",
+            [
+                {
+                    "job_id": "job_aaaaaaaa8888",
+                    "level": "INFO",
+                    "code": "OK",
+                    "message": "kept",
+                }
+            ],
+        )
+        existing = path.read_text(encoding="utf-8")
+        path.write_text(
+            "x" * (_MAX_LOG_RECORD_BYTES + 1) + "\n" + existing,
+            encoding="utf-8",
+        )
+
+        resp = client.get("/api/v1/jobs/job_aaaaaaaa8888/logs")
+
+        assert resp.status_code == 200
+        assert [json.loads(line)["code"] for line in resp.text.splitlines()] == ["OK"]
+
     def test_streams_ndjson(self, client, _setup):
         records = [
             {
@@ -245,6 +324,40 @@ class TestEndpoint200:
         assert resp.status_code == 200
         lines = resp.text.strip().splitlines()
         assert len(lines) == 3
+
+    def test_cursor_paginates_colliding_timestamps_and_appends(self, client, _setup):
+        job_id = "job_aaaaaaaa7171"
+        records = [
+            {"ts": "2026-04-27T12:00:00+00:00", "level": "INFO", "code": "TICK", "job_id": job_id, "message": str(i)}
+            for i in range(5)
+        ]
+        path = _seed_log(_setup, job_id, records)
+        url = f"/api/v1/jobs/{job_id}/logs"
+        cursor = None
+        seen = []
+        for _ in range(4):
+            response = client.get(url, params={"limit": 2, **({"cursor": cursor} if cursor else {})})
+            assert response.status_code == 200
+            seen.extend(json.loads(line)["message"] for line in response.text.splitlines())
+            cursor = response.headers["x-next-cursor"]
+        assert seen == ["0", "1", "2", "3", "4"]
+
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({**records[0], "message": "5"}) + "\n")
+        response = client.get(url, params={"cursor": cursor})
+        assert [json.loads(line)["message"] for line in response.text.splitlines()] == ["5"]
+
+    def test_cursor_resets_after_replacement_and_never_accepts_a_path(self, client, _setup):
+        job_id = "job_aaaaaaaa7272"
+        url = f"/api/v1/jobs/{job_id}/logs"
+        path = _seed_log(_setup, job_id, [{"level": "INFO", "message": "old"}])
+        cursor = client.get(url).headers["x-next-cursor"]
+        path.unlink()
+        _seed_log(_setup, job_id, [{"level": "INFO", "message": "new"}])
+        response = client.get(url, params={"cursor": cursor})
+        assert response.headers["x-log-reset"] == "true"
+        assert [json.loads(line)["message"] for line in response.text.splitlines()] == ["new"]
+        assert client.get(url, params={"cursor": "../../etc/passwd"}).status_code == 422
 
     def test_invalid_level_returns_422(self, client, _setup):
         _seed_log(

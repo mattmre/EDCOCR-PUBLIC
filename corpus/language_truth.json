@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "gate": " E-A-010 frozen language corpus",
+  "gate": "Plan A E-A-010 frozen language corpus",
   "status": "full_gate_curated_fixture_set",
   "license_attribution": {
     "flores200": "FLORES-200: Goyal et al., 2022, Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0). Seed TSVs are documented in tests/fixtures/translation-corpus/README.md.",
@@ -9,7 +9,7 @@
   "notes": [
     "Operator approved building the 50-doc corpus from FLORES-200 or generated curated fixtures.",
     "FLORES-derived documents are single-page text fixtures with explicit language truth and source attribution.",
-    "This is local release-gate corpus evidence, not a production customer corpus."
+    "This is local BHS corpus evidence, not a production customer corpus."
   ],
   "coverage": {
     "document_count": 50,

@@ -20,6 +20,7 @@ from security_scan import (
     _find_project_root,
     check_auth_bypass,
     check_cors_config,
+    check_dependency_pinning,
     check_dockerfile_user,
     check_env_files,
     check_gitignore_env,
@@ -229,7 +230,9 @@ class TestCheckDockerfileUser:
 
     def test_with_user_directive(self, tmp_path):
         df = tmp_path / "Dockerfile"
-        df.write_text("FROM python:3.11-slim\nRUN pip install app\nUSER ocr\nCMD [\"python\", \"app.py\"]\n")
+        df.write_text(
+            'FROM python:3.11-slim\nRUN pip install app\nUSER ocr\nCMD ["python", "app.py"]\n'
+        )
         report = ScanReport()
         check_dockerfile_user(tmp_path, report)
         assert report.passed == 1
@@ -237,7 +240,9 @@ class TestCheckDockerfileUser:
 
     def test_without_user_directive(self, tmp_path):
         df = tmp_path / "Dockerfile"
-        df.write_text("FROM python:3.11-slim\nRUN pip install app\nCMD [\"python\", \"app.py\"]\n")
+        df.write_text(
+            'FROM python:3.11-slim\nRUN pip install app\nCMD ["python", "app.py"]\n'
+        )
         report = ScanReport()
         check_dockerfile_user(tmp_path, report)
         assert report.failed == 1
@@ -272,7 +277,9 @@ class TestCheckCorsConfig:
     def test_without_cors_middleware(self, tmp_path):
         api_dir = tmp_path / "api"
         api_dir.mkdir()
-        (api_dir / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n")
+        (api_dir / "main.py").write_text(
+            "from fastapi import FastAPI\napp = FastAPI()\n"
+        )
         report = ScanReport()
         check_cors_config(tmp_path, report)
         assert report.failed == 1
@@ -299,6 +306,23 @@ class TestCheckTlsConfig:
         check_tls_config(tmp_path, report)
         assert report.passed == 1
 
+
+class TestCheckDependencyPinning:
+    def test_exact_and_compatibility_ranges_pass(self, tmp_path):
+        (tmp_path / "requirements.txt").write_text(
+            "pillow==12.3.0\nuvicorn>=0.48.0,<1.0.0\nonnx>=1.21.0\n"
+        )
+        report = ScanReport()
+        check_dependency_pinning(tmp_path, report)
+        assert report.passed == 1
+
+    def test_bare_dependency_fails(self, tmp_path):
+        (tmp_path / "requirements.txt").write_text("pillow\n")
+        report = ScanReport()
+        check_dependency_pinning(tmp_path, report)
+        assert report.failed == 1
+        assert "pillow" in report.findings[0].details
+
     def test_without_tls(self, tmp_path):
         (tmp_path / "docker-compose.yml").write_text(
             "services:\n  api:\n    ports:\n      - '8080:8080'\n"
@@ -306,6 +330,22 @@ class TestCheckTlsConfig:
         report = ScanReport()
         check_tls_config(tmp_path, report)
         assert report.failed == 1
+
+    def test_with_production_helm_tls(self, tmp_path):
+        chart = tmp_path / "helm" / "ocr-local"
+        (chart / "templates").mkdir(parents=True)
+        (chart / "values-production.yaml").write_text(
+            "ingress:\n  enabled: true\n  tls: true\ntls:\n  enabled: true\n"
+        )
+        (chart / "templates" / "tls-certificates.yaml").write_text(
+            "{{- if .Values.tls.enabled }}\nkind: Certificate\n{{- end }}\n"
+        )
+        (chart / "templates" / "ingress.yaml").write_text(
+            "{{- if .Values.ingress.tls }}\nkind: Ingress\n{{- end }}\n"
+        )
+        report = ScanReport()
+        check_tls_config(tmp_path, report)
+        assert report.passed == 1
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +379,17 @@ class TestCheckHardcodedSecrets:
         check_hardcoded_secrets(tmp_path, report)
         assert report.passed == 1
 
+    def test_enum_labels_ignored(self, tmp_path):
+        (tmp_path / "app.py").write_text(
+            "from enum import Enum\n"
+            "class CredentialType(Enum):\n"
+            "    API_KEY = 'api_key'\n"
+            "    S3_SECRET = 's3_secret'\n"
+        )
+        report = ScanReport()
+        check_hardcoded_secrets(tmp_path, report)
+        assert report.passed == 1
+
 
 # ---------------------------------------------------------------------------
 # check_auth_bypass
@@ -353,15 +404,28 @@ class TestCheckAuthBypass:
         check_auth_bypass(tmp_path, report)
         assert report.passed == 1
 
-    def test_with_bypass_flag(self, tmp_path):
-        api_dir = tmp_path / "api"
-        api_dir.mkdir()
-        (api_dir / "auth.py").write_text(
-            'allow = os.environ.get("ALLOW_UNAUTHENTICATED", "false")\n'
+    def test_with_production_bypass_enabled(self, tmp_path):
+        chart = tmp_path / "helm" / "ocr-local"
+        chart.mkdir(parents=True)
+        (chart / "values-production.yaml").write_text(
+            'coordinator:\n  env:\n    ALLOW_UNAUTHENTICATED: "true"\n'
         )
         report = ScanReport()
         check_auth_bypass(tmp_path, report)
         assert report.failed == 1
+
+    def test_development_flag_does_not_fail_production_posture(self, tmp_path):
+        api_dir = tmp_path / "api"
+        api_dir.mkdir()
+        (api_dir / "auth.py").write_text("ALLOW_UNAUTHENTICATED = False\n")
+        chart = tmp_path / "helm" / "ocr-local"
+        chart.mkdir(parents=True)
+        (chart / "values-production.yaml").write_text(
+            'coordinator:\n  env:\n    ALLOW_UNAUTHENTICATED: "false"\n'
+        )
+        report = ScanReport()
+        check_auth_bypass(tmp_path, report)
+        assert report.passed == 1
 
 
 # ---------------------------------------------------------------------------
@@ -380,9 +444,7 @@ class TestCheckRateLimitAuth:
     def test_with_auth_limit(self, tmp_path):
         api_dir = tmp_path / "api"
         api_dir.mkdir()
-        (api_dir / "limits.py").write_text(
-            'AUTH_RATE_LIMIT = "5/minute"\n'
-        )
+        (api_dir / "limits.py").write_text('AUTH_RATE_LIMIT = "5/minute"\n')
         report = ScanReport()
         check_rate_limit_auth(tmp_path, report)
         assert report.passed == 1
@@ -425,7 +487,15 @@ class TestPrintReport:
     def test_shows_failed_findings(self, capsys):
         report = ScanReport()
         report.add(
-            Finding("T-1", "Failing check", Severity.HIGH, "desc", "fix", False, "detail line")
+            Finding(
+                "T-1",
+                "Failing check",
+                Severity.HIGH,
+                "desc",
+                "fix",
+                False,
+                "detail line",
+            )
         )
         print_report(report)
         captured = capsys.readouterr()

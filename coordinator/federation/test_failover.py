@@ -323,10 +323,11 @@ def test_tick_redispatches_in_flight_jobs(
     assert report.jobs_failed_over == 5
     assert sorted(revoked) == [f"t{i}" for i in range(5)]
     assert sorted(dispatched) == sorted((f"j{i}", "local") for i in range(5))
-    # Each job was re-saved with assigned_cluster=local.
+    # Each job was durably intent-marked, then committed with the new owner.
     for job in jobs:
         assert job.assigned_cluster == "local"
-        assert ("assigned_cluster",) in job.saved_with
+        assert any("assigned_cluster" in fields for fields in job.saved_with)
+        assert "_failover_intent" not in job.settings_json
 
 
 def test_tick_dry_run_logs_but_does_not_dispatch(
@@ -390,6 +391,37 @@ def test_tick_router_returns_unhealthy_peer_skips(
     assert report.jobs_skipped_no_destination == 1
     assert report.jobs_failed_over == 0
     assert dispatched == []
+
+
+def test_failover_adapts_typed_cluster_routing_decision():
+    from coordinator.federation.cluster_router import ClusterRoutingDecision
+
+    calls: dict[str, Any] = {}
+
+    class _TypedRouter:
+        _local_name = "local"
+
+        def select_cluster(self, *, task_name, base_queue, kwargs):
+            calls.update(
+                task_name=task_name,
+                base_queue=base_queue,
+                kwargs=kwargs,
+            )
+            return ClusterRoutingDecision(
+                cluster_name="peer-b",
+                queue_name=base_queue,
+                reason_code="test",
+            )
+
+    engine = FailoverEngine(
+        registry=None,
+        health_provider=lambda: {},
+        router=_TypedRouter(),
+    )
+    job = _FakeJob("j-typed", tenant_id="tenant-a")
+    assert engine._select_destination(job, "peer-a") == "peer-b"
+    assert calls["base_queue"] == "coordinator"
+    assert calls["kwargs"]["exclude"] == ("peer-a",)
 
 
 def test_tick_router_returns_same_unhealthy_peer_skips(
@@ -518,10 +550,10 @@ def test_tick_dispatch_callback_exception_does_not_propagate(
         policy=FailoverPolicy(enabled=True),
         dispatch_callback=bad_dispatch,
     )
-    # The engine accounts the failover before dispatch, so dispatch
-    # exceptions are observable only via logs -- the tick must complete.
+    # A failed publication must not be counted as a successful failover.
     report = engine.tick()
-    assert report.jobs_failed_over == 1
+    assert report.jobs_failed_over == 0
+    assert report.jobs_dispatch_failed == 1
 
 
 # ---------------------------------------------------------------------------
@@ -566,9 +598,7 @@ def test_tick_emits_custody_event_per_failover(
     report = engine.tick()
     assert report.jobs_failed_over == 2
     assert len(custody_events) == 2
-    assert all(
-        e["event_type"] == JOB_FAILOVER_REROUTED for e in custody_events
-    )
+    assert all(e["event_type"] == JOB_FAILOVER_REROUTED for e in custody_events)
     assert {e["job_id"] for e in custody_events} == {"j1", "j2"}
 
 
@@ -786,4 +816,5 @@ def test_report_as_dict_includes_duration() -> None:
     assert payload["peers_unhealthy"] == 2
     assert payload["jobs_failed_over"] == 4
     assert payload["jobs_skipped_no_destination"] == 1
+    assert payload["jobs_dispatch_failed"] == 0
     assert payload["duration_seconds"] == pytest.approx(2.5)

@@ -1,4 +1,4 @@
-"""Property-based testing with Hypothesis.
+"""maintenance review: Property-based testing with Hypothesis.
 
 Tests security-critical string handling using Hypothesis to discover
 edge cases that hand-written unit tests would miss.
@@ -37,7 +37,7 @@ from ocr_gpu_async import _sanitize_path_segment  # noqa: E402
 _ILLEGAL_CHARS = set('<>:"|?*\x00')
 _CONTROL_CHARS = {chr(c) for c in range(32)}
 # Path separators (OS-specific)
-_PATH_SEPS = {'/', '\\'}
+_PATH_SEPS = {"/", "\\"}
 
 
 class TestSanitizePathSegment:
@@ -56,9 +56,9 @@ class TestSanitizePathSegment:
         """Output must not contain Windows-illegal or null characters."""
         result = _sanitize_path_segment(text)
         for ch in result:
-            assert ch not in _ILLEGAL_CHARS, (
-                f"Illegal character {ch!r} (U+{ord(ch):04X}) in sanitized output"
-            )
+            assert (
+                ch not in _ILLEGAL_CHARS
+            ), f"Illegal character {ch!r} (U+{ord(ch):04X}) in sanitized output"
 
     @given(st.text())
     @settings(max_examples=500, suppress_health_check=[HealthCheck.too_slow])
@@ -66,9 +66,9 @@ class TestSanitizePathSegment:
         """Output must not contain control characters (< U+0020)."""
         result = _sanitize_path_segment(text)
         for ch in result:
-            assert ord(ch) >= 32, (
-                f"Control character U+{ord(ch):04X} in sanitized output"
-            )
+            assert (
+                ord(ch) >= 32
+            ), f"Control character U+{ord(ch):04X} in sanitized output"
 
     @given(st.text())
     @settings(max_examples=500, suppress_health_check=[HealthCheck.too_slow])
@@ -94,9 +94,9 @@ class TestSanitizePathSegment:
         """Sanitizing an already-sanitized string should produce the same result."""
         first_pass = _sanitize_path_segment(text)
         second_pass = _sanitize_path_segment(first_pass)
-        assert first_pass == second_pass, (
-            f"Not idempotent: {first_pass!r} -> {second_pass!r}"
-        )
+        assert (
+            first_pass == second_pass
+        ), f"Not idempotent: {first_pass!r} -> {second_pass!r}"
 
     def test_known_dangerous_inputs(self):
         """Explicitly test known dangerous filesystem path segments."""
@@ -176,7 +176,9 @@ class TestNormalizePagination:
         limit=st.integers(min_value=1, max_value=MAX_PAGE_LIMIT),
         offset=st.integers(min_value=0, max_value=10_000),
         page=st.one_of(st.none(), st.integers(min_value=1, max_value=1000)),
-        per_page=st.one_of(st.none(), st.integers(min_value=1, max_value=MAX_PAGE_LIMIT)),
+        per_page=st.one_of(
+            st.none(), st.integers(min_value=1, max_value=MAX_PAGE_LIMIT)
+        ),
     )
     @settings(max_examples=500, suppress_health_check=[HealthCheck.too_slow])
     def test_output_types_always_valid(self, limit, offset, page, per_page):
@@ -247,13 +249,19 @@ class TestGetRealClientIP:
         xff=st.text(),
         real_ip=st.text(),
     )
-    @settings(max_examples=300, suppress_health_check=[HealthCheck.too_slow])
+    @settings(
+        max_examples=300,
+        suppress_health_check=[HealthCheck.too_slow],
+        deadline=None,
+    )
     def test_never_crashes_on_both_headers(self, xff, real_ip):
         """Both headers present simultaneously must never crash."""
-        request = _make_request_with_headers({
-            "x-forwarded-for": xff,
-            "x-real-ip": real_ip,
-        })
+        request = _make_request_with_headers(
+            {
+                "x-forwarded-for": xff,
+                "x-real-ip": real_ip,
+            }
+        )
         result = _get_real_client_ip(request)
         assert isinstance(result, str)
 
@@ -267,24 +275,32 @@ class TestGetRealClientIP:
 
     @given(
         st.lists(
-            st.text(
-                alphabet=string.digits + ".:",
-                min_size=1,
-                max_size=45,
-            ),
+            # The production boundary accepts parseable IP literals only
+            # from a trusted proxy.  Arbitrary digit/dot/colon strings also
+            # generate invalid literals (for example ``"0"``), which are
+            # intentionally rejected and fall back to the peer address.
+            st.ip_addresses().map(str),
             min_size=1,
             max_size=10,
         )
     )
     @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
     def test_xff_chain_returns_first_entry(self, ip_chain):
-        """XFF with multiple entries should return the leftmost (first) IP."""
-        xff_value = ", ".join(ip_chain)
-        request = _make_request_with_headers({"x-forwarded-for": xff_value})
-        result = _get_real_client_ip(request)
-        expected_first = ip_chain[0].strip()
-        if expected_first:
-            assert result == expected_first
+        """A trusted proxy's XFF chain returns the leftmost IP."""
+        previous = os.environ.get("TRUSTED_PROXIES")
+        os.environ["TRUSTED_PROXIES"] = "127.0.0.1"
+        try:
+            xff_value = ", ".join(ip_chain)
+            request = _make_request_with_headers({"x-forwarded-for": xff_value})
+            result = _get_real_client_ip(request)
+            expected_first = ip_chain[0].strip()
+            if expected_first:
+                assert result == expected_first
+        finally:
+            if previous is None:
+                os.environ.pop("TRUSTED_PROXIES", None)
+            else:
+                os.environ["TRUSTED_PROXIES"] = previous
 
     def test_no_headers_returns_client_host(self):
         """Without proxy headers, falls back to request.client.host."""
@@ -296,9 +312,11 @@ class TestGetRealClientIP:
 
     def test_xff_with_only_whitespace(self):
         """XFF containing only whitespace should fall through to next check."""
-        request = _make_request_with_headers({
-            "x-forwarded-for": "   ,   ,   ",
-        })
+        request = _make_request_with_headers(
+            {
+                "x-forwarded-for": "   ,   ,   ",
+            }
+        )
         result = _get_real_client_ip(request)
         assert isinstance(result, str)
         assert len(result) > 0

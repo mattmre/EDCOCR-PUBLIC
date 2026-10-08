@@ -1,4 +1,10 @@
-"""Authentication identity model and role-based access control."""
+"""Authentication identity model and role-based access control.
+
+R4-RC-14: never invent a platform-admin identity for missing auth. Anonymous
+access is only allowed when ``ALLOW_UNAUTHENTICATED`` is explicitly enabled,
+and under multi-tenancy anonymous roles are demoted to viewer (never
+admin/operator).
+"""
 
 from __future__ import annotations
 
@@ -23,6 +29,9 @@ class UserRole(str, Enum):
 # Valid role names (ordered by privilege level, highest first)
 VALID_ROLES = tuple(role.value for role in UserRole)
 
+# Roles that must never be granted to unauthenticated callers under MT.
+_PRIVILEGED_ANON_ROLES = frozenset({"admin", "operator", "platform_admin"})
+
 
 @dataclass(frozen=True)
 class AuthIdentity:
@@ -31,7 +40,7 @@ class AuthIdentity:
     Attributes:
         subject: Unique identifier for the identity (e.g. "apikey", user ID, email).
         role: Authorization role — one of "admin", "operator", "viewer".
-        auth_method: How the identity was authenticated — "apikey" or "oauth2".
+        auth_method: How the identity was authenticated — "apikey", "oauth2", or "none".
         email: Optional email from JWT claims.
         name: Optional display name from JWT claims.
         claims: Raw JWT claims dict (empty for API key auth).
@@ -45,21 +54,50 @@ class AuthIdentity:
     claims: dict[str, Any] = field(default_factory=dict)
 
 
+def _anonymous_role() -> str:
+    """Resolve least-privilege anonymous role (R4-RC-14)."""
+    from api import config
+
+    role = (getattr(config, "ANONYMOUS_ROLE", None) or "viewer").strip() or "viewer"
+    mt = bool(getattr(config, "ENABLE_MULTITENANCY", False))
+    if mt and role in _PRIVILEGED_ANON_ROLES:
+        logger.warning(
+            "ANONYMOUS_ROLE=%r demoted to viewer under multi-tenancy (R4-RC-14)",
+            role,
+        )
+        return UserRole.VIEWER.value
+    if role not in VALID_ROLES:
+        return UserRole.VIEWER.value
+    return role
+
+
 def get_identity(request: Request) -> AuthIdentity:
     """Extract the AuthIdentity from request.state.
 
-    Returns a default admin identity if no identity was set (backward compat
-    for unauthenticated mode).
+    Missing identity:
+    - If ``ALLOW_UNAUTHENTICATED`` is false → HTTP 401 (no invented admin).
+    - If true → anonymous with ``ANONYMOUS_ROLE`` (viewer under MT).
     """
     identity = getattr(request.state, "identity", None)
-    if identity is None:
-        # Unauthenticated mode — treat as admin for backward compatibility
-        return AuthIdentity(
-            subject="anonymous",
-            role="admin",
-            auth_method="none",
+    if identity is not None:
+        return identity
+
+    from api import config
+
+    if not getattr(config, "ALLOW_UNAUTHENTICATED", False):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "unauthorized",
+                "message": "Authentication required",
+            },
         )
-    return identity
+
+    return AuthIdentity(
+        subject="anonymous",
+        role=_anonymous_role(),
+        auth_method="none",
+    )
 
 
 def require_role(*allowed_roles: str):
@@ -80,6 +118,10 @@ def require_role(*allowed_roles: str):
 
     async def _check_role(request: Request) -> None:
         identity = get_identity(request)
+
+        from api.authz import enforce_tenant_capability
+
+        enforce_tenant_capability(request)
 
         # Admin always passes
         if identity.role == "admin":

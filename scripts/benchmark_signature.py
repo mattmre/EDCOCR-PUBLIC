@@ -20,7 +20,7 @@ on each image and compares ``presence_detected`` to the ground-truth label.
 The ``report`` subcommand reads a JSON results file and prints a Markdown
 report with a confusion matrix.
 
-Requires: signature_verification.py, Pillow (from EDCOCR project root)
+Requires: signature_verification.py, Pillow (from OCR_LOCAL project root)
 """
 
 import argparse

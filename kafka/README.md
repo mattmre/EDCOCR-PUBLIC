@@ -1,6 +1,6 @@
-# Kafka Event Bus for EDCOCR
+# Kafka Event Bus for OCR_LOCAL
 
-Production-ready Kafka deployment configuration for the EDCOCR event bus.
+Production-ready Kafka deployment configuration for the OCR_LOCAL event bus.
 Uses KRaft mode (no ZooKeeper dependency) with Bitnami Kafka 3.7.
 
 ## Quick Start (Local Development)
@@ -112,13 +112,15 @@ from api.event_bus import create_event_bus, Event, EventType
 bus = create_event_bus(
     "kafka",
     bootstrap_servers="kafka:9092",
-    topic_prefix="ocr")
+    topic_prefix="ocr",
+)
 
 # Publish an event
 event = Event(
     event_type=EventType.JOB_COMPLETED,
     payload={"job_id": "abc-123", "total_pages": 10},
-    source="api-server")
+    source="api-server",
+)
 bus.publish(event)
 ```
 
@@ -180,7 +182,7 @@ KAFKA_CFG_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
 
 ### Kubernetes (Helm Values)
 
-If deploying alongside the EDCOCR Helm chart, add Kafka as a
+If deploying alongside the OCR_LOCAL Helm chart, add Kafka as a
 StatefulSet or use Strimzi Kafka Operator:
 
 ```yaml

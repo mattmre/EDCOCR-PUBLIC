@@ -1,0 +1,147 @@
+# VTM C8 — DGX Spark / shared-box footprint overlay
+#
+# Install alongside base values to cap OCR stack share of a dense node so
+# other services can co-reside. Not production GO by itself.
+#
+#   helm upgrade --install ocr-local ./helm/ocr-local \
+#     -f helm/ocr-local/values.yaml \
+#     -f helm/ocr-local/values-dgx-shared.yaml \
+#     --set secrets.djangoSecretKey=... (required)
+#
+# Goal: docs/release-candidate.md
+# Docs: docs/operations/vtm-dgx-footprint.md
+
+# Global KEDA ceiling — hard cap on scale-out
+keda:
+  scalingStrategy: "conservative"
+  maxReplicaCount: 4  # shared-box default; raise only with operator GO
+
+# Footprint annotation block (documented; operators enforce via ResourceQuota)
+footprint:
+  profile: dgx-shared
+  maxTotalMemoryGi: 48
+  maxGPUs: 2
+  reservedHostHeadroomPercent: 25
+  notes: >
+    Leave ≥25% host RAM/GPU headroom for co-resident services.
+    Do not set minReplicas above 0 for optional queues on shared boxes.
+
+coordinator:
+  replicas: 1
+  resources:
+    requests:
+      cpu: "250m"
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+gpuWorker:
+  replicas: 1
+  autoscaling:
+    enabled: true
+    minReplicas: 0
+    maxReplicas: 2
+    pollingInterval: 30
+    cooldownPeriod: 300
+    queueTarget: 8
+  resources:
+    requests:
+      cpu: "2"
+      memory: 8Gi
+      nvidia.com/gpu: 1
+    limits:
+      cpu: "4"
+      memory: 16Gi
+      nvidia.com/gpu: 1
+
+cpuOcrWorker:
+  enabled: true
+  replicas: 0
+  autoscaling:
+    enabled: true
+    minReplicas: 0
+    maxReplicas: 2
+    pollingInterval: 30
+    cooldownPeriod: 300
+    queueTarget: 5
+  resources:
+    requests:
+      cpu: "2"
+      memory: 4Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+
+cpuWorker:
+  replicas: 1
+  autoscaling:
+    enabled: false
+  resources:
+    requests:
+      cpu: "250m"
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+layoutCpuWorker:
+  enabled: false
+  autoscaling:
+    enabled: false
+    minReplicas: 0
+    maxReplicas: 1
+
+nlpGpuWorker:
+  enabled: false
+  autoscaling:
+    enabled: false
+    minReplicas: 0
+    maxReplicas: 1
+
+layoutlmWorker:
+  enabled: false
+  autoscaling:
+    enabled: false
+    minReplicas: 0
+    maxReplicas: 1
+  gpu:
+    enabled: false
+
+coordinatorAutoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 2
+  cooldownPeriod: 600
+
+postgresql:
+  resources:
+    requests:
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+
+rabbitmq:
+  replicas: 1
+  resources:
+    requests:
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+
+redis:
+  resources:
+    requests:
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  sentinel:
+    enabled: false
+
+prometheus:
+  enabled: false
+  grafana:
+    enabled: false
+
+frontend:
+  enabled: false

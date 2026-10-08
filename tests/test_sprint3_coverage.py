@@ -8,6 +8,7 @@ T4: Validates optimize_pdf() behavior with mocked Ghostscript subprocess calls,
 
 Run with: python -m pytest tests/test_sprint3_coverage.py -v
 """
+
 import os
 import re
 import subprocess
@@ -20,6 +21,7 @@ from unittest.mock import MagicMock, patch
 # ---------------------------------------------------------------------------
 # Import _sanitize_table_html — same pattern as test_utilities.py
 # ---------------------------------------------------------------------------
+
 
 def _load_sanitize_function():
     """Extract _sanitize_table_html from ocr_gpu_async.py without running imports."""
@@ -43,7 +45,7 @@ def _load_sanitize_function():
             exec(compile(line, src_path, "exec"), mod.__dict__)
 
     # Extract the function
-    func_pattern = r'^(def _sanitize_table_html\(.*?\n(?:(?:    .*\n|[ \t]*\n)*))'
+    func_pattern = r"^(def _sanitize_table_html\(.*?\n(?:(?:    .*\n|[ \t]*\n)*))"
     func_match = re.search(func_pattern, source, re.MULTILINE)
     if func_match:
         exec(compile(func_match.group(1), src_path, "exec"), mod.__dict__)
@@ -54,6 +56,7 @@ def _load_sanitize_function():
 try:
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
     from ocr_gpu_async import _sanitize_table_html
+
     _DIRECT_IMPORT = True
 except ImportError:
     _mod = _load_sanitize_function()
@@ -64,6 +67,7 @@ except ImportError:
 # ===========================================================================
 # T3: _sanitize_table_html XSS Tests
 # ===========================================================================
+
 
 class TestSanitizeTableHtml:
     """Tests for T3: _sanitize_table_html XSS prevention."""
@@ -84,7 +88,7 @@ class TestSanitizeTableHtml:
         assert "alert" in result  # text content survives
 
     def test_strips_img_tag(self):
-        html = '<td><img src=x onerror=alert(1)></td>'
+        html = "<td><img src=x onerror=alert(1)></td>"
         result = _sanitize_table_html(html)
         assert "<img" not in result
         assert "onerror" not in result
@@ -101,7 +105,7 @@ class TestSanitizeTableHtml:
         assert "<td>" in result  # tag preserved, attrs stripped
 
     def test_strips_style_tag(self):
-        html = '<table><style>body{display:none}</style><tr><td>x</td></tr></table>'
+        html = "<table><style>body{display:none}</style><tr><td>x</td></tr></table>"
         result = _sanitize_table_html(html)
         assert "<style>" not in result
 
@@ -113,7 +117,7 @@ class TestSanitizeTableHtml:
         assert "link" in result
 
     def test_strips_div_span(self):
-        html = '<table><div><span>text</span></div></table>'
+        html = "<table><div><span>text</span></div></table>"
         result = _sanitize_table_html(html)
         assert "<div>" not in result
         assert "<span>" not in result
@@ -135,7 +139,7 @@ class TestSanitizeTableHtml:
         assert result == "<td>data</td>"
 
     def test_case_insensitive_xss(self):
-        html = '<td><SCRIPT>alert(1)</SCRIPT></td>'
+        html = "<td><SCRIPT>alert(1)</SCRIPT></td>"
         result = _sanitize_table_html(html)
         # Script tags should be stripped regardless of case
         assert "<SCRIPT>" not in result
@@ -160,10 +164,10 @@ class TestSanitizeTableHtml:
         assert "<colgroup>" in result
         assert "<col>" in result
         # span attribute should be stripped
-        assert 'span=' not in result
+        assert "span=" not in result
 
     def test_nested_dangerous_tags(self):
-        html = '<td><div><script><b>evil</b></script></div></td>'
+        html = "<td><div><script><b>evil</b></script></div></td>"
         result = _sanitize_table_html(html)
         assert "<script>" not in result
         assert "<div>" not in result
@@ -187,6 +191,7 @@ class TestSanitizeTableHtml:
 # T4: optimize_pdfs Tests
 # ===========================================================================
 
+
 class TestOptimizePdf:
     """Tests for T4: optimize_pdfs.optimize_pdf()."""
 
@@ -194,6 +199,7 @@ class TestOptimizePdf:
         pdf = tmp_path / "doc_optimized.pdf"
         pdf.write_bytes(b"%PDF-1.0")
         from optimize_pdfs import optimize_pdf
+
         with patch("optimize_pdfs.subprocess.run") as mock_run:
             optimize_pdf(str(pdf))
         mock_run.assert_not_called()
@@ -212,7 +218,19 @@ class TestOptimizePdf:
                         f.write(b"%PDF-1.0 " + b"y" * 5000)
             return MagicMock(returncode=0)
 
-        with patch("optimize_pdfs.subprocess.run", side_effect=fake_gs):
+        from optimize_pdfs import OptimizationDisposition
+
+        with (
+            patch(
+                "optimize_pdfs._preflight_visual_budget",
+                return_value=(OptimizationDisposition.APPLIED, "", {}),
+            ),
+            patch(
+                "optimize_pdfs._validate_pdf_structure",
+                return_value=(True, ""),
+            ),
+            patch("optimize_pdfs.subprocess.run", side_effect=fake_gs),
+        ):
             optimize_pdf(str(pdf))
 
         # Original should be replaced with optimized version
@@ -341,7 +359,15 @@ class TestOptimizePdf:
             captured_cmd.extend(cmd)
             return MagicMock(returncode=0)
 
-        with patch("optimize_pdfs.subprocess.run", side_effect=capture_gs):
+        from optimize_pdfs import OptimizationDisposition
+
+        with (
+            patch(
+                "optimize_pdfs._preflight_visual_budget",
+                return_value=(OptimizationDisposition.APPLIED, "", {}),
+            ),
+            patch("optimize_pdfs.subprocess.run", side_effect=capture_gs),
+        ):
             optimize_pdf(str(pdf), quality="/ebook")
 
         assert any("/ebook" in arg for arg in captured_cmd)
@@ -349,15 +375,25 @@ class TestOptimizePdf:
     def test_default_quality_is_prepress(self):
         """Default quality setting should be /prepress."""
         from optimize_pdfs import DEFAULT_QUALITY
+
         assert DEFAULT_QUALITY == "/prepress"
 
     def test_non_optimized_suffix_processed(self, tmp_path):
         """Files without _optimized suffix should be processed."""
         pdf = tmp_path / "report.pdf"
         pdf.write_bytes(b"%PDF-1.0 " + b"x" * 1000)
-        from optimize_pdfs import optimize_pdf
+        from optimize_pdfs import OptimizationDisposition, optimize_pdf
 
-        with patch("optimize_pdfs.subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
+        with (
+            patch(
+                "optimize_pdfs._preflight_visual_budget",
+                return_value=(OptimizationDisposition.APPLIED, "", {}),
+            ),
+            patch(
+                "optimize_pdfs.subprocess.run",
+                return_value=MagicMock(returncode=0),
+            ) as mock_run,
+        ):
             optimize_pdf(str(pdf))
 
         mock_run.assert_called_once()

@@ -1,4 +1,4 @@
-"""Tests for webhook HMAC timestamp/signature freshness on retry.
+"""Tests for webhook HMAC timestamp/signature freshness on retry (maintenance review).
 
 Verifies that:
 - Each retry attempt gets a fresh ``time.time()`` timestamp
@@ -15,12 +15,22 @@ import urllib.request
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-from api.database import Batch, Job, get_engine
+import pytest
+
+from api.database import Batch, Job, get_engine, reset_engine
 from api.webhooks import compute_signature
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_database_engine():
+    """Allow each test's isolated temp DB to bind explicitly."""
+    reset_engine()
+    yield
+    reset_engine()
 
 
 def _make_session_factory(tmp_path):
@@ -139,15 +149,15 @@ class TestJobWebhookTimestampRefresh:
         # All timestamps should be valid and non-stale
         timestamps = [int(c["timestamp"]) for c in captured]
         for ts in timestamps:
-            assert t_before <= ts <= t_after, (
-                f"Timestamp {ts} not in range [{t_before}, {t_after}]"
-            )
+            assert (
+                t_before <= ts <= t_after
+            ), f"Timestamp {ts} not in range [{t_before}, {t_after}]"
 
         # Each timestamp should be >= the previous (monotonic)
         for i in range(1, len(timestamps)):
-            assert timestamps[i] >= timestamps[i - 1], (
-                f"Timestamp {timestamps[i]} < previous {timestamps[i - 1]}"
-            )
+            assert (
+                timestamps[i] >= timestamps[i - 1]
+            ), f"Timestamp {timestamps[i]} < previous {timestamps[i - 1]}"
 
     def test_signature_changes_when_timestamp_changes(self, tmp_path):
         """HMAC signature must differ when timestamp differs.
@@ -190,9 +200,7 @@ class TestJobWebhookTimestampRefresh:
             payload_json = c["body"].decode("utf-8")
             ts = int(c["timestamp"])
             expected = compute_signature(payload_json, "sig-secret", ts)
-            assert c["signature"] == expected, (
-                f"Signature mismatch at timestamp {ts}"
-            )
+            assert c["signature"] == expected, f"Signature mismatch at timestamp {ts}"
 
     def test_no_signature_headers_without_secret(self, tmp_path):
         """When no secret is set, signature headers should be absent."""

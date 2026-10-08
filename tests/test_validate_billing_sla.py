@@ -10,6 +10,7 @@ import pytest
 from scripts.validate_billing_sla import (
     CheckResult,
     ValidationReport,
+    check_api_cost_defaults,
     check_billing_formula_locked,
     check_billing_formula_version,
     check_cost_defaults,
@@ -69,6 +70,17 @@ PROMETHEUS_SOURCE = textwrap.dedent("""\
     _TENANT_STORAGE_BYTES = Gauge("ocr_tenant_storage_bytes", "help", labelnames=["tenant_id"])
 """)
 
+API_CONFIG_SOURCE = textwrap.dedent("""\
+    TENANT_COST_PER_PAGE_USD = _safe_float("TENANT_COST_PER_PAGE_USD", 0.0)
+    TENANT_COST_PER_GIB_INGESTED_USD = _safe_float(
+        "TENANT_COST_PER_GIB_INGESTED_USD", 0.0
+    )
+    TENANT_COST_PER_API_CALL_USD = _safe_float("TENANT_COST_PER_API_CALL_USD", 0.0)
+    TENANT_COST_PER_PROCESSING_HOUR_USD = _safe_float(
+        "TENANT_COST_PER_PROCESSING_HOUR_USD", 0.0
+    )
+""")
+
 GRAFANA_SOURCE = textwrap.dedent("""\
     "title": "Cost per Tenant"
     "title": "Tenant Storage Consumption"
@@ -85,6 +97,7 @@ def mock_project(tmp_path):
 
     api_dir = tmp_path / "api"
     api_dir.mkdir()
+    (api_dir / "config.py").write_text(API_CONFIG_SOURCE, encoding="utf-8")
     (api_dir / "prometheus.py").write_text(PROMETHEUS_SOURCE, encoding="utf-8")
 
     helm_dir = tmp_path / "helm" / "ocr-local" / "templates"
@@ -218,6 +231,27 @@ class TestCostTrackingChecks:
     def test_cost_persistence(self, mock_project):
         r = check_cost_persistence(mock_project)
         assert r.passed is True
+
+    def test_api_cost_defaults_are_safe_zero(self, mock_project):
+        results = check_api_cost_defaults(mock_project)
+        assert len(results) == 4
+        assert all(r.passed for r in results), [r.detail for r in results]
+
+    def test_api_cost_default_rejects_implicit_business_price(self, mock_project):
+        config_path = mock_project / "api" / "config.py"
+        config_path.write_text(
+            API_CONFIG_SOURCE.replace(
+                '_safe_float("TENANT_COST_PER_PAGE_USD", 0.0)',
+                '_safe_float("TENANT_COST_PER_PAGE_USD", 0.01)',
+            ),
+            encoding="utf-8",
+        )
+
+        results = check_api_cost_defaults(mock_project)
+
+        page_check = next(r for r in results if "PER_PAGE" in r.name)
+        assert not page_check.passed
+        assert "0.01" in page_check.detail
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +387,20 @@ class TestRunValidation:
         assert not report.all_passed
         assert report.failed > 0
 
+    def test_prefers_canonical_feature_modules_over_root_shims(self, mock_project):
+        feature_dir = mock_project / "ocr_local" / "features"
+        feature_dir.mkdir(parents=True)
+        for filename in ("cost_tracking.py", "sla_monitoring.py"):
+            flat_path = mock_project / filename
+            (feature_dir / filename).write_text(
+                flat_path.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            flat_path.write_text('"""Compatibility shim."""\n', encoding="utf-8")
+
+        report = run_validation(mock_project)
+
+        assert report.all_passed, report.to_text()
+
 
 # ---------------------------------------------------------------------------
 # CLI entry point
@@ -377,10 +425,14 @@ class TestCLI:
 
     def test_cli_report_file(self, mock_project, tmp_path):
         report_file = tmp_path / "report.txt"
-        rc = main([
-            "--project-root", str(mock_project),
-            "--report", str(report_file),
-        ])
+        rc = main(
+            [
+                "--project-root",
+                str(mock_project),
+                "--report",
+                str(report_file),
+            ]
+        )
         assert rc == 0
         assert report_file.is_file()
         content = report_file.read_text(encoding="utf-8")
@@ -388,11 +440,15 @@ class TestCLI:
 
     def test_cli_json_report_file(self, mock_project, tmp_path):
         report_file = tmp_path / "report.json"
-        rc = main([
-            "--project-root", str(mock_project),
-            "--json",
-            "--report", str(report_file),
-        ])
+        rc = main(
+            [
+                "--project-root",
+                str(mock_project),
+                "--json",
+                "--report",
+                str(report_file),
+            ]
+        )
         assert rc == 0
         data = json.loads(report_file.read_text(encoding="utf-8"))
         assert data["all_passed"] is True

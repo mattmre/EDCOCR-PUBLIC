@@ -30,12 +30,19 @@ logger = logging.getLogger(__name__)
 # Defaults (overridden by Django settings or env vars at import time)
 _DEFAULT_TTL = 3600
 _DEFAULT_WINDOW_SIZE = 5
+_MAX_CONTEXT_PAYLOAD_BYTES = 1024 * 1024
+_MAX_CONTEXT_WINDOW_SIZE = 64
+_MAX_CONTEXT_TTL_SECONDS = 7 * 24 * 3600
+_MAX_CONTEXT_PAGES = 10_000
+_MAX_CLEANUP_KEYS = 100_000
+_REDIS_DELETE_BATCH_SIZE = 1_000
 
 
 def _get_config() -> dict[str, Any]:
     """Read context window configuration from Django settings / env vars."""
     try:
         from django.conf import settings as django_settings
+
         enabled = getattr(django_settings, "CONTEXT_WINDOW_ENABLED", None)
         window_size = getattr(django_settings, "CONTEXT_WINDOW_SIZE", None)
         ttl = getattr(django_settings, "CONTEXT_STORE_TTL", None)
@@ -50,12 +57,16 @@ def _get_config() -> dict[str, Any]:
 
     # Fallback to env vars
     if enabled is None:
-        enabled = os.environ.get(
-            "CONTEXT_WINDOW_ENABLED", "false"
-        ).lower() in ("1", "true", "yes")
+        enabled = os.environ.get("CONTEXT_WINDOW_ENABLED", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
     if window_size is None:
         try:
-            window_size = int(os.environ.get("CONTEXT_WINDOW_SIZE", str(_DEFAULT_WINDOW_SIZE)))
+            window_size = int(
+                os.environ.get("CONTEXT_WINDOW_SIZE", str(_DEFAULT_WINDOW_SIZE))
+            )
         except (TypeError, ValueError):
             window_size = _DEFAULT_WINDOW_SIZE
     if ttl is None:
@@ -70,8 +81,8 @@ def _get_config() -> dict[str, Any]:
 
     return {
         "enabled": bool(enabled),
-        "window_size": max(1, int(window_size)),
-        "ttl": max(60, int(ttl)),
+        "window_size": min(_MAX_CONTEXT_WINDOW_SIZE, max(1, int(window_size))),
+        "ttl": min(_MAX_CONTEXT_TTL_SECONDS, max(60, int(ttl))),
         "redis_url": str(redis_url),
     }
 
@@ -79,6 +90,7 @@ def _get_config() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Reference ID generation
 # ---------------------------------------------------------------------------
+
 
 def _make_ref_id(job_id: str, page_num: int) -> str:
     """Generate a deterministic, unique reference ID for a page context.
@@ -107,6 +119,7 @@ def _redis_key(ref_id: str) -> str:
 # ContextStore
 # ---------------------------------------------------------------------------
 
+
 class ContextStore:
     """Redis-backed ephemeral store for page context windows.
 
@@ -130,7 +143,23 @@ class ContextStore:
         config = _get_config()
         self._enabled = config["enabled"]
         self._ttl = ttl_seconds if ttl_seconds is not None else config["ttl"]
-        self._window_size = window_size if window_size is not None else config["window_size"]
+        self._window_size = (
+            window_size if window_size is not None else config["window_size"]
+        )
+        if not isinstance(self._ttl, int) or isinstance(self._ttl, bool):
+            raise ValueError("ttl_seconds must be an integer")
+        if not 1 <= self._ttl <= _MAX_CONTEXT_TTL_SECONDS:
+            raise ValueError(
+                f"ttl_seconds must be between 1 and {_MAX_CONTEXT_TTL_SECONDS}"
+            )
+        if not isinstance(self._window_size, int) or isinstance(
+            self._window_size, bool
+        ):
+            raise ValueError("window_size must be an integer")
+        if not 1 <= self._window_size <= _MAX_CONTEXT_WINDOW_SIZE:
+            raise ValueError(
+                f"window_size must be between 1 and {_MAX_CONTEXT_WINDOW_SIZE}"
+            )
         self._redis_url = redis_url or config["redis_url"]
         self._redis: Any | None = _redis_client
 
@@ -145,8 +174,9 @@ class ContextStore:
     def _get_redis(self) -> Any:
         """Lazy-connect to Redis."""
         if self._redis is None:
-            import redis
-            self._redis = redis.from_url(self._redis_url)
+            from .redis_client import create_redis_client
+
+            self._redis = create_redis_client(self._redis_url)
         return self._redis
 
     # ------------------------------------------------------------------
@@ -154,7 +184,10 @@ class ContextStore:
     # ------------------------------------------------------------------
 
     def store_page_context(
-        self, job_id: str, page_num: int, context: dict[str, Any],
+        self,
+        job_id: str,
+        page_num: int,
+        context: dict[str, Any],
     ) -> str:
         """Store a page context bundle and return its reference ID.
 
@@ -166,10 +199,20 @@ class ContextStore:
         Returns:
             A reference ID string that workers use to retrieve the context.
         """
+        if not isinstance(page_num, int) or isinstance(page_num, bool) or page_num < 1:
+            raise ValueError("page_num must be a positive integer")
+        if not isinstance(context, dict):
+            raise ValueError("context must be a dictionary")
+
         ref_id = _make_ref_id(job_id, page_num)
         key = _redis_key(ref_id)
 
         payload = json.dumps(context, default=str)
+        payload_bytes = len(payload.encode("utf-8"))
+        if payload_bytes > _MAX_CONTEXT_PAYLOAD_BYTES:
+            raise ValueError(
+                f"context payload exceeds {_MAX_CONTEXT_PAYLOAD_BYTES} bytes"
+            )
 
         r = self._get_redis()
         r.set(key, payload, ex=self._ttl)
@@ -181,7 +224,11 @@ class ContextStore:
 
         logger.debug(
             "Stored context for job=%s page=%d ref=%s (ttl=%ds, size=%d bytes)",
-            job_id, page_num, ref_id, self._ttl, len(payload),
+            job_id,
+            page_num,
+            ref_id,
+            self._ttl,
+            payload_bytes,
         )
         return ref_id
 
@@ -199,8 +246,33 @@ class ContextStore:
             logger.debug("Context not found for ref=%s", ref_id)
             return None
 
-        data = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-        return json.loads(data)
+        if isinstance(raw, bytes):
+            if len(raw) > _MAX_CONTEXT_PAYLOAD_BYTES:
+                logger.warning("Context payload exceeds size limit for ref=%s", ref_id)
+                return None
+            try:
+                data = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                logger.warning("Context payload is not UTF-8 for ref=%s", ref_id)
+                return None
+        elif isinstance(raw, str):
+            if len(raw.encode("utf-8")) > _MAX_CONTEXT_PAYLOAD_BYTES:
+                logger.warning("Context payload exceeds size limit for ref=%s", ref_id)
+                return None
+            data = raw
+        else:
+            logger.warning("Context payload has unsupported type for ref=%s", ref_id)
+            return None
+
+        try:
+            decoded = json.loads(data)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            logger.warning("Context payload is invalid JSON for ref=%s", ref_id)
+            return None
+        if not isinstance(decoded, dict):
+            logger.warning("Context payload is not an object for ref=%s", ref_id)
+            return None
+        return decoded
 
     def delete_context(self, ref_id: str) -> bool:
         """Delete a single context entry. Returns True if deleted."""
@@ -217,19 +289,30 @@ class ContextStore:
         r = self._get_redis()
         job_set_key = f"context:job:{str(job_id).replace('-', '')[:12]}"
 
-        members = r.smembers(job_set_key)
-        if not members:
-            return 0
+        deleted = 0
+        batch: list[str] = []
+        if hasattr(r, "sscan_iter"):
+            members = r.sscan_iter(job_set_key, count=_REDIS_DELETE_BATCH_SIZE)
+        else:
+            members = r.smembers(job_set_key)
+            if len(members) > _MAX_CLEANUP_KEYS:
+                raise RuntimeError("context cleanup set exceeds safety limit")
 
-        keys_to_delete = [
-            m.decode("utf-8") if isinstance(m, bytes) else m
-            for m in members
-        ]
-        keys_to_delete.append(job_set_key)
+        for member in members:
+            batch.append(
+                member.decode("utf-8") if isinstance(member, bytes) else member
+            )
+            if len(batch) >= _REDIS_DELETE_BATCH_SIZE:
+                deleted += r.delete(*batch)
+                batch.clear()
+        if batch:
+            deleted += r.delete(*batch)
 
-        deleted = r.delete(*keys_to_delete)
+        deleted += r.delete(job_set_key)
         logger.info(
-            "Cleaned up %d context keys for job %s", deleted, job_id,
+            "Cleaned up %d context keys for job %s",
+            deleted,
+            job_id,
         )
         return deleted
 
@@ -263,13 +346,15 @@ class ContextStore:
             Dict with ``ref_id`` and the full context window payload.
         """
         # pages list is 0-indexed, page_num is 1-indexed
+        if not isinstance(pages, list) or len(pages) > _MAX_CONTEXT_PAGES:
+            raise ValueError(
+                f"pages must be a list with at most {_MAX_CONTEXT_PAGES} entries"
+            )
         idx = page_num - 1
         total = len(pages)
 
         if idx < 0 or idx >= total:
-            raise ValueError(
-                f"page_num {page_num} out of range for {total} pages"
-            )
+            raise ValueError(f"page_num {page_num} out of range for {total} pages")
 
         current_page = pages[idx]
         prev_page = pages[idx - 1] if idx > 0 else None
@@ -279,7 +364,8 @@ class ContextStore:
         summary_before = self._build_summary(pages, end_idx=max(0, idx - 1))
         # Build summary of pages after the window
         summary_after = self._build_summary(
-            pages, start_idx=min(total, idx + 2),
+            pages,
+            start_idx=min(total, idx + 2),
         )
 
         context = {
@@ -388,7 +474,9 @@ class ContextStore:
         size = ContextStore.measure_payload_size(payload)
         if size > max_bytes:
             logger.warning(
-                "Broker payload exceeds %d bytes: actual=%d", max_bytes, size,
+                "Broker payload exceeds %d bytes: actual=%d",
+                max_bytes,
+                size,
             )
             return False
         return True

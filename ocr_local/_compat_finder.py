@@ -1,8 +1,8 @@
-"""Inert  Phase 2 compatibility surface.
+"""Inert maintenance review Phase 2 compatibility surface.
 
 Background
 ----------
-Phase 1 of  introduced a meta-path finder that mapped dotted names
+Phase 1 of maintenance review introduced a meta-path finder that mapped dotted names
 like ``ocr_local.features.ner`` to root-level modules without moving any
 files.  Phase 2 has now physically migrated every sub-module into its
 canonical ``ocr_local/<subpkg>/`` location, so the finder and loader
@@ -39,7 +39,7 @@ _SUBPACKAGE_MODULES: dict[str, frozenset[str]] = {
 def install() -> None:
     """No-op retained for backward compatibility.
 
-    Prior to  Phase 2 this registered a ``MetaPathFinder`` on
+    Prior to maintenance review Phase 2 this registered a ``MetaPathFinder`` on
     ``sys.meta_path``.  Phase 2 migrated every module into its canonical
     sub-package, so no meta-path hook is needed; the function is kept so
     that ``ocr_local/__init__.py`` (and any third-party callers) can

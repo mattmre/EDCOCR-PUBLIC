@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  // Pin tracing root to this app so multi-lockfile workspaces (the EDCOCR
+  // Pin tracing root to this app so multi-lockfile workspaces (the OCR_LOCAL
   // monorepo has Python tooling at the root) don't trip the auto-detect.
   outputFileTracingRoot: __dirname,
 };

@@ -1,5 +1,7 @@
 "use client";
 
+export { isValidApiBaseUrl } from "./runtime-config";
+
 /**
  * D10 -- client-side, localStorage-backed settings store.
  *
@@ -354,16 +356,4 @@ export function listSupportedTimezones(): readonly string[] {
     // Fall through.
   }
   return FALLBACK_TIMEZONES;
-}
-
-/** Validate a non-empty URL-shaped string, allowing "" to mean "current origin". */
-export function isValidApiBaseUrl(value: string): boolean {
-  if (value === "") return true;
-  try {
-    // eslint-disable-next-line no-new
-    new URL(value);
-    return true;
-  } catch {
-    return false;
-  }
 }

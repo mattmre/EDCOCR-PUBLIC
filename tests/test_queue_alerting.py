@@ -122,8 +122,11 @@ class TestQueueThreshold:
         t = QueueThreshold(queue_name="q")
         d = t.to_dict()
         expected_keys = {
-            "queue_name", "warning_depth", "critical_depth",
-            "warning_wait_seconds", "critical_wait_seconds",
+            "queue_name",
+            "warning_depth",
+            "critical_depth",
+            "warning_wait_seconds",
+            "critical_wait_seconds",
         }
         assert set(d.keys()) == expected_keys
 
@@ -143,7 +146,9 @@ class TestQueueDepthPoint:
 
     def test_with_age(self):
         p = QueueDepthPoint(
-            timestamp=1000.0, queue_name="ocr", depth=5,
+            timestamp=1000.0,
+            queue_name="ocr",
+            depth=5,
             oldest_item_age_seconds=120.5,
         )
         assert p.oldest_item_age_seconds == 120.5
@@ -170,8 +175,12 @@ class TestAlert:
 
     def test_to_dict(self):
         a = Alert(
-            alert_id="a-1", queue_name="ocr", severity=AlertSeverity.CRITICAL,
-            message="Queue full", current_depth=120, threshold_value=100,
+            alert_id="a-1",
+            queue_name="ocr",
+            severity=AlertSeverity.CRITICAL,
+            message="Queue full",
+            current_depth=120,
+            threshold_value=100,
         )
         d = a.to_dict()
         assert d["alert_id"] == "a-1"
@@ -186,9 +195,16 @@ class TestAlert:
         a = Alert(alert_id="a-1", queue_name="q", severity=AlertSeverity.INFO)
         d = a.to_dict()
         expected_keys = {
-            "alert_id", "queue_name", "severity", "state", "message",
-            "triggered_at", "resolved_at", "acknowledged_at",
-            "current_depth", "threshold_value",
+            "alert_id",
+            "queue_name",
+            "severity",
+            "state",
+            "message",
+            "triggered_at",
+            "resolved_at",
+            "acknowledged_at",
+            "current_depth",
+            "threshold_value",
         }
         assert set(d.keys()) == expected_keys
 
@@ -224,7 +240,13 @@ class TestQueueSnapshot:
     def test_to_dict_keys(self):
         s = QueueSnapshot()
         d = s.to_dict()
-        expected_keys = {"timestamp", "total_depth", "queues", "active_alerts"}
+        expected_keys = {
+            "timestamp",
+            "total_depth",
+            "queues",
+            "active_alerts",
+            "thresholds_degraded",
+        }
         assert set(d.keys()) == expected_keys
 
 
@@ -342,7 +364,10 @@ class TestRecordDepth:
         assert len(alerts) == 1
         assert alerts[0].severity == AlertSeverity.WARNING
         assert alerts[0].queue_name == "ocr"
-        assert "warning" in alerts[0].message.lower() or "exceeds" in alerts[0].message.lower()
+        assert (
+            "warning" in alerts[0].message.lower()
+            or "exceeds" in alerts[0].message.lower()
+        )
 
     def test_triggers_critical_alert(self):
         m = QueueMonitor()
@@ -692,8 +717,7 @@ class TestThreadSafety:
                 errors.append(e)
 
         threads = [
-            threading.Thread(target=worker, args=(f"q-{i}", 50))
-            for i in range(4)
+            threading.Thread(target=worker, args=(f"q-{i}", 50)) for i in range(4)
         ]
         for t in threads:
             t.start()

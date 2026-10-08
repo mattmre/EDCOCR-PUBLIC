@@ -8,10 +8,11 @@ const { buildMetricsHeaders, hasMetricsKey } = require("../../helpers/ops");
 
 const BASE_URL = process.env.PLAYWRIGHT_COORDINATOR_BASE_URL || "";
 
-test.describe("Coordinator API", => {
+test.describe("Coordinator API", () => {
   test.skip(
     !hasEnv("PLAYWRIGHT_COORDINATOR_BASE_URL"),
-    "Set PLAYWRIGHT_COORDINATOR_BASE_URL to run coordinator API tests.");
+    "Set PLAYWRIGHT_COORDINATOR_BASE_URL to run coordinator API tests.",
+  );
 
   test("GET /api/v1/metrics/ returns 200 or 401", async ({ request }) => {
     const response = await request.get(`${BASE_URL}/api/v1/metrics/`);
@@ -21,7 +22,8 @@ test.describe("Coordinator API", => {
   test("GET /api/v1/metrics/ with auth returns metrics", async ({ request }) => {
     test.skip(
       !hasMetricsKey(),
-      "Set PLAYWRIGHT_METRICS_API_KEY to run authenticated metrics tests.");
+      "Set PLAYWRIGHT_METRICS_API_KEY to run authenticated metrics tests.",
+    );
 
     const response = await request.get(`${BASE_URL}/api/v1/metrics/`, {
       headers: buildMetricsHeaders("x-api-key"),
@@ -63,10 +65,11 @@ test.describe("Coordinator API", => {
   });
 });
 
-test.describe("Coordinator Job Lifecycle", => {
+test.describe("Coordinator Job Lifecycle", () => {
   test.skip(
     !hasEnv("PLAYWRIGHT_COORDINATOR_BASE_URL"),
-    "Set PLAYWRIGHT_COORDINATOR_BASE_URL to run coordinator job lifecycle tests.");
+    "Set PLAYWRIGHT_COORDINATOR_BASE_URL to run coordinator job lifecycle tests.",
+  );
 
   test("Job submission requires authentication", async ({ request }) => {
     const response = await request.post(`${BASE_URL}/api/v1/jobs/`, {

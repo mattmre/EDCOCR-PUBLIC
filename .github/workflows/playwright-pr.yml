@@ -64,13 +64,13 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install Playwright dependencies
         run: npm ci
@@ -84,7 +84,7 @@ jobs:
         run: npm run pw:test
 
       - name: Normalize Playwright summary
-        if: always
+        if: always()
         run: |
           python scripts/summarize_playwright_run.py \
             --results-json "playwright-artifacts/runs/${PLAYWRIGHT_RUN_ID}/results.json" \
@@ -107,11 +107,11 @@ jobs:
             --follow-up "Promote the suite from informative to staged gate enforcement in the release-gate lane."
 
       - name: Publish job summary
-        if: always
+        if: always()
         run: cat "playwright-artifacts/runs/${PLAYWRIGHT_RUN_ID}/summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Playwright artifacts
-        if: always
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: playwright-${{ env.PLAYWRIGHT_RUN_ID }}
@@ -127,7 +127,7 @@ jobs:
             playwright-artifacts/runs/${{ env.PLAYWRIGHT_RUN_ID }}/summary.json
 
       - name: Enforce unexpected-failure gate
-        if: always
+        if: always()
         run: |
           python - <<'PY'
           import json
@@ -144,7 +144,7 @@ jobs:
     name: Playwright Gate
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    if: always
+    if: always()
     needs: [check-env, playwright-pr]
     steps:
       - name: Evaluate gate result

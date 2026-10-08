@@ -6,8 +6,12 @@ persistence tests patch :func:`ocr_local.translation.batch._load_django_models`
 with an in-memory fake to keep the unit-test lane runnable in CI without
 DJANGO_SETTINGS_MODULE.
 """
+
 from __future__ import annotations
 
+import os
+import sys
+from types import SimpleNamespace
 from typing import Iterable
 from unittest.mock import MagicMock
 
@@ -29,6 +33,45 @@ from ocr_local.translation.batch import (
 )
 from ocr_local.translation.policy import PolicyDenied
 
+
+@pytest.fixture(autouse=True)
+def _restore_import_stubs():
+    """Keep fake Django/Celery modules local to the test that installs them.
+
+    Several persistence tests exercise the pure-Python batch layer by placing
+    small stand-ins in ``sys.modules``.  Restoring only the leaf module leaves
+    a fake ``coordinator.jobs`` parent behind, which makes later Django tests
+    fail with ``'coordinator.jobs' is not a package``.  Snapshot both module
+    families around every test so this file is order-independent in the full
+    suite as well as when run alone.
+    """
+    prefixes = ("coordinator", "django")
+    previous_django_settings = os.environ.get("DJANGO_SETTINGS_MODULE")
+    before = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == prefixes[0]
+        or name.startswith(f"{prefixes[0]}.")
+        or name == prefixes[1]
+        or name.startswith(f"{prefixes[1]}.")
+    }
+    yield
+    for name in list(sys.modules):
+        if (
+            name == prefixes[0]
+            or name.startswith(f"{prefixes[0]}.")
+            or name == prefixes[1]
+            or name.startswith(f"{prefixes[1]}.")
+        ) and name not in before:
+            sys.modules.pop(name, None)
+    for name, module in before.items():
+        sys.modules[name] = module
+    if previous_django_settings is None:
+        os.environ.pop("DJANGO_SETTINGS_MODULE", None)
+    else:
+        os.environ["DJANGO_SETTINGS_MODULE"] = previous_django_settings
+
+
 # ---------------------------------------------------------------------------
 # In-memory Django-model fake
 # ---------------------------------------------------------------------------
@@ -43,6 +86,7 @@ class _FakeJobRow:
     def __init__(self, **kw):
         for k, v in kw.items():
             setattr(self, k, v)
+        self.pk = self.batch_id
         self.submitted_at = None
         self.completed_at = None
 
@@ -108,6 +152,12 @@ class _FakeQuerySet:
     def count(self):
         return len(self._items)
 
+    def update(self, **values):
+        for item in self._items:
+            for key, value in values.items():
+                setattr(item, key, value)
+        return len(self._items)
+
     def __iter__(self):
         return iter(self._items)
 
@@ -134,11 +184,17 @@ class _FakeJobManager:
         self._rows.append(row)
         return row
 
+    def select_for_update(self):
+        return self
+
     def get(self, batch_id=None, **kw):
         for r in self._rows:
             if r.batch_id == batch_id:
                 return r
         raise self.DoesNotExist(batch_id)
+
+    def filter(self, **kw):
+        return _FakeQuerySet(self._rows).filter(**kw)
 
     def all(self):
         return _FakeQuerySet(self._rows)
@@ -152,6 +208,9 @@ class _FakeInputManager:
         row = _FakeInputRow(**kw)
         self._rows.append(row)
         return row
+
+    def select_for_update(self):
+        return self
 
     def filter(self, **kw):
         return _FakeQuerySet(self._rows).filter(**kw)
@@ -198,12 +257,15 @@ def fake_models(monkeypatch):
 
     fake_django = types.ModuleType("django")
     fake_db = types.ModuleType("django.db")
+    fake_db_models = types.ModuleType("django.db.models")
+    fake_db_models.F = MagicMock
     fake_db.transaction = types.SimpleNamespace(
         atomic=contextlib.nullcontext,
     )
     fake_django.db = fake_db
     sys.modules.setdefault("django", fake_django)
     sys.modules["django.db"] = fake_db
+    sys.modules["django.db.models"] = fake_db_models
     return job, inp
 
 
@@ -359,10 +421,12 @@ def test_submit_batch_persists_job_row(fake_models):
 def test_submit_batch_persists_input_rows(fake_models):
     _job, inp = fake_models
     bid = submit_batch(
-        _req(inputs=[
-            BatchInput(client_ref="a", text="alpha"),
-            BatchInput(client_ref="b", text="beta"),
-        ])
+        _req(
+            inputs=[
+                BatchInput(client_ref="a", text="alpha"),
+                BatchInput(client_ref="b", text="beta"),
+            ]
+        )
     )
     rows = inp.objects._rows
     assert len(rows) == 2
@@ -399,10 +463,16 @@ def test_fan_out_unknown_batch_raises(fake_models):
 
 
 def test_fan_out_dispatches_pending_inputs(fake_models, monkeypatch):
-    bid = submit_batch(_req(inputs=[
-        BatchInput(client_ref="a", text="alpha"),
-        BatchInput(client_ref="b", text="beta"),
-    ]))
+    job, _inputs = fake_models
+    job.objects.select_for_update = MagicMock(return_value=job.objects)
+    bid = submit_batch(
+        _req(
+            inputs=[
+                BatchInput(client_ref="a", text="alpha"),
+                BatchInput(client_ref="b", text="beta"),
+            ]
+        )
+    )
 
     captured: list[dict] = []
 
@@ -425,6 +495,7 @@ def test_fan_out_dispatches_pending_inputs(fake_models, monkeypatch):
     fake_module.translate_batch_input = fake_task
 
     import sys
+
     sys.modules["coordinator.jobs.tasks_translation_batch"] = fake_module
     # Also register the parent so import-resolution works.
     sys.modules.setdefault("coordinator", MagicMock())
@@ -438,6 +509,59 @@ def test_fan_out_dispatches_pending_inputs(fake_models, monkeypatch):
     assert all(c["kwargs"]["batch_id"] == bid for c in captured)
     assert all(c["kwargs"]["source_lang"] == "en" for c in captured)
     assert all(c["kwargs"]["target_lang"] == "fr" for c in captured)
+    job.objects.select_for_update.assert_called_once_with()
+
+
+def test_fan_out_all_dispatch_failures_are_reported(fake_models, monkeypatch):
+    """An all-broker failure cannot look like a successful pending batch."""
+    import sys
+    import types
+
+    job, inp = fake_models
+    bid = submit_batch(_req(inputs=[BatchInput(client_ref="a", text="alpha")]))
+
+    fake_task = MagicMock()
+    fake_task.apply_async.side_effect = RuntimeError("broker unavailable")
+    fake_module = types.ModuleType("coordinator.jobs.tasks_translation_batch")
+    fake_module.translate_batch_input = fake_task
+    monkeypatch.setitem(
+        sys.modules, "coordinator.jobs.tasks_translation_batch", fake_module
+    )
+
+    with pytest.raises(RuntimeError, match="every input"):
+        fan_out(bid)
+
+    assert inp.objects._rows[0].status == "failed"
+    assert job.objects._rows[0].status == "failed"
+
+
+def test_fan_out_partial_failure_keeps_accepted_work_dispatchable(
+    fake_models, monkeypatch
+):
+    """A partial broker outage must not terminalize already accepted work."""
+    import types
+
+    job, inp = fake_models
+    bid = submit_batch(
+        _req(
+            inputs=[
+                BatchInput(client_ref="accepted", text="alpha"),
+                BatchInput(client_ref="failed", text="beta"),
+            ]
+        )
+    )
+    accepted = SimpleNamespace(id="task-accepted")
+    fake_task = MagicMock()
+    fake_task.apply_async.side_effect = [accepted, RuntimeError("broker unavailable")]
+    fake_module = types.ModuleType("coordinator.jobs.tasks_translation_batch")
+    fake_module.translate_batch_input = fake_task
+    monkeypatch.setitem(
+        sys.modules, "coordinator.jobs.tasks_translation_batch", fake_module
+    )
+
+    assert fan_out(bid) == 1
+    assert job.objects._rows[0].status == "running"
+    assert [row.status for row in inp.objects._rows] == ["running", "failed"]
 
 
 def test_fan_out_idempotent_on_terminal_batch(fake_models):
@@ -452,6 +576,7 @@ def test_fan_out_emits_custody(fake_models):
     chain = MagicMock()
     # Pre-set translate_batch_input lookup to a stub that returns a fake task id.
     import sys
+
     fake_task = MagicMock()
     fake_task.apply_async.return_value = MagicMock(id="task-1")
     fake_module = MagicMock()
@@ -480,11 +605,15 @@ def test_get_status_unknown_batch_raises(fake_models):
 
 def test_get_status_returns_counts(fake_models):
     _job, inp = fake_models
-    bid = submit_batch(_req(inputs=[
-        BatchInput(client_ref="a", text="alpha"),
-        BatchInput(client_ref="b", text="beta"),
-        BatchInput(client_ref="c", text="gamma"),
-    ]))
+    bid = submit_batch(
+        _req(
+            inputs=[
+                BatchInput(client_ref="a", text="alpha"),
+                BatchInput(client_ref="b", text="beta"),
+                BatchInput(client_ref="c", text="gamma"),
+            ]
+        )
+    )
     inp.objects._rows[0].status = "completed"
     inp.objects._rows[1].status = "failed"
 
@@ -504,10 +633,14 @@ def test_collect_results_unknown_batch_raises(fake_models):
 
 def test_collect_results_in_input_order(fake_models):
     _job, inp = fake_models
-    bid = submit_batch(_req(inputs=[
-        BatchInput(client_ref="r1", text="t1"),
-        BatchInput(client_ref="r2", text="t2"),
-    ]))
+    bid = submit_batch(
+        _req(
+            inputs=[
+                BatchInput(client_ref="r1", text="t1"),
+                BatchInput(client_ref="r2", text="t2"),
+            ]
+        )
+    )
     inp.objects._rows[0].target_text = "TXT-1"
     inp.objects._rows[0].engine_id = "engine-x"
     inp.objects._rows[1].target_text = "TXT-2"
@@ -519,6 +652,32 @@ def test_collect_results_in_input_order(fake_models):
     assert results[0].target_text == "TXT-1"
     assert results[1].client_ref == "r2"
     assert results[1].target_text == "TXT-2"
+
+
+def test_collect_results_supports_bounded_page(fake_models):
+    _job, inp = fake_models
+    bid = submit_batch(
+        _req(
+            inputs=[
+                BatchInput(client_ref="r1", text="t1"),
+                BatchInput(client_ref="r2", text="t2"),
+            ]
+        )
+    )
+    inp.objects._rows[0].target_text = "TXT-1"
+    inp.objects._rows[1].target_text = "TXT-2"
+
+    results = collect_results(bid, limit=1, offset=1)
+    assert [result.client_ref for result in results] == ["r2"]
+
+
+def test_collect_results_enforces_response_byte_cap(fake_models):
+    _job, inp = fake_models
+    bid = submit_batch(_req())
+    inp.objects._rows[0].target_text = "x" * 100
+
+    with pytest.raises(BatchValidationError, match="response size"):
+        collect_results(bid, max_bytes=32)
 
 
 # ---------------------------------------------------------------------------
@@ -540,10 +699,14 @@ def test_cancel_batch_terminal_returns_zero(fake_models):
 
 def test_cancel_batch_marks_inputs_and_job(fake_models, monkeypatch):
     job, inp = fake_models
-    bid = submit_batch(_req(inputs=[
-        BatchInput(client_ref="a", text="alpha"),
-        BatchInput(client_ref="b", text="beta"),
-    ]))
+    bid = submit_batch(
+        _req(
+            inputs=[
+                BatchInput(client_ref="a", text="alpha"),
+                BatchInput(client_ref="b", text="beta"),
+            ]
+        )
+    )
     inp.objects._rows[0].celery_task_id = "task-a"
     inp.objects._rows[0].status = "running"
     inp.objects._rows[1].celery_task_id = "task-b"
@@ -563,7 +726,8 @@ def test_cancel_batch_marks_inputs_and_job(fake_models, monkeypatch):
     sys.modules["coordinator.coordinator.celery"] = fake_celery_mod
     sys.modules.setdefault("coordinator", types.ModuleType("coordinator"))
     sys.modules.setdefault(
-        "coordinator.coordinator", types.ModuleType("coordinator.coordinator"),
+        "coordinator.coordinator",
+        types.ModuleType("coordinator.coordinator"),
     )
 
     revoked = cancel_batch(bid)

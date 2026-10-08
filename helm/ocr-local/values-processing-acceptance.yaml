@@ -1,0 +1,190 @@
+# Local production-shaped OCR provider overlay for kind-gemma-broker-ha.
+# Sensitive values are supplied at install time from scoped Kubernetes Secrets.
+image:
+  requireDigest: false
+  coordinator:
+    repository: ocr-local/coordinator
+    tag: gemma-processing-provider-20260812-r32
+    pullPolicy: IfNotPresent
+  worker:
+    # Post-processing invokes Ghostscript and therefore uses the qualified
+    # CPU runtime rather than the coordinator-only image.
+    repository: ocr-local/worker-cpu
+    tag: gemma-processing-20260812-r30
+    pullPolicy: IfNotPresent
+  cpuOcrWorker:
+    repository: ocr-local/worker-paddle
+    tag: gemma-processing-20260812-r37
+    pullPolicy: IfNotPresent
+  tesseractWorker:
+    repository: ocr-local/worker-tesseract
+    tag: gemma-processing-20260812-r37
+    pullPolicy: IfNotPresent
+
+ocrCapabilitySeparation:
+  enabled: true
+
+workerSecurity:
+  mTLS:
+    enabled: false
+  leastSecretEnv: true
+
+coordinator:
+  replicas: 2
+  healthTenantId: 00000000-0000-0000-0000-000000000001
+  env:
+    DJANGO_ALLOWED_HOSTS: "ocr-provider-coordinator,ocr-provider-coordinator.gemma-processing-acceptance.svc,localhost,127.0.0.1"
+    DATABASE_SCHEMA: ocr_processing
+    OCR_TASK_ROUTING: cpu
+    ALLOW_DEGRADED_NER: "true"
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+celeryCoordinator:
+  replicas: 2
+  concurrency: 2
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+celeryBeat:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+
+api:
+  enabled: false
+frontend:
+  enabled: false
+flower:
+  enabled: false
+
+gpuWorker:
+  replicas: 0
+  autoscaling:
+    enabled: false
+
+cpuWorker:
+  replicas: 2
+  concurrency: 2
+  queues: "cpu_general,nlp_general"
+  # The large CPU runtime is imported only on this validation node while the
+  # local host remains disk-constrained. Registry-backed environments omit
+  # this pin and retain normal topology spreading.
+  nodeSelector:
+    kubernetes.io/hostname: gemma-broker-ha-worker
+  autoscaling:
+    enabled: false
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+cpuOcrWorker:
+  enabled: true
+  replicas: 2
+  concurrency: 1
+  # Keep the OCR capability lane isolated from GPU and post-processing queues.
+  # Explicit replay changes a task's route; workers never drain foreign lanes.
+  queues: "ocr_cpu"
+  autoscaling:
+    enabled: false
+  resources:
+    requests: {cpu: 500m, memory: 2Gi}
+    limits: {cpu: "2", memory: 4Gi}
+
+tesseractWorker:
+  enabled: true
+  replicas: 1
+  concurrency: 1
+  queues: "ocr_tesseract"
+  autoscaling:
+    enabled: false
+  resources:
+    requests: {cpu: 250m, memory: 1Gi}
+    limits: {cpu: "1", memory: 2Gi}
+
+layoutCpuWorker:
+  enabled: false
+nlpGpuWorker:
+  enabled: false
+layoutlmWorker:
+  enabled: false
+
+postgresql:
+  enabled: false
+  backup:
+    enabled: false
+  clientTls:
+    enabled: true
+    caSecretName: processing-acceptance-root-ca # pragma: allowlist secret
+    caSecretKey: ca.crt # pragma: allowlist secret
+    caMountPath: /etc/postgresql-ca/ca.crt
+
+rabbitmq:
+  enabled: false
+  quorumQueues: true
+  clientTls:
+    enabled: false
+
+redis:
+  enabled: true
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+  sentinel:
+    enabled: true
+    replicas: 2
+    sentinelReplicas: 3
+    quorum: 2
+  clientTls:
+    enabled: false
+
+storage:
+  backend: s3
+  workerInjectS3Credentials: true
+  s3:
+    usePresignedUrls: false
+    caSecretName: processing-evidence-minio-tls # pragma: allowlist secret
+    caSecretKey: ca.crt # pragma: allowlist secret
+    caMountPath: /etc/s3-ca/ca.crt
+
+prometheus:
+  enabled: false
+ingress:
+  enabled: false
+tls:
+  enabled: false
+
+networkPolicy:
+  enabled: true
+  externalDependencies:
+    postgresql:
+      enabled: true
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: gemma-processing-acceptance
+      podSelector:
+        matchLabels:
+          cnpg.io/poolerName: processing-acceptance-postgres-pooler-rw
+      port: 5432
+    rabbitmq:
+      enabled: true
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: gemma-broker-validation
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: gemma-rabbitmq-ha
+      port: 5672
+    redis:
+      enabled: false
+    s3:
+      enabled: true
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: gemma-processing-acceptance
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: processing-evidence-minio
+      port: 9000

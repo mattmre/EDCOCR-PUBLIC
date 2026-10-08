@@ -21,8 +21,12 @@ from vlm_gateway import (
     VLMTimeoutError,
 )
 
+TEST_VLM_API_KEY = "test-vlm-api-key"
 
-async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
+
+async def _rate_limit_exceeded_handler(
+    request: Request, exc: RateLimitExceeded
+) -> Response:
     """Return 429 with JSON error when rate limit is exceeded."""
     return JSONResponse(
         status_code=429,
@@ -53,9 +57,28 @@ def _create_semantic_test_app() -> FastAPI:
 
 
 @pytest.fixture(autouse=True)
-def _allow_unauthenticated():
-    """Allow unauthenticated access for API tests."""
-    with mock.patch.dict(os.environ, {"ALLOW_UNAUTHENTICATED": "true"}, clear=False):
+def _test_api_key():
+    """Use an explicit operator key so tests exercise production auth paths."""
+    with (
+        mock.patch.dict(
+            os.environ,
+            {
+                "ALLOW_UNAUTHENTICATED": "false",
+                "OCR_API_KEY": TEST_VLM_API_KEY,
+            },
+            clear=False,
+        ),
+        mock.patch("api.config.OCR_API_KEY", TEST_VLM_API_KEY),
+        mock.patch(
+            "api.config.ALLOW_UNAUTHENTICATED",
+            False,
+        ),
+        mock.patch("api.auth.OCR_API_KEY", TEST_VLM_API_KEY),
+        mock.patch(
+            "api.auth.ALLOW_UNAUTHENTICATED",
+            False,
+        ),
+    ):
         yield
 
 
@@ -71,16 +94,18 @@ def _isolate_db(tmp_path):
     event_stream_file = str(output / "logs" / "semantic-events.jsonl")
     audit_log_file = str(output / "logs" / "semantic-audit.jsonl")
     webhook_dlq_file = str(output / "logs" / "semantic-webhook-dlq.jsonl")
-    with mock.patch("api.config.OUTPUT_FOLDER", str(output)), \
-         mock.patch("api.config.DB_PATH", db_file), \
-         mock.patch("api.database.DB_PATH", db_file), \
-         mock.patch("api.config.EVENT_STORE_PATH", event_store_file), \
-         mock.patch("api.config.API_EVENT_STREAM_PATH", event_stream_file), \
-         mock.patch("api.config.API_AUDIT_LOG_PATH", audit_log_file), \
-         mock.patch("api.config.WEBHOOK_DLQ_PATH", webhook_dlq_file), \
-         mock.patch("api.config.EVENT_STORE_ENABLED", False), \
-         mock.patch("api.config.API_EVENT_STREAM_ENABLED", False), \
-         mock.patch("api.config.API_AUDIT_LOG_ENABLED", False):
+    with (
+        mock.patch("api.config.OUTPUT_FOLDER", str(output)),
+        mock.patch("api.config.DB_PATH", db_file),
+        mock.patch("api.database.DB_PATH", db_file),
+        mock.patch("api.config.EVENT_STORE_PATH", event_store_file),
+        mock.patch("api.config.API_EVENT_STREAM_PATH", event_stream_file),
+        mock.patch("api.config.API_AUDIT_LOG_PATH", audit_log_file),
+        mock.patch("api.config.WEBHOOK_DLQ_PATH", webhook_dlq_file),
+        mock.patch("api.config.EVENT_STORE_ENABLED", False),
+        mock.patch("api.config.API_EVENT_STREAM_ENABLED", False),
+        mock.patch("api.config.API_AUDIT_LOG_ENABLED", False),
+    ):
         reset_engine()
         reset_event_store()
         get_engine(db_file)
@@ -95,6 +120,9 @@ def _vlm_enabled_config():
     cfg = VLMConfig(
         enabled=True,
         endpoint_url="http://vlm-test:8080",
+        allowed_hosts=("vlm-test",),
+        allow_insecure_local=True,
+        allow_private_egress=True,
         api_key="test-key",
         model_name="test-model",
         max_context_pages=5,
@@ -120,6 +148,7 @@ def client():
     app.state.limiter.enabled = False
     app.state.limiter.reset()
     with TestClient(app) as test_client:
+        test_client.headers.update({"X-API-Key": TEST_VLM_API_KEY})
         yield test_client
     app.state.limiter.reset()
 
@@ -294,7 +323,9 @@ class TestDocumentAnalysisEndpoint:
         mock_result = {
             "entities": [{"type": "PERSON", "text": "Jane Doe"}],
             "summary": "Test summary.",
-            "relationships": [{"subject": "Jane Doe", "predicate": "signed", "object": "contract"}],
+            "relationships": [
+                {"subject": "Jane Doe", "predicate": "signed", "object": "contract"}
+            ],
             "confidence": 0.91,
             "model": "test-model",
             "processing_time_ms": 150.5,
@@ -306,7 +337,9 @@ class TestDocumentAnalysisEndpoint:
             resp = client.post(
                 "/api/v1/search/analyze",
                 json={
-                    "pages": [{"page_number": 1, "text": "Jane Doe signed the contract."}],
+                    "pages": [
+                        {"page_number": 1, "text": "Jane Doe signed the contract."}
+                    ],
                     "prompt": "Extract entities and relationships.",
                 },
             )
@@ -326,6 +359,41 @@ class TestDocumentAnalysisEndpoint:
         )
         assert resp.status_code == 422
 
+    def test_page_payload_size_is_bounded(self, client, _vlm_enabled_config):
+        resp = client.post(
+            "/api/v1/search/analyze",
+            json={"pages": [{"page_number": 1, "text": "x" * 200_001}]},
+        )
+
+        assert resp.status_code == 422
+
+    def test_url_handoff_page_field_rejected_by_request_model(
+        self, client, _vlm_enabled_config
+    ):
+        resp = client.post(
+            "/api/v1/search/analyze",
+            json={
+                "pages": [
+                    {
+                        "page_number": 1,
+                        "text": "hello",
+                        "image_url": "https://storage.example.com/page.png",
+                    }
+                ]
+            },
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.parametrize("page_number", ["1", True])
+    def test_page_number_rejects_coercible_values(
+        self, client, _vlm_enabled_config, page_number
+    ):
+        resp = client.post(
+            "/api/v1/search/analyze",
+            json={"pages": [{"page_number": page_number, "text": "hello"}]},
+        )
+        assert resp.status_code == 422
+
     def test_analysis_connection_error(self, client, _vlm_enabled_config):
         with mock.patch("api.routers.semantic.VLMGateway") as MockGW:
             instance = MockGW.return_value
@@ -339,7 +407,12 @@ class TestDocumentAnalysisEndpoint:
         assert resp.status_code == 502
 
     def test_analysis_with_optional_fields(self, client, _vlm_enabled_config):
-        mock_result = {"entities": [], "summary": "", "relationships": [], "confidence": 0.0}
+        mock_result = {
+            "entities": [],
+            "summary": "",
+            "relationships": [],
+            "confidence": 0.0,
+        }
         with mock.patch("api.routers.semantic.VLMGateway") as MockGW:
             instance = MockGW.return_value
             instance.analyze_document.return_value = mock_result
@@ -359,6 +432,233 @@ class TestDocumentAnalysisEndpoint:
             prompt="Analyze this.",
             document_id="doc_abc",
         )
+
+
+class TestSemanticJobOwnershipPin:
+    """maintenance review: multi-tenant document_id pin before VLM.
+
+    Single-tenant tests above remain green (auth tenant_id is None → no pin).
+    These cases inject a tenant scope and assert VLM is never constructed on deny.
+    """
+
+    _TENANT_A = "tenant_aaaaaaaaaaaa"
+    _TENANT_B = "tenant_bbbbbbbbbbbb"
+    _JOB_A = "job_aaa111222333"
+    _JOB_B = "job_bbb111222333"
+
+    def _patch_tenant(self, tenant_id, *, platform_admin: bool = False):
+        """Patch auth helpers used by the semantic router."""
+        return mock.patch.multiple(
+            "api.routers.semantic",
+            _request_tenant_id=mock.Mock(return_value=tenant_id),
+            _is_platform_admin=mock.Mock(return_value=platform_admin),
+        )
+
+    def _patch_get_job(self, job_or_none):
+        """Patch JobManager.get_job via get_manager()."""
+        manager = mock.Mock()
+        manager.get_job.return_value = job_or_none
+        return mock.patch("api.job_manager.get_manager", return_value=manager), manager
+
+    def test_multi_tenant_search_without_document_id_returns_400(
+        self, client, _vlm_enabled_config
+    ):
+        """Multi-tenant semantic_search must require document_id (fail-closed)."""
+        with (
+            self._patch_tenant(self._TENANT_A),
+            mock.patch("api.routers.semantic.VLMGateway") as MockGW,
+        ):
+            resp = client.post(
+                "/api/v1/search/semantic",
+                json={"query": "unscoped query"},
+            )
+
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail["error"] == "document_id_required"
+        MockGW.assert_not_called()
+
+    def test_multi_tenant_search_foreign_job_returns_404_no_vlm(
+        self, client, _vlm_enabled_config
+    ):
+        """Foreign document_id → 404; VLM gateway never constructed."""
+        gm_patch, manager = self._patch_get_job(None)
+        with (
+            self._patch_tenant(self._TENANT_A),
+            gm_patch,
+            mock.patch("api.routers.semantic.VLMGateway") as MockGW,
+        ):
+            resp = client.post(
+                "/api/v1/search/semantic",
+                json={"query": "secret", "document_id": self._JOB_B},
+            )
+
+        assert resp.status_code == 404
+        assert resp.json()["detail"]["error"] == "document_not_found"
+        manager.get_job.assert_called_once_with(self._JOB_B, tenant_id=self._TENANT_A)
+        MockGW.assert_not_called()
+
+    def test_multi_tenant_search_owned_job_proceeds(self, client, _vlm_enabled_config):
+        """Owned document_id → ownership check passes and VLM is invoked."""
+        owned = mock.Mock()
+        owned.job_id = self._JOB_A
+        owned.tenant_id = self._TENANT_A
+        gm_patch, manager = self._patch_get_job(owned)
+        mock_results = [
+            {
+                "text": "owned hit",
+                "score": 0.9,
+                "page": 1,
+                "document_id": self._JOB_A,
+                "bbox": [],
+            },
+            {
+                "text": "foreign hit",
+                "score": 0.95,
+                "page": 2,
+                "document_id": self._JOB_B,
+                "bbox": [],
+            },
+            {
+                "text": "unattributed hit",
+                "score": 0.8,
+                "page": 3,
+                "document_id": "",
+                "bbox": [],
+            },
+        ]
+        with (
+            self._patch_tenant(self._TENANT_A),
+            gm_patch,
+            mock.patch("api.routers.semantic.VLMGateway") as MockGW,
+        ):
+            instance = MockGW.return_value
+            instance.semantic_search.return_value = mock_results
+            resp = client.post(
+                "/api/v1/search/semantic",
+                json={"query": "owned", "document_id": self._JOB_A},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 1
+        assert resp.json()["results"] == [
+            {
+                "text": "owned hit",
+                "score": 0.9,
+                "page": 1,
+                "document_id": self._JOB_A,
+                "bbox": [],
+            }
+        ]
+        manager.get_job.assert_called_once_with(self._JOB_A, tenant_id=self._TENANT_A)
+        MockGW.assert_called_once()
+        instance.semantic_search.assert_called_once()
+
+    def test_platform_admin_search_cross_tenant_existing_job(
+        self, client, _vlm_enabled_config
+    ):
+        """platform_admin may access any existing job (lookup without tenant filter)."""
+        foreign = mock.Mock()
+        foreign.job_id = self._JOB_B
+        foreign.tenant_id = self._TENANT_B
+        gm_patch, manager = self._patch_get_job(foreign)
+        with (
+            self._patch_tenant(self._TENANT_A, platform_admin=True),
+            gm_patch,
+            mock.patch("api.routers.semantic.VLMGateway") as MockGW,
+        ):
+            instance = MockGW.return_value
+            instance.semantic_search.return_value = []
+            resp = client.post(
+                "/api/v1/search/semantic",
+                json={"query": "admin", "document_id": self._JOB_B},
+            )
+
+        assert resp.status_code == 200
+        manager.get_job.assert_called_once_with(self._JOB_B, tenant_id=None)
+        MockGW.assert_called_once()
+
+    def test_multi_tenant_analyze_without_document_id_allowed(
+        self, client, _vlm_enabled_config
+    ):
+        """Analyze with client-supplied pages (no document_id) stays allowed."""
+        mock_result = {
+            "entities": [],
+            "summary": "ok",
+            "relationships": [],
+            "confidence": 0.5,
+        }
+        with (
+            self._patch_tenant(self._TENANT_A),
+            mock.patch("api.routers.semantic.VLMGateway") as MockGW,
+        ):
+            instance = MockGW.return_value
+            instance.analyze_document.return_value = mock_result
+            resp = client.post(
+                "/api/v1/search/analyze",
+                json={"pages": [{"page_number": 1, "text": "client text only"}]},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["summary"] == "ok"
+        MockGW.assert_called_once()
+
+    def test_multi_tenant_analyze_foreign_document_id_returns_404_no_vlm(
+        self, client, _vlm_enabled_config
+    ):
+        """Analyze with foreign document_id → 404; VLM never constructed."""
+        gm_patch, manager = self._patch_get_job(None)
+        with (
+            self._patch_tenant(self._TENANT_A),
+            gm_patch,
+            mock.patch("api.routers.semantic.VLMGateway") as MockGW,
+        ):
+            resp = client.post(
+                "/api/v1/search/analyze",
+                json={
+                    "pages": [{"page_number": 1, "text": "hello"}],
+                    "document_id": self._JOB_B,
+                },
+            )
+
+        assert resp.status_code == 404
+        assert resp.json()["detail"]["error"] == "document_not_found"
+        manager.get_job.assert_called_once_with(self._JOB_B, tenant_id=self._TENANT_A)
+        MockGW.assert_not_called()
+
+    def test_multi_tenant_analyze_owned_document_id_proceeds(
+        self, client, _vlm_enabled_config
+    ):
+        """Analyze with owned document_id → pin passes, VLM invoked."""
+        owned = mock.Mock()
+        owned.job_id = self._JOB_A
+        owned.tenant_id = self._TENANT_A
+        gm_patch, manager = self._patch_get_job(owned)
+        mock_result = {
+            "entities": [],
+            "summary": "owned",
+            "relationships": [],
+            "confidence": 0.8,
+        }
+        with (
+            self._patch_tenant(self._TENANT_A),
+            gm_patch,
+            mock.patch("api.routers.semantic.VLMGateway") as MockGW,
+        ):
+            instance = MockGW.return_value
+            instance.analyze_document.return_value = mock_result
+            resp = client.post(
+                "/api/v1/search/analyze",
+                json={
+                    "pages": [{"page_number": 1, "text": "hello"}],
+                    "document_id": self._JOB_A,
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["summary"] == "owned"
+        manager.get_job.assert_called_once_with(self._JOB_A, tenant_id=self._TENANT_A)
+        MockGW.assert_called_once()
 
 
 class TestVLMHealthEndpoint:
@@ -392,10 +692,8 @@ class TestVLMHealthEndpoint:
 
             resp = client.get("/api/v1/search/vlm/health")
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["vlm_enabled"] is True
-        assert data["vlm_reachable"] is False
+        assert resp.status_code == 503
+        assert resp.json()["detail"]["error"] == "vlm_unavailable"
 
     def test_health_check_exception_handled(self, client, _vlm_enabled_config):
         with mock.patch("api.routers.semantic.VLMGateway") as MockGW:
@@ -404,9 +702,8 @@ class TestVLMHealthEndpoint:
 
             resp = client.get("/api/v1/search/vlm/health")
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["vlm_reachable"] is False
+        assert resp.status_code == 503
+        assert resp.json()["detail"]["error"] == "vlm_unavailable"
 
 
 class TestVLMConfigMisconfigured:
@@ -454,7 +751,12 @@ class TestGatewayCleanup:
             instance.close.assert_called_once()
 
     def test_gateway_closed_after_analysis(self, client, _vlm_enabled_config):
-        mock_result = {"entities": [], "summary": "", "relationships": [], "confidence": 0.0}
+        mock_result = {
+            "entities": [],
+            "summary": "",
+            "relationships": [],
+            "confidence": 0.0,
+        }
         with mock.patch("api.routers.semantic.VLMGateway") as MockGW:
             instance = MockGW.return_value
             instance.analyze_document.return_value = mock_result
@@ -468,7 +770,7 @@ class TestGatewayCleanup:
 
 
 class TestVLMImportGuard:
-    """VLM gateway import must be guarded so the API still starts.
+    """maintenance review: VLM gateway import must be guarded so the API still starts.
 
     Simulates VLM dependencies being unavailable by patching the
     ``VLM_AVAILABLE`` flag on the router module.
@@ -482,6 +784,8 @@ class TestVLMImportGuard:
         assert resp.status_code == 503
         body = resp.json()
         assert "VLM dependencies" in body["detail"]
+        assert "VLM_ENABLED=true" in body["detail"]
+        assert "ENABLE_VLM" not in body["detail"]
         assert "requirements-vlm.txt" in body["detail"]
 
     def test_analyze_returns_503_when_vlm_unavailable(self, client):
@@ -495,6 +799,8 @@ class TestVLMImportGuard:
         assert resp.status_code == 503
         body = resp.json()
         assert "VLM dependencies" in body["detail"]
+        assert "VLM_ENABLED=true" in body["detail"]
+        assert "ENABLE_VLM" not in body["detail"]
 
     def test_health_reports_unavailable_when_vlm_missing(self, client):
         from api.routers import semantic as semantic_mod

@@ -1,4 +1,4 @@
-"""Command-line entry point for EDCOCR / EDCOCR workflows."""
+"""Command-line entry point for OCR_LOCAL / EDC_OCR workflows."""
 
 from __future__ import annotations
 
@@ -122,8 +122,8 @@ def _handle_verify_custody(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="edc-ocr",
-        description="EDCOCR operator CLI for OCR job, batch, bundle, and custody workflows.",
+        prog="edcocr",
+        description="EDC_OCR operator CLI for OCR job, batch, bundle, and custody workflows.",
     )
     _add_common_options(parser)
     subparsers = parser.add_subparsers(dest="command", required=True)

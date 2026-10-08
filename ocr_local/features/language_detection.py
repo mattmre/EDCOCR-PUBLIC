@@ -26,6 +26,16 @@ import os
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable, Optional
 
+from ocr_distributed.ocr_utils import (
+    build_sidecar_base_name,
+    resolve_safe_output_subfolder,
+    write_json_atomic,
+)
+from ocr_local.features.fasttext_adapter import (
+    load_model as load_fasttext_adapter_model,
+)
+from ocr_local.features.fasttext_adapter import predict_language
+
 __all__ = [
     "SpanLanguage",
     "PageLanguage",
@@ -74,13 +84,15 @@ SCRIPT_FAMILIES: tuple[str, ...] = (
 class SpanLanguage:
     """Language label for a single OCR line (span)."""
 
-    bbox: list[float]            # [x1, y1, x2, y2] pixel coords (page DPI space)
-    text_sample: str             # first 60 chars, for audit only (may be redacted)
-    language: str                # PaddleOCR code from LANG_MAPPING, or "und"
-    confidence: float            # 0.0-1.0
-    script: str                  # Unicode script family (see SCRIPT_FAMILIES)
-    detection_method: str        # "fasttext" | "script_heuristic" | "inherited_page"
-    char_count: int              # len(stripped text) -- short-span gate audit
+    bbox: list[float]  # [x1, y1, x2, y2] pixel coords (page DPI space)
+    text_sample: str  # first 60 chars, for audit only (may be redacted)
+    language: str  # PaddleOCR code from LANG_MAPPING, or "und"
+    confidence: float  # 0.0-1.0
+    script: str  # Unicode script family (see SCRIPT_FAMILIES)
+    detection_method: str  # "fasttext" | "script_heuristic" | "inherited_page"
+    char_count: int  # len(stripped text) -- short-span gate audit
+    # LT-14: True when bbox is not real glyph geometry (e.g. redetect text-layer).
+    geometry_placeholder: bool = False
 
 
 @dataclass
@@ -88,14 +100,14 @@ class PageLanguage:
     """Aggregate language stats for one page."""
 
     page_num: int
-    primary_language: str        # dominant by char_count weighting, or "und"
-    primary_confidence: float    # weighted avg confidence of primary-language spans
-    languages_detected: list[str]          # deduped, sorted by descending char share
-    language_char_shares: dict[str, float] # code -> fraction of chars on page
-    scripts_detected: list[str]            # deduped Unicode script families
-    mixed_script: bool           # True iff len(scripts_detected) >= 2
+    primary_language: str  # dominant by char_count weighting, or "und"
+    primary_confidence: float  # weighted avg confidence of primary-language spans
+    languages_detected: list[str]  # deduped, sorted by descending char share
+    language_char_shares: dict[str, float]  # code -> fraction of chars on page
+    scripts_detected: list[str]  # deduped Unicode script families
+    mixed_script: bool  # True iff len(scripts_detected) >= 2
     span_count: int
-    spans_labeled: int           # how many spans got a non-"und" label
+    spans_labeled: int  # how many spans got a non-"und" label
     spans: list[SpanLanguage] = field(default_factory=list)
 
 
@@ -112,8 +124,8 @@ class DocumentLanguage:
     page_count: int
     pages_with_mixed_script: int
     pages: list[PageLanguage]
-    processing: dict             # engine, pipeline_version, detector_model_sha256,
-                                 # tokenizer_sha256, fasttext_model_sha256, timestamp
+    processing: dict  # engine, pipeline_version, detector_model_sha256,
+    # tokenizer_sha256, fasttext_model_sha256, timestamp
 
 
 # ---------------------------------------------------------------------------
@@ -361,27 +373,20 @@ def aggregate_page_from_full_text(
     if fasttext_model is None:
         detection_method = "inherited_page"
     else:
-        try:
-            labels, scores = fasttext_model.predict(normalized, k=3)
-        except Exception as exc:
-            logger.warning(
-                "FastText predict failed for page %s: %s", page_num, exc
-            )
-            labels, scores = (), ()
+        ft_code, raw_conf = predict_language(
+            fasttext_model,
+            normalized,
+            k=3,
+            logger=logger,
+            context=f"FastText predict failed for page {page_num}",
+        )
 
-        if labels:
-            raw_label = labels[0] if isinstance(labels[0], str) else str(labels[0])
-            ft_code = raw_label.replace("__label__", "").strip().lower()
-            try:
-                raw_conf = float(scores[0]) if scores else 0.0
-            except (TypeError, ValueError):
-                raw_conf = 0.0
-
+        if ft_code:
             if raw_conf >= float(confidence_threshold):
                 mapped = FASTTEXT_TO_PADDLE.get(ft_code)
                 if mapped:
                     language = mapped
-                    confidence = max(0.0, min(1.0, raw_conf))
+                    confidence = raw_conf
 
     script = _primary_script_for_text(normalized)
     scripts_detected = [script] if script != "other" else []
@@ -532,26 +537,23 @@ def detect_span_language(
     confidence = 0.0
     if fasttext_model is not None:
         try:
-            labels, scores = fasttext_model.predict(
-                stripped.replace("\n", " "), k=1
+            ft_code, raw_conf = predict_language(
+                fasttext_model,
+                stripped.replace("\n", " "),
+                k=1,
+                logger=logger,
+                context="FastText predict failed for span",
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("FastText predict failed for span: %s", exc)
-            labels, scores = (), ()
+            ft_code, raw_conf = None, 0.0
 
-        if labels:
-            raw_label = labels[0] if isinstance(labels[0], str) else str(labels[0])
-            ft_code = raw_label.replace("__label__", "").strip().lower()
-            try:
-                raw_conf = float(scores[0]) if scores else 0.0
-            except (TypeError, ValueError):
-                raw_conf = 0.0
-
+        if ft_code:
             if raw_conf >= float(confidence_threshold):
                 mapped = FASTTEXT_TO_PADDLE.get(ft_code)
                 if mapped:
                     language = mapped
-                    confidence = max(0.0, min(1.0, raw_conf))
+                    confidence = raw_conf
 
     return SpanLanguage(
         bbox=bbox_out,
@@ -636,7 +638,8 @@ def aggregate_page_from_spans(
     if per_lang_chars and total_labeled_chars > 0:
         # Stable ordering: descending share, ascending code as tiebreaker.
         primary_language = max(
-            per_lang_chars.items(), key=lambda kv: (kv[1], -ord(kv[0][0]) if kv[0] else 0)
+            per_lang_chars.items(),
+            key=lambda kv: (kv[1], -ord(kv[0][0]) if kv[0] else 0),
         )[0]
         primary_chars = per_lang_chars[primary_language]
         primary_confidence = (
@@ -645,12 +648,9 @@ def aggregate_page_from_spans(
             else 0.0
         )
         shares = {
-            code: chars / total_labeled_chars
-            for code, chars in per_lang_chars.items()
+            code: chars / total_labeled_chars for code, chars in per_lang_chars.items()
         }
-        languages_detected = sorted(
-            shares.keys(), key=lambda c: (-shares[c], c)
-        )
+        languages_detected = sorted(shares.keys(), key=lambda c: (-shares[c], c))
     else:
         primary_language = "und"
         primary_confidence = 0.0
@@ -665,9 +665,7 @@ def aggregate_page_from_spans(
         primary_language=primary_language,
         primary_confidence=round(max(0.0, min(1.0, primary_confidence)), 6),
         languages_detected=languages_detected,
-        language_char_shares={
-            code: round(share, 6) for code, share in shares.items()
-        },
+        language_char_shares={code: round(share, 6) for code, share in shares.items()},
         scripts_detected=scripts_detected,
         mixed_script=mixed_script,
         span_count=len(span_list),
@@ -711,9 +709,7 @@ def finalize_document_language(
         # still get proportional weighting once PR A3 lands.
         page_total = sum(
             getattr(s, "char_count", 0) for s in (page.spans or [])
-        ) or sum(
-            int(round(v * 1000)) for v in share_map.values()
-        )
+        ) or sum(int(round(v * 1000)) for v in share_map.values())
         if page_total <= 0:
             continue
         total_chars += page_total
@@ -730,9 +726,7 @@ def finalize_document_language(
             code: round(chars / total_chars, 6)
             for code, chars in per_lang_chars.items()
         }
-        primary_language = max(
-            per_lang_chars.items(), key=lambda kv: (kv[1], kv[0])
-        )[0]
+        primary_language = max(per_lang_chars.items(), key=lambda kv: (kv[1], kv[0]))[0]
         primary_chars = per_lang_chars[primary_language]
         primary_confidence = (
             per_lang_conf_num.get(primary_language, 0.0) / primary_chars
@@ -773,22 +767,6 @@ def finalize_document_language(
     )
 
 
-def _sanitize_subfolder(subfolder: str) -> list[str]:
-    """Split ``subfolder`` into safe path segments (no traversal components)."""
-    if not subfolder or subfolder == ".":
-        return []
-    safe: list[str] = []
-    for raw in subfolder.replace("\\", "/").split("/"):
-        if not raw or raw in (".", ".."):
-            continue
-        # Strip nulls and path separators defensively.
-        cleaned = raw.replace("\x00", "").strip()
-        if not cleaned or cleaned in (".", ".."):
-            continue
-        safe.append(cleaned)
-    return safe
-
-
 def write_language_json(
     doc_lang: DocumentLanguage,
     output_base_dir: str,
@@ -815,27 +793,40 @@ def write_language_json(
     """
     language_dir = os.path.join(output_base_dir, "EXPORT", "LANGUAGE")
 
-    source_name = os.path.basename(source_file) or doc_lang.document_id or "document"
-    base_name = os.path.splitext(source_name)[0]
-    subfolder_raw = os.path.dirname(source_file)
-    safe_parts = _sanitize_subfolder(subfolder_raw)
-
-    target_dir = (
-        os.path.join(language_dir, *safe_parts) if safe_parts else language_dir
+    base_name = build_sidecar_base_name(
+        source_file or f"{doc_lang.document_id or 'document'}.pdf"
     )
-
-    resolved_target = os.path.realpath(target_dir)
-    resolved_root = os.path.realpath(language_dir)
-    if not resolved_target.startswith(resolved_root):
-        logger.error(
-            "Path traversal blocked in language output: %r", subfolder_raw
-        )
+    subfolder_raw = os.path.dirname(source_file)
+    try:
+        target_dir = resolve_safe_output_subfolder(language_dir, subfolder_raw)
+    except ValueError:
+        logger.error("Path traversal blocked in language output: %r", subfolder_raw)
         return None
 
     os.makedirs(target_dir, exist_ok=True)
     json_path = os.path.join(target_dir, f"{base_name}.language.json")
 
-    # Build per-page payload, optionally stripping spans.
+    payload = _language_sidecar_payload(doc_lang, include_spans=include_spans)
+
+    try:
+        write_json_atomic(json_path, payload, allowed_root=language_dir)
+    except OSError as exc:
+        logger.error(
+            "Failed to write language JSON for %s: %s",
+            doc_lang.document_id,
+            exc,
+        )
+        return None
+
+    return json_path
+
+
+def _language_sidecar_payload(
+    doc_lang: DocumentLanguage,
+    *,
+    include_spans: bool,
+) -> dict[str, Any]:
+    """Return the canonical language-sidecar JSON object without writing it."""
     pages_out: list[dict[str, Any]] = []
     for page in doc_lang.pages or []:
         if page is None:
@@ -845,7 +836,7 @@ def write_language_json(
             page_dict["spans"] = []
         pages_out.append(page_dict)
 
-    payload: dict[str, Any] = {
+    return {
         "schema_version": LANGUAGE_SCHEMA_VERSION,
         "document_id": doc_lang.document_id,
         "source_file": doc_lang.source_file,
@@ -860,19 +851,6 @@ def write_language_json(
         },
         "pages": pages_out,
     }
-
-    try:
-        with open(json_path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2, ensure_ascii=False, default=str)
-    except OSError as exc:
-        logger.error(
-            "Failed to write language JSON for %s: %s",
-            doc_lang.document_id,
-            exc,
-        )
-        return None
-
-    return json_path
 
 
 # ---------------------------------------------------------------------------
@@ -890,28 +868,12 @@ def _load_fasttext_model(fasttext_model_path: str) -> Any:
     """
     if not fasttext_model_path or not os.path.exists(fasttext_model_path):
         return None
-    try:
-        import fasttext  # type: ignore
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("fasttext import failed during redetect: %s", exc)
-        return None
-    try:
-        model = fasttext.load_model(fasttext_model_path)
-    except Exception as exc:
-        logger.warning(
-            "fasttext.load_model failed for %r: %s", fasttext_model_path, exc,
-        )
-        return None
-    # Attach a best-effort SHA-256 so downstream custody/audit paths can
-    # reference the exact on-disk detector artifact.
-    try:
-        import hashlib
-        with open(fasttext_model_path, "rb") as fh:
-            sha = hashlib.sha256(fh.read()).hexdigest()
-        setattr(model, "_sha256", sha)
-    except Exception:  # pragma: no cover - defensive
-        setattr(model, "_sha256", "")
-    return model
+    return load_fasttext_adapter_model(
+        fasttext_model_path,
+        logger=logger,
+        context="fasttext during redetect",
+        attach_sha256=True,
+    )
 
 
 def _emit_language_redetected_event(
@@ -919,6 +881,8 @@ def _emit_language_redetected_event(
     source_file: str,
     output_base_dir: str,
     doc_lang: DocumentLanguage,
+    *,
+    custody_dir_override: str | None = None,
 ) -> None:
     """Emit a ``LANGUAGE_REDETECTED`` custody event for ``document_id``.
 
@@ -933,7 +897,11 @@ def _emit_language_redetected_event(
         logger.debug("Custody module unavailable for redetect: %s", exc)
         return
     try:
-        custody_dir = os.path.join(output_base_dir, "custody")
+        custody_dir = custody_dir_override or os.path.join(
+            output_base_dir,
+            "EXPORT",
+            "CUSTODY",
+        )
         chain = CustodyChain(
             document_id=document_id,
             source_path=source_file,
@@ -950,16 +918,19 @@ def _emit_language_redetected_event(
                 "page_count": doc_lang.page_count,
                 "pages_with_mixed_script": doc_lang.pages_with_mixed_script,
                 "detection_engine": doc_lang.processing.get(
-                    "detection_engine", "fasttext",
+                    "detection_engine",
+                    "fasttext",
                 ),
                 "fasttext_model_sha256": doc_lang.processing.get(
-                    "fasttext_model_sha256", "",
+                    "fasttext_model_sha256",
+                    "",
                 ),
             },
         )
     except Exception as exc:
         logger.debug(
-            "Failed to emit LANGUAGE_REDETECTED custody event: %s", exc,
+            "Failed to emit LANGUAGE_REDETECTED custody event: %s",
+            exc,
         )
 
 
@@ -969,20 +940,34 @@ def redetect_document(
     output_base_dir: str,
     fasttext_model_path: str = "/app/lid.176.bin",
     config: Any = None,
+    document_id: str | None = None,
+    pdf_bytes: bytes | None = None,
+    language_output_dir: str | None = None,
+    custody_dir_override: str | None = None,
+    emit_custody_event: bool = True,
+    write_sidecar: bool = True,
 ) -> dict:
     """Re-run language detection against an already-OCR'd PDF text layer.
 
     This does NOT re-run OCR.  It extracts the embedded text layer from
-    ``pdf_path`` (page by page), feeds each line through the existing
-    per-span detection helpers, and writes a fresh ``.language.json``
-    sidecar under ``output_base_dir/EXPORT/LANGUAGE/``.  A best-effort
-    ``LANGUAGE_REDETECTED`` custody event is emitted when the custody
-    module is importable.
+    ``pdf_path`` (page by page) and feeds each line through the existing
+    per-span detection helpers.  By default it writes a fresh
+    ``.language.json`` sidecar and emits a best-effort
+    ``LANGUAGE_REDETECTED`` custody event.  With ``write_sidecar=False`` it
+    instead returns canonical sidecar bytes without mutating the filesystem;
+    custody emission occurs only when both ``write_sidecar`` and
+    ``emit_custody_event`` are true.
 
     Parameters
     ----------
     pdf_path:
         Path to an OCR'd PDF (text layer must already be embedded).
+        Used for basename / sidecar naming even when ``pdf_bytes`` is
+        supplied.
+    pdf_bytes:
+        Optional already-jailed PDF payload.  When set, PyMuPDF opens
+        the bytes as a stream and never re-opens ``pdf_path`` (REST
+        redetect TOCTOU).
     output_json_path:
         Optional explicit path for the ``.language.json`` sidecar.  When
         empty or falsy, the path is auto-derived as
@@ -990,6 +975,21 @@ def redetect_document(
     output_base_dir:
         Root output directory (e.g. ``ocr_output``).  Used both for the
         auto-derived sidecar path and for the custody subfolder.
+    language_output_dir:
+        Optional already-authorized directory for the language sidecar.  REST
+        callers use a descriptor-backed directory alias so a replaced
+        ``EXPORT/LANGUAGE`` name cannot redirect the write.
+    custody_dir_override:
+        Optional already-authorized custody directory.  When supplied, the
+        re-detection event is appended there instead of deriving a fresh path
+        from ``output_base_dir``.
+    write_sidecar:
+        When false, perform detection without a filesystem mutation and return
+        canonical ``sidecar_bytes`` for a descriptor-bound caller to stage.
+    emit_custody_event:
+        Emit the historical best-effort custody event only after a direct
+        sidecar write.  Descriptor-bound callers disable this and append their
+        own strict prepared/committed events.
     fasttext_model_path:
         Filesystem path to a FastText ``lid.176.bin`` artifact.  When the
         file is missing or the package is not importable, redetect falls
@@ -1008,10 +1008,16 @@ def redetect_document(
         ``{"status": "error", "error": <message>}`` on failure.
     """
     # Input validation -- guard against empty/missing input before we
-    # touch fitz or FastText.
-    if not pdf_path or not isinstance(pdf_path, str):
+    # touch fitz or FastText.  REST callers pass jailed ``pdf_bytes`` and
+    # must not require a second path-based open.
+    pdf_payload: bytes | None = None
+    if pdf_bytes is not None:
+        if not isinstance(pdf_bytes, (bytes, bytearray)) or not pdf_bytes:
+            return {"status": "error", "error": "pdf_bytes is empty"}
+        pdf_payload = bytes(pdf_bytes)
+    elif not pdf_path or not isinstance(pdf_path, str):
         return {"status": "error", "error": "pdf_path is required"}
-    if not os.path.exists(pdf_path):
+    elif not os.path.exists(pdf_path):
         return {"status": "error", "error": f"pdf not found: {pdf_path}"}
 
     # Pull thresholds from config when available.
@@ -1051,11 +1057,19 @@ def redetect_document(
         }
 
     source_name = os.path.basename(pdf_path) or "document"
-    document_id = os.path.splitext(source_name)[0] or "document"
+    resolved_document_id = str(document_id or "").strip()
+    if not resolved_document_id:
+        resolved_document_id = os.path.splitext(source_name)[0] or "document"
+    document_id = resolved_document_id
 
     pages: list[PageLanguage] = []
     try:
-        with fitz.open(pdf_path) as pdf:
+        opened = (
+            fitz.open(stream=pdf_payload, filetype="pdf")
+            if pdf_payload is not None
+            else fitz.open(pdf_path)
+        )
+        with opened as pdf:
             total_pages = pdf.page_count
             for page_index in range(total_pages):
                 try:
@@ -1064,7 +1078,9 @@ def redetect_document(
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.warning(
                         "redetect: failed to extract p%d of %s: %s",
-                        page_index + 1, source_name, exc,
+                        page_index + 1,
+                        source_name,
+                        exc,
                     )
                     raw_text = ""
 
@@ -1075,20 +1091,21 @@ def redetect_document(
                         continue
                     # Text-layer extraction has no glyph geometry, so the
                     # bbox is a placeholder.  Consumers that key off bbox
-                    # (e.g. XMP embedding) skip spans with zero-area boxes.
-                    spans.append(
-                        detect_span_language(
-                            text=line,
-                            bbox=[0.0, 0.0, 100.0, 12.0],
-                            fasttext_model=fasttext_model,
-                            short_span_threshold=short_span_threshold,
-                            confidence_threshold=confidence_threshold,
-                        ),
+                    # (e.g. XMP embedding) must honor geometry_placeholder.
+                    span = detect_span_language(
+                        text=line,
+                        bbox=[0.0, 0.0, 100.0, 12.0],
+                        fasttext_model=fasttext_model,
+                        short_span_threshold=short_span_threshold,
+                        confidence_threshold=confidence_threshold,
                     )
+                    span.geometry_placeholder = True
+                    spans.append(span)
 
                 pages.append(
                     aggregate_page_from_spans(
-                        page_num=page_index + 1, spans=spans,
+                        page_num=page_index + 1,
+                        spans=spans,
                     ),
                 )
     except Exception as exc:
@@ -1109,49 +1126,43 @@ def redetect_document(
         pipeline_version=pipeline_version,
     )
 
-    # Compute output path.  Explicit path wins; otherwise derive under
-    # EXPORT/LANGUAGE.
-    if output_json_path:
+    payload = _language_sidecar_payload(doc_lang, include_spans=include_spans)
+    sidecar_filename = f"{build_sidecar_base_name(source_name)}.language.json"
+    sidecar_bytes: bytes | None = None
+    if not write_sidecar:
+        sidecar_bytes = json.dumps(
+            payload,
+            indent=2,
+            ensure_ascii=False,
+            default=str,
+        ).encode("utf-8")
+        out_path: Optional[str] = None
+    else:
+        # Compute output path. Explicit path wins; an authorized caller may
+        # provide ``language_output_dir``; otherwise derive under EXPORT/LANGUAGE.
+        if not output_json_path and language_output_dir:
+            output_json_path = os.path.join(language_output_dir, sidecar_filename)
+
+    if write_sidecar and output_json_path:
         try:
             target_dir = os.path.dirname(output_json_path)
             if target_dir:
                 os.makedirs(target_dir, exist_ok=True)
-            # Build payload using the same shape as write_language_json so
-            # the two write paths agree on the wire.
-            pages_out: list[dict[str, Any]] = []
-            for page in doc_lang.pages or []:
-                if page is None:
-                    continue
-                page_dict = asdict(page)
-                if not include_spans:
-                    page_dict["spans"] = []
-                pages_out.append(page_dict)
-            payload: dict[str, Any] = {
-                "schema_version": LANGUAGE_SCHEMA_VERSION,
-                "document_id": doc_lang.document_id,
-                "source_file": doc_lang.source_file,
-                "processing": dict(doc_lang.processing or {}),
-                "document_summary": {
-                    "primary_language": doc_lang.primary_language,
-                    "primary_confidence": doc_lang.primary_confidence,
-                    "languages_detected": list(doc_lang.languages_detected or []),
-                    "language_char_shares": dict(
-                        doc_lang.language_char_shares or {},
-                    ),
-                    "page_count": doc_lang.page_count,
-                    "pages_with_mixed_script": doc_lang.pages_with_mixed_script,
-                },
-                "pages": pages_out,
-            }
-            with open(output_json_path, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh, indent=2, ensure_ascii=False, default=str)
+            allowed_root = target_dir or os.path.dirname(
+                os.path.abspath(output_json_path)
+            )
+            write_json_atomic(
+                output_json_path,
+                payload,
+                allowed_root=allowed_root or None,
+            )
             out_path: Optional[str] = output_json_path
         except OSError as exc:
             return {
                 "status": "error",
                 "error": f"failed to write sidecar: {exc}",
             }
-    else:
+    elif write_sidecar:
         out_path = write_language_json(
             doc_lang=doc_lang,
             output_base_dir=output_base_dir,
@@ -1164,20 +1175,28 @@ def redetect_document(
                 "error": "failed to write language sidecar",
             }
 
-    # Best-effort custody event.
-    _emit_language_redetected_event(
-        document_id=document_id,
-        source_file=source_name,
-        output_base_dir=output_base_dir,
-        doc_lang=doc_lang,
-    )
+    # CLI callers retain the historical best-effort append. The REST route
+    # disables it and performs a strict descriptor-bound append to the exact
+    # selected inode/tip after this function returns.
+    if emit_custody_event and write_sidecar:
+        _emit_language_redetected_event(
+            document_id=document_id,
+            source_file=source_name,
+            output_base_dir=output_base_dir,
+            doc_lang=doc_lang,
+            custody_dir_override=custody_dir_override,
+        )
 
-    return {
+    result = {
         "status": "ok",
         "output": out_path,
         "primary_language": doc_lang.primary_language,
         "page_count": doc_lang.page_count,
     }
+    if sidecar_bytes is not None:
+        result["sidecar_filename"] = sidecar_filename
+        result["sidecar_bytes"] = sidecar_bytes
+    return result
 
 
 def _cli_main(argv: Optional[list[str]] = None) -> int:

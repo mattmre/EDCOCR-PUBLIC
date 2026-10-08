@@ -1,3 +1,5 @@
+> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](../release-candidate.md) and the root installation guide.
+
 # Playwright Testing Roadmap
 
 This document defines the first repo-specific Playwright strategy for EDCOCR.

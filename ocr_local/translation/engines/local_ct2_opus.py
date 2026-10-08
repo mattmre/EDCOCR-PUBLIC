@@ -14,8 +14,29 @@ from pathlib import Path
 from typing import Any
 
 from ocr_local.translation.engines import register_engine
-from ocr_local.translation.engines.base import TranslationEngine
+from ocr_local.translation.engines.base import (
+    TranslationEngine,
+    ct2_hypothesis_confidence,
+)
 from ocr_local.translation.models import EngineCapability, SpanTranslation
+
+
+def _load_ct2_runtime():
+    try:
+        import ctranslate2
+    except ImportError as exc:
+        raise RuntimeError(
+            "ctranslate2 not installed. "
+            "Install with: pip install -r requirements-translation.txt"
+        ) from exc
+    try:
+        import sentencepiece as spm
+    except ImportError as exc:
+        raise RuntimeError(
+            "sentencepiece not installed. "
+            "Install with: pip install -r requirements-translation.txt"
+        ) from exc
+    return ctranslate2, spm
 
 
 @register_engine
@@ -67,14 +88,7 @@ class OpusMTEngine(TranslationEngine):
             )
             model_dir = str(resolved)
         if model_dir:
-            try:
-                import ctranslate2
-                import sentencepiece as spm
-            except ImportError as exc:
-                raise RuntimeError(
-                    "ctranslate2 not installed. "
-                    "Install with: pip install -r requirements-translation.txt"
-                ) from exc
+            ctranslate2, spm = _load_ct2_runtime()
             model_path = Path(model_dir)
             source_spm = model_path / "source.spm"
             target_spm = model_path / "target.spm"
@@ -83,8 +97,12 @@ class OpusMTEngine(TranslationEngine):
                     "OPUS-MT CT2 model_dir must contain source.spm and target.spm"
                 )
             self._translator = ctranslate2.Translator(str(model_path), device="cpu")
-            self._source_tokenizer = spm.SentencePieceProcessor(model_file=str(source_spm))
-            self._target_tokenizer = spm.SentencePieceProcessor(model_file=str(target_spm))
+            self._source_tokenizer = spm.SentencePieceProcessor(
+                model_file=str(source_spm)
+            )
+            self._target_tokenizer = spm.SentencePieceProcessor(
+                model_file=str(target_spm)
+            )
         else:
             self._translator = None
             self._source_tokenizer = None
@@ -103,28 +121,15 @@ class OpusMTEngine(TranslationEngine):
         beam_size: int = 4,
     ) -> list[SpanTranslation]:
         if not self._model_dir:
-            return [
-                SpanTranslation(
-                    span_id=s.get("span_id", f"s{i}"),
-                    source_text=s["text"],
-                    target_text=f"[OPUS-MT stub] {s['text']}",
-                    source_bbox=s.get("bbox", [0.0, 0.0, 100.0, 12.0]),
-                    source_bboxes=[s.get("bbox", [0.0, 0.0, 100.0, 12.0])],
-                    source_language=src,
-                    target_language=tgt,
-                    confidence=0.85,
-                    quality_score=None,
-                    engine_id=self.capability.id,
-                )
-                for i, s in enumerate(spans)
-            ]
+            raise RuntimeError(
+                "OPUS-MT model_dir is required; synthetic translation is disabled"
+            )
 
         assert self._translator is not None
         assert self._source_tokenizer is not None
         assert self._target_tokenizer is not None
         tokenized = [
-            self._source_tokenizer.encode(s["text"], out_type=str)
-            for s in spans
+            self._source_tokenizer.encode(s["text"], out_type=str) for s in spans
         ]
         results = self._translator.translate_batch(
             tokenized,
@@ -132,25 +137,24 @@ class OpusMTEngine(TranslationEngine):
             max_decoding_length=256,
             replace_unknowns=True,
         )
-        translated_texts = [
-            self._target_tokenizer.decode(result.hypotheses[0])
-            for result in results
-        ]
-        return [
-            SpanTranslation(
-                span_id=s.get("span_id", f"s{i}"),
-                source_text=s["text"],
-                target_text=translated_texts[i],
-                source_bbox=s.get("bbox", [0.0, 0.0, 100.0, 12.0]),
-                source_bboxes=[s.get("bbox", [0.0, 0.0, 100.0, 12.0])],
-                source_language=src,
-                target_language=tgt,
-                confidence=0.85,
-                quality_score=None,
-                engine_id=self.capability.id,
+        out: list[SpanTranslation] = []
+        for i, (s, result) in enumerate(zip(spans, results)):
+            conf = ct2_hypothesis_confidence(result)
+            out.append(
+                SpanTranslation(
+                    span_id=s.get("span_id", f"s{i}"),
+                    source_text=s["text"],
+                    target_text=self._target_tokenizer.decode(result.hypotheses[0]),
+                    source_bbox=s.get("bbox", [0.0, 0.0, 100.0, 12.0]),
+                    source_bboxes=[s.get("bbox", [0.0, 0.0, 100.0, 12.0])],
+                    source_language=src,
+                    target_language=tgt,
+                    confidence=conf,
+                    quality_score=conf,
+                    engine_id=self.capability.id,
+                )
             )
-            for i, s in enumerate(spans)
-        ]
+        return out
 
     def model_provenance(self) -> dict:
         if self._provenance is not None:

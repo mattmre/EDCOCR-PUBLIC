@@ -884,16 +884,15 @@ class TestWriteJson:
         assert os.path.isdir(expected_dir)
 
     def test_path_traversal_protection(self, tmp_path):
-        """Subfolder with '..' segments -> sanitized safely."""
+        """Subfolder traversal tokens are rejected."""
         doc = DocumentSignatureVerification(
             document_id="traversal_test", source_file="evil.pdf",
         )
         doc.pages = []
         doc = finalize_signature_verification(doc)
         result = write_signature_verification_json(doc, str(tmp_path), "../../etc", __version__)
-        assert result is not None
-        sig_dir = os.path.join(str(tmp_path), "EXPORT", "SIGNATURE")
-        assert os.path.realpath(result).startswith(os.path.realpath(sig_dir))
+        assert result is None
+        assert not (tmp_path / "etc").exists()
 
     def test_empty_subfolder(self, tmp_path):
         doc = DocumentSignatureVerification(

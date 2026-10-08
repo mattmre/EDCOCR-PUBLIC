@@ -30,9 +30,7 @@ def _get_on_key(workflow: dict) -> dict:
 @pytest.fixture(scope="module")
 def workflow():
     """Load and parse the container-scan workflow YAML."""
-    assert WORKFLOW_PATH.exists(), (
-        f"container-scan.yml not found at {WORKFLOW_PATH}"
-    )
+    assert WORKFLOW_PATH.exists(), f"container-scan.yml not found at {WORKFLOW_PATH}"
     with open(WORKFLOW_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -50,7 +48,10 @@ class TestWorkflowStructure:
 
     def test_has_name(self, workflow):
         assert "name" in workflow
-        assert "container" in workflow["name"].lower() or "scan" in workflow["name"].lower()
+        assert (
+            "container" in workflow["name"].lower()
+            or "scan" in workflow["name"].lower()
+        )
 
     def test_has_jobs(self, workflow):
         assert "jobs" in workflow
@@ -131,27 +132,39 @@ class TestMatrix:
             f"got {len(includes)}"
         )
 
+    def test_coordinator_family_uses_repository_root_context(self, workflow):
+        includes = self._get_matrix_includes(workflow)
+        coordinator_family = [
+            entry
+            for entry in includes
+            if entry.get("dockerfile", "").startswith("coordinator/")
+        ]
+        assert coordinator_family
+        assert all(entry.get("context") == "." for entry in coordinator_family)
+
     def test_matrix_includes_main_dockerfile(self, workflow):
         includes = self._get_matrix_includes(workflow)
-        main_entries = [
-            e for e in includes
-            if e.get("dockerfile") == "Dockerfile"
-        ]
+        main_entries = [e for e in includes if e.get("dockerfile") == "Dockerfile"]
         assert len(main_entries) == 1
         assert main_entries[0]["image"] == "ocr-local"
 
     def test_matrix_includes_coordinator_dockerfile(self, workflow):
         includes = self._get_matrix_includes(workflow)
         coord_entries = [
-            e for e in includes
-            if "coordinator" in e.get("dockerfile", "").lower()
+            e for e in includes if "coordinator" in e.get("dockerfile", "").lower()
         ]
         assert len(coord_entries) >= 1
         assert coord_entries[0]["image"] == "ocr-coordinator"
 
-    @pytest.mark.parametrize("image_name", [
-        "ocr-worker", "ocr-worker-ocr", "ocr-worker-nlp", "ocr-worker-layoutlm",
-    ])
+    @pytest.mark.parametrize(
+        "image_name",
+        [
+            "ocr-worker",
+            "ocr-worker-ocr",
+            "ocr-worker-nlp",
+            "ocr-worker-layoutlm",
+        ],
+    )
     def test_matrix_includes_worker_image(self, workflow, image_name):
         includes = self._get_matrix_includes(workflow)
         matching = [e for e in includes if e.get("image") == image_name]
@@ -163,7 +176,9 @@ class TestMatrix:
     def test_matrix_entries_have_required_keys(self, workflow):
         includes = self._get_matrix_includes(workflow)
         for entry in includes:
-            assert "dockerfile" in entry, f"Missing 'dockerfile' in matrix entry: {entry}"
+            assert (
+                "dockerfile" in entry
+            ), f"Missing 'dockerfile' in matrix entry: {entry}"
             assert "context" in entry, f"Missing 'context' in matrix entry: {entry}"
             assert "image" in entry, f"Missing 'image' in matrix entry: {entry}"
 
@@ -181,10 +196,7 @@ class TestTrivySteps:
 
     def _find_trivy_steps(self, workflow):
         steps = self._get_steps(workflow)
-        return [
-            s for s in steps
-            if "Trivy" in s.get("name", "") and "run" in s
-        ]
+        return [s for s in steps if "Trivy" in s.get("name", "") and "run" in s]
 
     def test_has_trivy_scan_steps(self, workflow):
         trivy_steps = self._find_trivy_steps(workflow)
@@ -194,41 +206,34 @@ class TestTrivySteps:
         trivy_steps = self._find_trivy_steps(workflow)
         for step in trivy_steps:
             run_cmd = step.get("run", "")
-            assert "aquasec/trivy:0.69.3" in run_cmd, (
-                "Trivy CLI image should be pinned to an explicit version"
-            )
+            assert (
+                "aquasec/trivy:0.69.3" in run_cmd
+            ), "Trivy CLI image should be pinned to an explicit version"
 
     def test_sarif_output_step_exists(self, workflow):
         trivy_steps = self._find_trivy_steps(workflow)
-        sarif_steps = [
-            s for s in trivy_steps
-            if "(SARIF)" in s.get("name", "")
-        ]
+        sarif_steps = [s for s in trivy_steps if "(SARIF)" in s.get("name", "")]
         assert len(sarif_steps) >= 1, "No SARIF format Trivy step found"
 
     def test_sarif_step_has_output_file(self, workflow):
         trivy_steps = self._find_trivy_steps(workflow)
-        sarif_steps = [
-            s for s in trivy_steps
-            if "(SARIF)" in s.get("name", "")
-        ]
+        sarif_steps = [s for s in trivy_steps if "(SARIF)" in s.get("name", "")]
         run_cmd = sarif_steps[0].get("run", "")
         assert "--format sarif" in run_cmd
         assert "--output" in run_cmd
         assert ".sarif" in run_cmd
-        assert "cp " in run_cmd, "SARIF step must copy the generated file into the workspace"
+        assert (
+            "cp " in run_cmd
+        ), "SARIF step must copy the generated file into the workspace"
 
     def test_exit_code_fails_on_critical_high(self, workflow):
         trivy_steps = self._find_trivy_steps(workflow)
-        sarif_steps = [
-            s for s in trivy_steps
-            if "(SARIF)" in s.get("name", "")
-        ]
+        sarif_steps = [s for s in trivy_steps if "(SARIF)" in s.get("name", "")]
         step = sarif_steps[0]
         run_cmd = step.get("run", "")
-        assert "--exit-code 1" in run_cmd, (
-            "Trivy SARIF step must fail on CRITICAL/HIGH findings"
-        )
+        assert (
+            "--exit-code 1" in run_cmd
+        ), "Trivy SARIF step must fail on CRITICAL/HIGH findings"
         assert "--severity CRITICAL,HIGH" in run_cmd
 
     def test_trivy_steps_scan_exported_tarballs(self, workflow):
@@ -243,29 +248,25 @@ class TestTrivySteps:
         trivy_steps = self._find_trivy_steps(workflow)
         for step in trivy_steps:
             run_cmd = step.get("run", "")
-            assert "--timeout 15m" in run_cmd, (
-                "Trivy CLI steps should set an explicit timeout for larger images"
-            )
+            assert (
+                "--timeout 15m" in run_cmd
+            ), "Trivy CLI steps should set an explicit timeout for larger images"
 
     def test_table_output_step_exists(self, workflow):
         trivy_steps = self._find_trivy_steps(workflow)
-        table_steps = [
-            s for s in trivy_steps
-            if "(table output" in s.get("name", "")
-        ]
-        assert len(table_steps) >= 1, "No table format Trivy step found for PR visibility"
+        table_steps = [s for s in trivy_steps if "(table output" in s.get("name", "")]
+        assert (
+            len(table_steps) >= 1
+        ), "No table format Trivy step found for PR visibility"
 
     def test_table_step_includes_medium_severity(self, workflow):
         trivy_steps = self._find_trivy_steps(workflow)
-        table_steps = [
-            s for s in trivy_steps
-            if "(table output" in s.get("name", "")
-        ]
+        table_steps = [s for s in trivy_steps if "(table output" in s.get("name", "")]
         run_cmd = table_steps[0].get("run", "")
         assert "--format table" in run_cmd
-        assert "--severity CRITICAL,HIGH,MEDIUM" in run_cmd, (
-            "Table output should include MEDIUM severity"
-        )
+        assert (
+            "--severity CRITICAL,HIGH,MEDIUM" in run_cmd
+        ), "Table output should include MEDIUM severity"
 
 
 # ---------------------------------------------------------------------------
@@ -282,33 +283,30 @@ class TestSarifUpload:
     def test_sarif_upload_step_exists(self, workflow):
         steps = self._get_steps(workflow)
         upload_steps = [
-            s for s in steps
-            if "codeql-action/upload-sarif" in s.get("uses", "")
+            s for s in steps if "codeql-action/upload-sarif" in s.get("uses", "")
         ]
         assert len(upload_steps) >= 1, "No codeql-action/upload-sarif step found"
 
     def test_sarif_upload_runs_always(self, workflow):
         steps = self._get_steps(workflow)
         upload_steps = [
-            s for s in steps
-            if "codeql-action/upload-sarif" in s.get("uses", "")
+            s for s in steps if "codeql-action/upload-sarif" in s.get("uses", "")
         ]
         step = upload_steps[0]
-        assert step.get("if") == "always()", (
-            "SARIF upload must run always() to capture results even on failure"
-        )
+        assert (
+            step.get("if") == "always()"
+        ), "SARIF upload must run always() to capture results even on failure"
 
     def test_sarif_upload_references_sarif_file(self, workflow):
         steps = self._get_steps(workflow)
         upload_steps = [
-            s for s in steps
-            if "codeql-action/upload-sarif" in s.get("uses", "")
+            s for s in steps if "codeql-action/upload-sarif" in s.get("uses", "")
         ]
         step = upload_steps[0]
         sarif_file = step.get("with", {}).get("sarif_file", "")
-        assert sarif_file.endswith(".sarif"), (
-            f"SARIF upload must reference a .sarif file, got: {sarif_file}"
-        )
+        assert sarif_file.endswith(
+            ".sarif"
+        ), f"SARIF upload must reference a .sarif file, got: {sarif_file}"
 
 
 # ---------------------------------------------------------------------------
@@ -325,25 +323,18 @@ class TestBuildStep:
     def test_checkout_step_exists(self, workflow):
         steps = self._get_steps(workflow)
         checkout_steps = [
-            s for s in steps
-            if s.get("uses", "").startswith("actions/checkout")
+            s for s in steps if s.get("uses", "").startswith("actions/checkout")
         ]
         assert len(checkout_steps) >= 1
 
     def test_docker_build_step_exists(self, workflow):
         steps = self._get_steps(workflow)
-        build_steps = [
-            s for s in steps
-            if "docker build" in s.get("run", "")
-        ]
+        build_steps = [s for s in steps if "docker build" in s.get("run", "")]
         assert len(build_steps) >= 1, "No docker build step found"
 
     def test_docker_build_uses_matrix_vars(self, workflow):
         steps = self._get_steps(workflow)
-        build_steps = [
-            s for s in steps
-            if "docker build" in s.get("run", "")
-        ]
+        build_steps = [s for s in steps if "docker build" in s.get("run", "")]
         build_cmd = build_steps[0]["run"]
         assert "matrix.image" in build_cmd
         assert "matrix.dockerfile" in build_cmd

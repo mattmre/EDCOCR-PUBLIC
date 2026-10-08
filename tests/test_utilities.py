@@ -85,9 +85,12 @@ def _load_utility_functions():
     mod.PHASE1_IMAGE_EXTENSIONS = {
         ".tif", ".tiff", ".jpg", ".jpeg", ".png", ".bmp", ".gif",
         ".webp", ".jp2", ".jpx", ".pnm", ".pbm", ".pgm", ".ppm",
-        ".pcx", ".ico", ".svg", ".svgz", ".wmf", ".emf",
+        ".pcx", ".ico", ".svg", ".svgz",
     }
-    mod.PHASE2_IMAGE_EXTENSIONS = {".heic", ".heif", ".avif", ".jxl", ".jxr", ".dcx", ".xps"}
+    mod.PHASE2_IMAGE_EXTENSIONS = {
+        ".heic", ".heif", ".avif", ".jxl", ".jxr", ".dcx", ".xps",
+        ".wmf", ".emf",
+    }
 
     # Extract and compile individual functions
     import re
@@ -389,18 +392,19 @@ class TestResumeIntegrityHelpers:
 # ===========================================================================
 
 class TestImgToBytes:
-    def test_converts_pil_to_jpeg_bytes(self):
+    def test_converts_pil_to_lossless_png_bytes(self):
         img = Image.new("RGB", (100, 100), color=(255, 0, 0))
         data = img_to_bytes(img)
         assert isinstance(data, bytes)
-        assert data[:2] == b"\xff\xd8"  # JPEG magic bytes
+        assert data[:8] == b"\x89PNG\r\n\x1a\n"
 
-    def test_output_is_valid_jpeg(self):
+    def test_output_is_valid_lossless_png(self):
         img = Image.new("RGB", (50, 50), color=(0, 255, 0))
         data = img_to_bytes(img)
         reloaded = Image.open(io.BytesIO(data))
         assert reloaded.size == (50, 50)
-        assert reloaded.format == "JPEG"
+        assert reloaded.format == "PNG"
+        assert reloaded.convert("RGB").getpixel((0, 0)) == (0, 255, 0)
 
 
 # ===========================================================================

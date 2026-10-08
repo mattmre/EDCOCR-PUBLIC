@@ -17,9 +17,13 @@ export default function BatchDetailPage() {
 
   useEffect(() => {
     const controller = new AbortController();
+    setBatch(null);
+    setError(null);
     async function load() {
       try {
         const response = await fetchBatch(batchId, controller.signal);
+        if (controller.signal.aborted) return;
+        if (response.batch_id !== batchId) throw new Error("Batch response does not match the requested batch");
         setBatch(response);
         setError(null);
       } catch (err) {
@@ -29,7 +33,7 @@ export default function BatchDetailPage() {
       }
     }
     if (batchId) void load();
-    return => controller.abort();
+    return () => controller.abort();
   }, [batchId]);
 
   if (error) {

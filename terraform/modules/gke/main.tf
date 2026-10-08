@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 # GCP GKE Cluster Module
-# EDCOCR — Cloud-Native Deployment
+# Industrial Adaptive OCR — Cloud-Native Deployment
 #
 # Provisions:
 #   - VPC network with subnet and secondary ranges

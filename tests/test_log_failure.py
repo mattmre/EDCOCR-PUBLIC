@@ -1,7 +1,7 @@
 """Tests for log_failure() in ocr_gpu_async.py.
 
 Verifies that write errors are logged as warnings instead of being
-silently swallowed.
+silently swallowed (maintenance review).
 """
 
 import logging
@@ -35,7 +35,7 @@ class TestLogFailureHappyPath:
 
 
 class TestLogFailureWriteError:
-    """Verify write errors emit a warning instead of being swallowed."""
+    """Verify write errors emit a warning instead of being swallowed (maintenance review)."""
 
     def test_logs_warning_on_permission_error(self, caplog):
         """When the failure report cannot be opened, a warning is logged."""

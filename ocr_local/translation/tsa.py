@@ -102,7 +102,9 @@ def _der_oid(oid: str) -> bytes:
     return _der(0x06, encoded)
 
 
-def build_rfc3161_timestamp_query(request_sha256: str, *, cert_req: bool = True) -> bytes:
+def build_rfc3161_timestamp_query(
+    request_sha256: str, *, cert_req: bool = True
+) -> bytes:
     """Build a minimal RFC3161 TimeStampReq DER payload for a SHA-256 digest."""
 
     if len(request_sha256) != 64:
@@ -151,12 +153,21 @@ def _extract_rfc3161_status(tsr: bytes) -> int:
 class HTTPRFC3161TSAClient:
     """Minimal HTTP RFC3161 TSA client for low-volume dev/live evidence."""
 
-    def __init__(self, url: str, *, timeout: float = 15.0) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        timeout: float = 15.0,
+        max_response_bytes: int = 16 * 1024 * 1024,
+    ) -> None:
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("TSA URL must be an http(s) URL")
+        if not isinstance(max_response_bytes, int) or max_response_bytes <= 0:
+            raise ValueError("max_response_bytes must be a positive integer")
         self.url = url
         self.timeout = timeout
+        self.max_response_bytes = max_response_bytes
 
     def timestamp(self, request_sha256: str) -> bytes:
         try:
@@ -170,14 +181,21 @@ class HTTPRFC3161TSAClient:
                     "Accept": "application/timestamp-reply",
                 },
                 timeout=self.timeout,
+                allow_redirects=False,
             )
             response.raise_for_status()
             tsr = response.content
+            if len(tsr) > self.max_response_bytes:
+                raise ValueError("timestamp authority response exceeds safety limit")
             status = _extract_rfc3161_status(tsr)
         except Exception as exc:
-            raise TSATimestampUnavailable(f"timestamp authority request failed: {exc}") from exc
+            raise TSATimestampUnavailable(
+                f"timestamp authority request failed: {exc}"
+            ) from exc
         if status not in {0, 1}:
-            raise TSATimestampUnavailable(f"timestamp authority rejected request: status={status}")
+            raise TSATimestampUnavailable(
+                f"timestamp authority rejected request: status={status}"
+            )
         return tsr
 
 

@@ -1,3 +1,5 @@
+> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](../release-candidate.md) and the root installation guide.
+
 # Vault and KMS Credential Hardening Guide
 
 This document covers the production configuration of HashiCorp Vault and AWS KMS

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   documentBundleUrl,
+  downloadAuthenticated,
   evidenceBundleUrl,
   fetchJobOutputs,
   outputDownloadUrl,
@@ -30,13 +31,21 @@ export function JobOutputs({ jobId }: { jobId: string }) {
   const [manifest, setManifest] = useState<OutputManifest | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
+    setManifest(null);
+    setError(null);
+    setDownloadError(null);
+    setDownloading(null);
     async function load() {
       try {
         setLoading(true);
         const data = await fetchJobOutputs(jobId, controller.signal);
+        if (controller.signal.aborted) return;
+        if (data.job_id !== jobId) throw new Error("Output manifest does not match the requested job");
         setManifest(data);
         setError(null);
       } catch (err) {
@@ -47,10 +56,22 @@ export function JobOutputs({ jobId }: { jobId: string }) {
       }
     }
     void load();
-    return => controller.abort();
+    return () => controller.abort();
   }, [jobId]);
 
   const artifacts = useMemo(() => manifest?.artifacts ?? [], [manifest]);
+
+  async function handleDownload(url: string, key: string, fallbackFilename: string) {
+    try {
+      setDownloadError(null);
+      setDownloading(key);
+      await downloadAuthenticated(url, fallbackFilename);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setDownloading(null);
+    }
+  }
 
   if (loading) {
     return (
@@ -78,22 +99,44 @@ export function JobOutputs({ jobId }: { jobId: string }) {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <a
-            className="rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-muted"
+          <button
+            type="button"
+            className="rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-muted disabled:opacity-50"
             data-testid="document-bundle-link"
-            href={documentBundleUrl(jobId)}
+            disabled={downloading !== null}
+            onClick={() =>
+              void handleDownload(
+                documentBundleUrl(jobId),
+                "document-bundle",
+                `${jobId}-document-bundle.zip`
+              )
+            }
           >
             DocumentBundle
-          </a>
-          <a
-            className="rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-muted"
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-muted disabled:opacity-50"
             data-testid="evidence-bundle-link"
-            href={evidenceBundleUrl(jobId)}
+            disabled={downloading !== null}
+            onClick={() =>
+              void handleDownload(
+                evidenceBundleUrl(jobId),
+                "evidence-bundle",
+                `${jobId}-evidence-bundle.zip`
+              )
+            }
           >
             Evidence
-          </a>
+          </button>
         </div>
       </div>
+
+      {downloadError ? (
+        <p className="text-xs text-destructive" data-testid="job-outputs-download-error">
+          {downloadError}
+        </p>
+      ) : null}
 
       {artifacts.length === 0 ? (
         <p className="text-muted-foreground" data-testid="job-outputs-empty">
@@ -119,13 +162,21 @@ export function JobOutputs({ jobId }: { jobId: string }) {
                   <td className="py-2 pr-4">{formatBytes(artifact.size_bytes)}</td>
                   <td className="py-2 pr-4">{artifact.schema_version || "n/a"}</td>
                   <td className="py-2">
-                    <a
-                      className="text-primary hover:underline"
+                    <button
+                      type="button"
+                      className="text-primary hover:underline disabled:opacity-50"
                       data-testid={`output-link-${artifact.output_type}`}
-                      href={outputDownloadUrl(jobId, artifact.output_type)}
+                      disabled={downloading !== null}
+                      onClick={() =>
+                        void handleDownload(
+                          outputDownloadUrl(jobId, artifact.output_type),
+                          artifact.output_type,
+                          artifact.filename || artifact.output_type
+                        )
+                      }
                     >
                       Download
-                    </a>
+                    </button>
                   </td>
                 </tr>
               ))}

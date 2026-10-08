@@ -74,7 +74,7 @@ class TestCustodyEventSetNull:
         # Find the CustodyEvent class and check its job FK
         ce_start = content.find("class CustodyEvent(models.Model):")
         assert ce_start != -1, "CustodyEvent class not found"
-        ce_section = content[ce_start:ce_start + 600]
+        ce_section = content[ce_start : ce_start + 600]
         assert "on_delete=models.SET_NULL" in ce_section
         assert "null=True" in ce_section
         assert "blank=True" in ce_section
@@ -83,7 +83,7 @@ class TestCustodyEventSetNull:
         content = _read_file("coordinator/jobs/models.py")
         ce_start = content.find("class CustodyEvent(models.Model):")
         assert ce_start != -1
-        ce_section = content[ce_start:ce_start + 600]
+        ce_section = content[ce_start : ce_start + 600]
         # The FK should NOT use CASCADE anymore
         assert "on_delete=models.CASCADE" not in ce_section
 
@@ -98,7 +98,9 @@ class TestTasksCleanupExtraction:
 
     def test_tasks_imports_extraction_models(self):
         content = _read_file("coordinator/jobs/tasks.py")
-        assert "from .extraction_models import ExtractedEntity, ExtractedFormValue" in content
+        assert "from .extraction_models import" in content
+        assert "ExtractedEntity" in content
+        assert "ExtractedFormValue" in content
 
     def test_cleanup_pii_entities_covers_extracted_entities(self):
         """cleanup_pii_entities should delete PII-typed ExtractedEntity records."""
@@ -106,7 +108,9 @@ class TestTasksCleanupExtraction:
         # Find the cleanup_pii_entities function
         fn_start = content.find("def cleanup_pii_entities():")
         assert fn_start != -1, "cleanup_pii_entities function not found"
-        fn_section = content[fn_start:fn_start + 3000]
+        fn_end = content.find("\n@shared_task", fn_start + 1)
+        assert fn_end != -1, "cleanup_pii_entities function boundary not found"
+        fn_section = content[fn_start:fn_end]
         assert "ExtractedEntity.objects.filter" in fn_section
         assert "extracted_pii_types" in fn_section
         assert "extracted_pii_deleted" in fn_section
@@ -116,7 +120,9 @@ class TestTasksCleanupExtraction:
         content = _read_file("coordinator/jobs/tasks.py")
         fn_start = content.find("def cleanup_completed_jobs():")
         assert fn_start != -1, "cleanup_completed_jobs function not found"
-        fn_section = content[fn_start:fn_start + 4000]
+        fn_end = content.find("\ndef cleanup_pii_entities():", fn_start)
+        assert fn_end != -1, "cleanup_pii_entities function boundary not found"
+        fn_section = content[fn_start:fn_end]
         assert "ExtractedFormValue.objects.filter" in fn_section
         assert "ExtractedEntity.objects.filter" in fn_section
 
@@ -125,7 +131,8 @@ class TestTasksCleanupExtraction:
         content = _read_file("coordinator/jobs/tasks.py")
         fn_start = content.find("def cleanup_pii_entities():")
         assert fn_start != -1
-        fn_section = content[fn_start:fn_start + 500]
+        fn_end = content.find("\n@shared_task", fn_start + 1)
+        fn_section = content[fn_start:fn_end]
         assert "is_litigation_hold_active()" in fn_section
 
 
@@ -138,31 +145,23 @@ class TestPurgePiiExtended:
     """Verify purge_pii covers extraction entities and all sidecar dirs."""
 
     def test_purge_pii_imports_extracted_entity(self):
-        content = _read_file(
-            "coordinator/jobs/management/commands/purge_pii.py"
-        )
+        content = _read_file("coordinator/jobs/management/commands/purge_pii.py")
         assert "from jobs.extraction_models import ExtractedEntity" in content
 
     def test_purge_pii_deletes_extracted_entities(self):
-        content = _read_file(
-            "coordinator/jobs/management/commands/purge_pii.py"
-        )
+        content = _read_file("coordinator/jobs/management/commands/purge_pii.py")
         assert "ExtractedEntity.objects" in content
         assert "extracted_deleted" in content
 
     def test_sidecar_dirs_expanded(self):
         """_delete_ner_files_for_job should cover NER, EXTRACTION, HANDWRITING, SIGNATURE."""
-        content = _read_file(
-            "coordinator/jobs/management/commands/purge_pii.py"
-        )
+        content = _read_file("coordinator/jobs/management/commands/purge_pii.py")
         for subdir in ("NER", "EXTRACTION", "HANDWRITING", "SIGNATURE"):
             assert f'"{subdir}"' in content, f"Missing sidecar dir: {subdir}"
 
     def test_sidecar_cleanup_uses_loop(self):
         """The sidecar cleanup should iterate over a tuple of directory names."""
-        content = _read_file(
-            "coordinator/jobs/management/commands/purge_pii.py"
-        )
+        content = _read_file("coordinator/jobs/management/commands/purge_pii.py")
         assert "sidecar_dirs" in content
         assert "for subdir in sidecar_dirs:" in content
 
@@ -176,9 +175,7 @@ class TestEncryptedFieldDefinition:
     """Verify the EncryptedTextField class behaves as expected."""
 
     def test_encrypted_field_module_exists(self):
-        path = os.path.join(
-            _REPO_ROOT, "coordinator", "jobs", "encrypted_field.py"
-        )
+        path = os.path.join(_REPO_ROOT, "coordinator", "jobs", "encrypted_field.py")
         assert os.path.isfile(path)
 
     def test_encrypted_field_extends_text_field(self):

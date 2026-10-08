@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+.hypothesis/
 ocr_output*/
 ocr_source*/
 ocr_temp/
@@ -7,15 +8,35 @@ zzz/
 *.log
 *.txt
 !README.md
+!NEXT_SESSION_PLAN.md
 !requirements.txt
+!requirements-language-id.txt
 !requirements-translation.txt
+!requirements-vlm.txt
 !tests/fixtures/corpus/**/*.txt
+!tests/fixtures/v33-validator-baseline-output.txt
+!v3.5/tests/fixtures/v33-validator-baseline-output.txt
+!docs/conventions/brutal-honesty-kit/**/*.txt
+!v3.5/docs/conventions/brutal-honesty-kit/**/*.txt
 .env
 coordinator/.env.local*
+
+# Claude Code config
+.claude/
+
+# Transient orchestration state
+findings.md
+progress.md
+task_plan.md
+out/*
+!out/.keep
 
 # Generated validation and run artifacts
 out/*
 !out/.keep
+
+# Internal agent run logs and orchestration artifacts (not session logs)
+docs/agent-runs/
 
 # Coordinator test artifacts and local runtime data
 coordinator/shared/
@@ -28,13 +49,37 @@ tmp/
 playwright-artifacts/
 node_modules/
 
-# Local translation model downloads/conversions
+# Local translation model downloads/conversions for BHS evidence runs
 out/translation_models/
 out/hunter-validation/**/api-output/jobs-*.db
 
-# Frontend
+# Frontend (Plan D Wave 1)
 frontend/.next/
 frontend/out/
 frontend/.env.local
 frontend/coverage/
 frontend/next-env.d.ts
+ocr_models_home/
+
+# Fullest-capability lab secrets
+out/fullest-capability/
+out/claim-tier/
+*.lab.env
+phase8.lab.env
+
+# Ephemeral scale / failover dumps (not certification evidence)
+scale_test_results/
+coordinator/failover_drill_results/
+
+# Closeout runtime outputs are retained locally and indexed by SHA-256.
+# Recreate PDFs with the committed harnesses; do not bulk-commit OCR output.
+/docs/certification/closeout-20260926-runtime/**/*.pdf
+/docs/certification/closeout-20260926-runtime/**/*.lock
+/docs/certification/closeout-20260926-runtime/**/*.bin
+
+# Standalone API uploads are separate from the watched-folder input.
+ocr_api_source/
+
+# Locally built release artifacts
+sdk/python/dist/
+sdk/typescript/*.tgz

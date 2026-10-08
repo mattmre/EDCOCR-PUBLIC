@@ -1,1 +1,1 @@
-"""REST API for the EDCOCR pipeline."""
+"""REST API for Industrial Adaptive OCR Pipeline."""

@@ -6,7 +6,7 @@ import { FeatureFlagsList } from "@/components/FeatureFlagsList";
 import { setApiKey } from "@/lib/auth";
 import type { FeatureFlag } from "@/lib/types";
 
-vi.mock("next/link", => ({
+vi.mock("next/link", () => ({
   __esModule: true,
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
     <a href={href} {...rest}>
@@ -73,7 +73,7 @@ const SAMPLE_FLAGS: FeatureFlag[] = [
   }),
 ];
 
-describe("<FeatureFlagsList /> grouping & rendering", => {
+describe("<FeatureFlagsList /> grouping & rendering", () => {
   beforeEach(() => {
     setApiKey("test-key");
   });
@@ -85,7 +85,7 @@ describe("<FeatureFlagsList /> grouping & rendering", => {
     }
   });
 
-  it("renders rows grouped by category", => {
+  it("renders rows grouped by category", () => {
     render(<FeatureFlagsList flags={SAMPLE_FLAGS} />);
     expect(screen.getByTestId("flag-category-translation")).toBeInTheDocument();
     expect(screen.getByTestId("flag-category-custody")).toBeInTheDocument();
@@ -94,7 +94,7 @@ describe("<FeatureFlagsList /> grouping & rendering", => {
     expect(screen.getByTestId("flag-row-ENABLE_TRANSLATION")).toBeInTheDocument();
   });
 
-  it("uses the correct source-badge color class for each source", => {
+  it("uses the correct source-badge color class for each source", () => {
     render(<FeatureFlagsList flags={SAMPLE_FLAGS} />);
     expect(screen.getByTestId("flag-source-ENABLE_TRANSLATION")).toHaveClass(
       "bg-gray-100"
@@ -110,7 +110,7 @@ describe("<FeatureFlagsList /> grouping & rendering", => {
     );
   });
 
-  it("renders boolean ON/OFF pills", => {
+  it("renders boolean ON/OFF pills", () => {
     render(<FeatureFlagsList flags={SAMPLE_FLAGS} />);
     expect(screen.getByTestId("flag-value-ENABLE_TRANSLATION")).toHaveTextContent(
       "OFF"
@@ -118,7 +118,7 @@ describe("<FeatureFlagsList /> grouping & rendering", => {
     expect(screen.getByTestId("flag-value-ENABLE_CUSTODY")).toHaveTextContent("ON");
   });
 
-  it("masks values for keys that look secret-y", => {
+  it("masks values for keys that look secret-y", () => {
     render(<FeatureFlagsList flags={SAMPLE_FLAGS} />);
     const cell = screen.getByTestId("flag-value-WEBHOOK_SECRET_KEY");
     // Original value is `abcdef1234567890SECRETSTRING`; should show first 2/last 2.
@@ -126,7 +126,7 @@ describe("<FeatureFlagsList /> grouping & rendering", => {
     expect(cell.textContent).toMatch(/^ab.*NG$/);
   });
 
-  it("shows a strong-auth badge when requires_strong_auth=true", => {
+  it("shows a strong-auth badge when requires_strong_auth=true", () => {
     render(<FeatureFlagsList flags={SAMPLE_FLAGS} />);
     expect(
       screen.getByTestId("flag-strongauth-ENABLE_TRANSLATION")
@@ -136,14 +136,14 @@ describe("<FeatureFlagsList /> grouping & rendering", => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the View link with the flag key", => {
+  it("renders the View link with the flag key", () => {
     render(<FeatureFlagsList flags={SAMPLE_FLAGS} />);
     expect(
       screen.getByTestId("flag-link-OCR_LANGUAGE_TIERS")
     ).toHaveAttribute("href", "/admin/features/OCR_LANGUAGE_TIERS");
   });
 
-  it("collapses and expands a category and persists state to localStorage", => {
+  it("collapses and expands a category and persists state to localStorage", () => {
     render(<FeatureFlagsList flags={SAMPLE_FLAGS} />);
     const tableId = "flag-table-translation";
     expect(screen.getByTestId(tableId)).toBeInTheDocument();
@@ -156,12 +156,12 @@ describe("<FeatureFlagsList /> grouping & rendering", => {
     });
   });
 
-  it("renders an empty state when no flags are passed", => {
+  it("renders an empty state when no flags are passed", () => {
     render(<FeatureFlagsList flags={[]} />);
     expect(screen.getByTestId("flags-empty")).toBeInTheDocument();
   });
 
-  it("renders integer values as plain numbers", => {
+  it("renders integer values as plain numbers", () => {
     render(
       <FeatureFlagsList
         flags={[
@@ -178,7 +178,7 @@ describe("<FeatureFlagsList /> grouping & rendering", => {
   });
 });
 
-describe("<FeatureFlagsListPage /> backend fallbacks", => {
+describe("<FeatureFlagsListPage /> backend fallbacks", () => {
   beforeEach(() => {
     setApiKey("test-key");
   });
@@ -186,7 +186,7 @@ describe("<FeatureFlagsListPage /> backend fallbacks", => {
     vi.restoreAllMocks();
   });
 
-  it("renders the 'API not provisioned' empty state on 404", async => {
+  it("renders the 'API not provisioned' empty state on 404", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ detail: "not found" }, 404)
     );
@@ -197,7 +197,7 @@ describe("<FeatureFlagsListPage /> backend fallbacks", => {
     expect(screen.getByText(/not yet provisioned/i)).toBeInTheDocument();
   });
 
-  it("renders 'admin role required' on 403", async => {
+  it("renders 'admin role required' on 403", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ detail: "forbidden" }, 403)
     );
@@ -208,7 +208,7 @@ describe("<FeatureFlagsListPage /> backend fallbacks", => {
     expect(screen.getByText(/Platform admin role required/i)).toBeInTheDocument();
   });
 
-  it("renders the flag table on 200 with envelope", async => {
+  it("renders the flag table on 200 with envelope", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ flags: SAMPLE_FLAGS }, 200)
     );

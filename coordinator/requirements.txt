@@ -1,34 +1,46 @@
 # Coordinator (Django + Celery) Python dependencies
 #
-# Pillow and PyMuPDF versions must match the root requirements.txt.
+# maintenance review: Pillow and PyMuPDF versions must match the root requirements.txt.
 # Root requirements.txt is authoritative for shared image/PDF pins.
 # Run scripts/check_deps_sync.py to verify sync.
 
-Django>=5.2.14,<6.0
+# PG-18: Django 6.0.7 qualified on CPython 3.12 (manage.py check + jobs/tests 651 passed).
+Django>=6.0.7,<6.1
 psycopg2-binary==2.9.12
-celery[rabbitmq]==5.6.3
-redis>=7.0.1,<8.0.0
+# RabbitMQ transport is provided by Celery -> Kombu -> amqp.
+# Celery 5.6.x has no "rabbitmq" extra; keep the broker dependency path explicit
+# in docs/tests rather than relying on a no-op extras marker.
+celery==5.6.3
+# PG-18: redis-py 8.0.1 import/ping + Celery RedisBackend smoke on local Redis.
+redis>=8.0.1,<9.0.0
 django-celery-results==2.6.0
 django-celery-beat==2.9.0
 flower==2.0.1
 gunicorn==26.0.0
-boto3>=1.43.10,<2.0.0
+boto3>=1.43.42,<2.0.0
 
-# Must match root requirements.txt (authoritative source).
-Pillow==12.2.0
+# maintenance review: Must match root requirements.txt (authoritative source).
+Pillow==12.3.0
+
+# MP-A1: assemble_document imports optimize_pdfs._durable_replace which needs
+# numpy at module import. Root pin is authoritative (Paddle stack compatibility).
+numpy==1.26.4
 
 prometheus-client>=0.25.0,<1.0.0
 
-# Must match root requirements.txt (authoritative source).
-PyMuPDF==1.27.2.2
+# maintenance review: Must match root requirements.txt (authoritative source).
+PyMuPDF==1.28.0
 
 PyYAML==6.0.3
-cryptography>=48.0.0
+cryptography>=49.0.0
 django-otp>=1.5
-qrcode>=7.4
+qrcode>=8.2
 
-# , item C7 -- DNS-SD federation cluster auto-discovery.
+# Bounded regex engine for tenant glossary patterns (hard match timeout).
+regex>=2024.11.6,<2027.0.0
+
+# Plan C Phase 1, item C7 -- DNS-SD federation cluster auto-discovery.
 # Both deps are *optional* at import time; the discovery module imports
 # cleanly without them and surfaces a clear error only when used.
-dnspython>=2.0,<3.0
-kubernetes>=28.0,<32.0
+dnspython>=2.8.0,<3.0
+kubernetes>=36.0.2,<37.0

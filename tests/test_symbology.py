@@ -31,9 +31,7 @@ def _make_blank_image(width=800, height=600, color=255):
     return np.full((height, width), color, dtype=np.uint8)
 
 
-def _make_image_with_rectangles(
-    width=800, height=600, rects=None, fill=True
-):
+def _make_image_with_rectangles(width=800, height=600, rects=None, fill=True):
     """Create a white image with black rectangles drawn on it.
 
     Args:
@@ -50,7 +48,7 @@ def _make_image_with_rectangles(
     img = np.full((height, width), 255, dtype=np.uint8)
     if rects is None:
         rects = []
-    for (x, y, w, h) in rects:
+    for x, y, w, h in rects:
         if fill:
             cv2.rectangle(img, (x, y), (x + w, y + h), 0, -1)
         else:
@@ -81,7 +79,8 @@ def _make_checkbox_image(checked=True, size=30):
             img,
             (x + inner_margin, y + inner_margin),
             (x + size - inner_margin, y + size - inner_margin),
-            0, -1
+            0,
+            -1,
         )
 
     return img
@@ -481,13 +480,14 @@ class TestOMRDetector:
 
         # Create image with checkbox-like rectangles
         img = _make_image_with_rectangles(
-            width=400, height=400,
+            width=400,
+            height=400,
             rects=[
-                (50, 50, 25, 25),    # checkbox 1
-                (50, 100, 25, 25),   # checkbox 2
-                (50, 150, 25, 25),   # checkbox 3
+                (50, 50, 25, 25),  # checkbox 1
+                (50, 100, 25, 25),  # checkbox 2
+                (50, 150, 25, 25),  # checkbox 3
             ],
-            fill=False  # outline only = unchecked
+            fill=False,  # outline only = unchecked
         )
 
         detector = OMRDetector(min_mark_size=15, max_mark_size=50)
@@ -591,9 +591,7 @@ class TestOMRClassification:
         detector = OMRDetector()
 
         # Create a square contour
-        contour = np.array([
-            [[0, 0]], [[30, 0]], [[30, 30]], [[0, 30]]
-        ], dtype=np.int32)
+        contour = np.array([[[0, 0]], [[30, 0]], [[30, 30]], [[0, 30]]], dtype=np.int32)
 
         result = detector._classify_mark_type(contour)
         assert result == "checkbox"
@@ -607,10 +605,10 @@ class TestOMRClassification:
         # Create a circular contour
         angles = np.linspace(0, 2 * np.pi, 64, endpoint=False)
         cx, cy, r = 50, 50, 20
-        points = np.array([
-            [[int(cx + r * np.cos(a)), int(cy + r * np.sin(a))]]
-            for a in angles
-        ], dtype=np.int32)
+        points = np.array(
+            [[[int(cx + r * np.cos(a)), int(cy + r * np.sin(a))]] for a in angles],
+            dtype=np.int32,
+        )
 
         result = detector._classify_mark_type(points)
         assert result == "radio"
@@ -646,9 +644,9 @@ class TestOMRClassification:
         detector = OMRDetector()
 
         # Perfect square contour
-        contour = np.array([
-            [[10, 10]], [[40, 10]], [[40, 40]], [[10, 40]]
-        ], dtype=np.int32)
+        contour = np.array(
+            [[[10, 10]], [[40, 10]], [[40, 40]], [[10, 40]]], dtype=np.int32
+        )
         bbox = (10, 10, 40, 40)
 
         confidence = detector._compute_confidence(contour, bbox)
@@ -790,9 +788,7 @@ class TestSymbologyJsonOutput:
 
         doc = finalize_symbology(doc)
 
-        result_path = write_symbology_json(
-            doc, str(tmp_path), ".", __version__
-        )
+        result_path = write_symbology_json(doc, str(tmp_path), ".", __version__)
 
         assert result_path is not None
         assert os.path.isfile(result_path)
@@ -812,6 +808,12 @@ class TestSymbologyJsonOutput:
         assert data["summary"]["unchecked_marks"] == 0
         assert len(data["pages"]) == 1
 
+        import jsonschema
+
+        from schemas import load_schema
+
+        jsonschema.validate(data, load_schema("symbology"))
+
     def test_write_json_with_subfolder(self, tmp_path):
         from symbology_extraction import (
             DocumentSymbology,
@@ -830,13 +832,8 @@ class TestSymbologyJsonOutput:
         assert "SYMBOLOGY" in result_path
         assert os.path.isfile(result_path)
 
-    def test_write_json_path_traversal_sanitized(self, tmp_path):
-        """Path traversal attempts are sanitized by sanitize_path_segment.
-
-        The ``..`` segments are stripped to empty strings by
-        sanitize_path_segment (which strips leading/trailing dots), so
-        ``../../etc`` becomes just ``etc`` -- no actual traversal occurs.
-        """
+    def test_write_json_path_traversal_rejected(self, tmp_path):
+        """Path traversal tokens are rejected."""
         from symbology_extraction import (
             DocumentSymbology,
             finalize_symbology,
@@ -846,16 +843,10 @@ class TestSymbologyJsonOutput:
         doc = DocumentSymbology(document_id="doc3", source_file="evil.pdf")
         doc = finalize_symbology(doc)
 
-        result_path = write_symbology_json(
-            doc, str(tmp_path), "../../etc", __version__
-        )
+        result_path = write_symbology_json(doc, str(tmp_path), "../../etc", __version__)
 
-        # sanitize_path_segment strips ".." to empty, so path becomes "etc"
-        # which is safely inside the output dir
-        assert result_path is not None
-        # Verify the output is within the SYMBOLOGY directory
-        assert "SYMBOLOGY" in result_path
-        assert os.path.isfile(result_path)
+        assert result_path is None
+        assert not (tmp_path / "etc").exists()
 
     def test_write_json_empty_subfolder(self, tmp_path):
         from symbology_extraction import (
@@ -867,9 +858,7 @@ class TestSymbologyJsonOutput:
         doc = DocumentSymbology(document_id="doc4", source_file="test.pdf")
         doc = finalize_symbology(doc)
 
-        result_path = write_symbology_json(
-            doc, str(tmp_path), "", __version__
-        )
+        result_path = write_symbology_json(doc, str(tmp_path), "", __version__)
 
         assert result_path is not None
         assert os.path.isfile(result_path)
@@ -898,12 +887,8 @@ class TestSymbologyExtractor:
         extractor = SymbologyExtractor()
         img = _make_blank_image()
 
-        with mock.patch.object(
-            extractor._barcode_extractor, "extract_page"
-        ) as mock_bc:
-            result = extractor.extract_page(
-                img, page_num=1, barcode_enabled=False
-            )
+        with mock.patch.object(extractor._barcode_extractor, "extract_page") as mock_bc:
+            result = extractor.extract_page(img, page_num=1, barcode_enabled=False)
             mock_bc.assert_not_called()
             assert result.barcodes == []
 
@@ -913,12 +898,8 @@ class TestSymbologyExtractor:
         extractor = SymbologyExtractor()
         img = _make_blank_image()
 
-        with mock.patch.object(
-            extractor._omr_detector, "detect_page"
-        ) as mock_omr:
-            result = extractor.extract_page(
-                img, page_num=1, omr_enabled=False
-            )
+        with mock.patch.object(extractor._omr_detector, "detect_page") as mock_omr:
+            result = extractor.extract_page(img, page_num=1, omr_enabled=False)
             mock_omr.assert_not_called()
             assert result.marks == []
 
@@ -969,9 +950,11 @@ class TestSymbologyConfig:
         # ENABLE_SYMBOLOGY_EXTRACTION defaults to False
         # We can't easily test the module-level value since it's read at import
         # time, but we can test the env var parsing pattern
-        assert os.environ.get("ENABLE_SYMBOLOGY_EXTRACTION", "").lower() not in (
-            "1", "true", "yes"
-        ) or True  # Just verify the pattern doesn't crash
+        assert (
+            os.environ.get("ENABLE_SYMBOLOGY_EXTRACTION", "").lower()
+            not in ("1", "true", "yes")
+            or True
+        )  # Just verify the pattern doesn't crash
 
     def test_omr_size_env_parsing(self):
         """Test OMR size configuration from env vars."""
@@ -1014,9 +997,7 @@ class TestIntegrationPipeline:
         )
 
         # Write JSON
-        result_path = write_symbology_json(
-            doc, str(tmp_path), ".", __version__
-        )
+        result_path = write_symbology_json(doc, str(tmp_path), ".", __version__)
 
         assert result_path is not None
         assert os.path.isfile(result_path)
@@ -1040,9 +1021,7 @@ class TestIntegrationPipeline:
             write_symbology_json,
         )
 
-        doc = DocumentSymbology(
-            document_id="barcode_test", source_file="barcodes.pdf"
-        )
+        doc = DocumentSymbology(document_id="barcode_test", source_file="barcodes.pdf")
         doc.pages = [
             {
                 "page_num": 1,
@@ -1096,9 +1075,7 @@ class TestIntegrationPipeline:
         assert doc.unchecked_marks == 1
         assert doc.barcode_types_found == ["QR_CODE"]
 
-        result_path = write_symbology_json(
-            doc, str(tmp_path), ".", __version__
-        )
+        result_path = write_symbology_json(doc, str(tmp_path), ".", __version__)
 
         assert result_path is not None
         with open(result_path, encoding="utf-8") as f:

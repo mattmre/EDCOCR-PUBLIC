@@ -32,6 +32,7 @@ class TestDetectGpu(TestCase):
         mock_paddle.device.is_compiled_with_cuda.return_value = False
         with patch.dict("sys.modules", {"paddle": mock_paddle}):
             from jobs.signals import _detect_gpu as detect
+
             result = detect()
         assert result == (False, "", 0)
 
@@ -45,6 +46,7 @@ class TestDetectGpu(TestCase):
         mock_paddle.device.cuda.get_device_properties.return_value = mock_props
         with patch.dict("sys.modules", {"paddle": mock_paddle}):
             from jobs.signals import _detect_gpu as detect
+
             result = detect()
         assert result[0] is True
         assert result[1] == "NVIDIA RTX 4090"
@@ -71,9 +73,12 @@ class TestDetectGpu(TestCase):
 
     def test_returns_false_on_exception(self):
         mock_paddle = MagicMock()
-        mock_paddle.device.is_compiled_with_cuda.side_effect = RuntimeError("CUDA error")
+        mock_paddle.device.is_compiled_with_cuda.side_effect = RuntimeError(
+            "CUDA error"
+        )
         with patch.dict("sys.modules", {"paddle": mock_paddle}):
             from jobs.signals import _detect_gpu as detect
+
             result = detect()
         assert result == (False, "", 0)
 
@@ -96,6 +101,7 @@ class TestDetectCpu(TestCase):
         mock_psutil.virtual_memory.return_value.total = 32 * 1024 * 1024 * 1024  # 32GB
         with patch.dict("sys.modules", {"psutil": mock_psutil}):
             from jobs.signals import _detect_cpu as detect
+
             _, ram_mb = detect()
         assert ram_mb == 32 * 1024  # 32GB in MB
 
@@ -161,7 +167,9 @@ class TestOnWorkerReady(TestCase):
     def test_falls_back_to_env_var_for_queues(self, mock_cpu, mock_gpu, mock_hostname):
         # sender.consumer.queues access must raise so the except branch fires
         sender = MagicMock()
-        sender.consumer.queues.__iter__ = MagicMock(side_effect=AttributeError("no queues"))
+        sender.consumer.queues.__iter__ = MagicMock(
+            side_effect=AttributeError("no queues")
+        )
 
         with patch.dict("os.environ", {"WORKER_QUEUES": "ocr_gpu,cpu_general"}):
             on_worker_ready(sender=sender)
@@ -169,6 +177,22 @@ class TestOnWorkerReady(TestCase):
         worker = Worker.objects.get(hostname="test-env-worker")
         assert "ocr_gpu" in worker.queues
         assert "cpu_general" in worker.queues
+
+    @patch("jobs.signals.socket.gethostname", return_value="test-empty-queues")
+    @patch("jobs.signals._detect_gpu", return_value=(True, "RTX", 16384))
+    @patch("jobs.signals._detect_cpu", return_value=(8, 16384))
+    def test_falls_back_when_consumer_queues_are_not_populated(
+        self, mock_cpu, mock_gpu, mock_hostname
+    ):
+        sender = MagicMock()
+        sender.consumer.queues = []
+
+        with patch.dict("os.environ", {"WORKER_QUEUES": "ocr_gpu,cpu_general"}):
+            on_worker_ready(sender=sender)
+
+        worker = Worker.objects.get(hostname="test-empty-queues")
+        assert worker.queues == ["ocr_gpu", "cpu_general"]
+        assert worker.capabilities == ["ocr", "compress", "ner"]
 
     @patch("jobs.signals.socket.gethostname", return_value="test-update-worker")
     @patch("jobs.signals._detect_gpu", return_value=(False, "", 0))
@@ -216,7 +240,8 @@ class TestOnHeartbeat(TestCase):
     """Tests for on_heartbeat signal handler."""
 
     @patch("jobs.signals.socket.gethostname", return_value="heartbeat-worker")
-    def test_updates_heartbeat_timestamp(self, mock_hostname):
+    @patch("jobs.signals.close_old_connections")
+    def test_updates_heartbeat_timestamp(self, mock_close, mock_hostname):
         old_time = timezone.now() - timezone.timedelta(minutes=5)
         Worker.objects.create(
             hostname="heartbeat-worker",
@@ -228,8 +253,18 @@ class TestOnHeartbeat(TestCase):
 
         worker = Worker.objects.get(hostname="heartbeat-worker")
         assert worker.last_heartbeat > old_time
+        assert mock_close.call_count == 2
 
     @patch("jobs.signals.socket.gethostname", return_value="no-such-worker")
     def test_handles_nonexistent_worker(self, mock_hostname):
         # Should not raise even if worker doesn't exist
         on_heartbeat(sender=None)
+
+    @patch("jobs.signals.socket.gethostname", return_value="closed-db-worker")
+    @patch("jobs.signals.close_old_connections")
+    @patch("jobs.models.Worker.objects.filter", side_effect=RuntimeError("closed"))
+    def test_heartbeat_db_failure_is_nonfatal(
+        self, mock_filter, mock_close, mock_hostname
+    ):
+        on_heartbeat(sender=None)
+        assert mock_close.call_count == 2

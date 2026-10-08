@@ -11,7 +11,7 @@ Usage:
 
 Target KPI: <10 seconds detection latency (p95).
 
-Requires: file_watcher.py, file_watcher_config.py (from EDCOCR project root)
+Requires: file_watcher.py, file_watcher_config.py (from OCR_LOCAL project root)
 """
 
 import argparse

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { WorkersTable } from "@/components/WorkersTable";
 import type { Worker } from "@/lib/types";
 
-vi.mock("next/link", => ({
+vi.mock("next/link", () => ({
   default: ({
     href,
     children,
@@ -34,7 +34,7 @@ function worker(overrides: Partial<Worker>): Worker {
   };
 }
 
-describe("<WorkersTable />", => {
+describe("<WorkersTable />", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-26T12:00:00Z"));
@@ -43,7 +43,7 @@ describe("<WorkersTable />", => {
     vi.useRealTimers();
   });
 
-  it("filters by capability chip", async => {
+  it("filters by capability chip", async () => {
     const nowSec = Math.floor(Date.now() / 1000);
     const workers = [
       worker({ worker_id: "g1", hostname: "gpu-1", capabilities: ["ocr_gpu"], last_heartbeat: nowSec }),
@@ -65,7 +65,7 @@ describe("<WorkersTable />", => {
     expect(screen.queryByTestId("worker-row-n1")).not.toBeInTheDocument();
   });
 
-  it("sorts by heartbeat descending by default", => {
+  it("sorts by heartbeat descending by default", () => {
     const nowSec = Math.floor(Date.now() / 1000);
     const workers = [
       worker({ worker_id: "old", hostname: "old-host", last_heartbeat: nowSec - 30 }),
@@ -81,7 +81,7 @@ describe("<WorkersTable />", => {
     expect(rows[2]).toHaveAttribute("data-testid", "worker-row-old");
   });
 
-  it("renders a job link to /jobs/{id} when worker has a current_job_id", => {
+  it("renders a job link to /jobs/{id} when worker has a current_job_id", () => {
     const nowSec = Math.floor(Date.now() / 1000);
     render(
       <WorkersTable
@@ -103,7 +103,7 @@ describe("<WorkersTable />", => {
     expect(link).toHaveTextContent("job-42");
   });
 
-  it("flags stale workers via the synthetic 'stale' status", => {
+  it("flags stale workers via the synthetic 'stale' status", () => {
     const nowSec = Math.floor(Date.now() / 1000);
     render(
       <WorkersTable
@@ -118,7 +118,7 @@ describe("<WorkersTable />", => {
     expect(screen.getByTestId("worker-status-fresh")).toHaveTextContent(/online/i);
   });
 
-  it("respects staleOnly to hide non-stale workers", => {
+  it("respects staleOnly to hide non-stale workers", () => {
     const nowSec = Math.floor(Date.now() / 1000);
     render(
       <WorkersTable

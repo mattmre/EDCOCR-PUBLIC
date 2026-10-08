@@ -1,4 +1,5 @@
 """Tests for ``ocr_local.translation.custody_adapter`` -- 18 tests."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -223,6 +224,7 @@ def test_reason_codes_all_defined():
         "MODEL_INTEGRITY_FAILED",
         "MODEL_EVICTED",
         "MODEL_LOAD_BLOCKED_NC_LICENSE",
+        "MODEL_LOAD_NC_LICENSE_ACKNOWLEDGED",
         "MODEL_PINNED",
         "MODEL_UNPINNED",
         # Plan B Wave M2 PR B14 -- tenant-aware router (router_v2).
@@ -242,6 +244,25 @@ def test_reason_codes_all_defined():
     }
     actual = {rc.value for rc in ReasonCode}
     assert actual == expected
+
+
+def test_emit_nc_license_acknowledged():
+    from ocr_local.translation.custody_adapter import emit_nc_license_acknowledged
+
+    chain = _mock_chain()
+    emit_nc_license_acknowledged(
+        chain,
+        tenant_id="tenant-a",
+        engine_id="local_ct2_nllb",
+        license="CC-BY-NC-4.0",
+        model_id="local_ct2_nllb",
+    )
+    assert chain.log_event.call_count == 1
+    event_type, payload = chain.log_event.call_args.args
+    assert event_type == "TRANSLATION_MODEL_CACHE"
+    assert payload["reason_code"] == "MODEL_LOAD_NC_LICENSE_ACKNOWLEDGED"
+    assert payload["license"] == "CC-BY-NC-4.0"
+    assert payload["posture"] == "soft_warning_acknowledged"
 
 
 def test_privilege_blocked_emit_before_raise():

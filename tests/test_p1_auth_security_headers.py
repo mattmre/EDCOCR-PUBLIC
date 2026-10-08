@@ -1,12 +1,12 @@
-"""Tests for P1 auth and security header fixes (, , ).
+"""Tests for P1 auth and security header fixes (maintenance review, maintenance review, maintenance review).
 
 Covers:
-- Anonymous auth defaults to viewer role (not admin)
-- ANONYMOUS_ROLE env var overrides the default
-- APIKEY_ROLE default is now "operator" (not "admin")
-- APIKEY_ROLE=admin env var restores admin behavior
-- SecurityHeadersMiddleware adds standard security headers
-- CSP is skipped for docs/openapi/redoc paths
+- maintenance review: Anonymous auth defaults to viewer role (not admin)
+- maintenance review: ANONYMOUS_ROLE env var overrides the default
+- maintenance review: APIKEY_ROLE default is now "operator" (not "admin")
+- maintenance review: APIKEY_ROLE=admin env var restores admin behavior
+- maintenance review: SecurityHeadersMiddleware adds standard security headers
+- maintenance review: CSP is skipped for docs/openapi/redoc paths
 """
 
 from __future__ import annotations
@@ -20,12 +20,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
-# Anonymous auth defaults to viewer role
+# maintenance review: Anonymous auth defaults to viewer role
 # ---------------------------------------------------------------------------
 
 
 class TestAnonymousRoleDefault:
-    """Anonymous identity should default to viewer, not admin."""
+    """maintenance review: Anonymous identity should default to viewer, not admin."""
 
     def test_anonymous_identity_gets_viewer_role(self, tmp_path):
         """When ALLOW_UNAUTHENTICATED=true and no API key, role is viewer."""
@@ -34,18 +34,20 @@ class TestAnonymousRoleDefault:
         source.mkdir(exist_ok=True)
         output.mkdir(exist_ok=True)
 
-        with patch("api.config.SOURCE_FOLDER", str(source)), \
-             patch("api.config.OUTPUT_FOLDER", str(output)), \
-             patch("api.config.OCR_API_KEY", ""), \
-             patch("api.auth.OCR_API_KEY", ""), \
-             patch("api.config.ALLOW_UNAUTHENTICATED", True), \
-             patch("api.auth.ALLOW_UNAUTHENTICATED", True), \
-             patch("api.config.ANONYMOUS_ROLE", "viewer"), \
-             patch("api.auth.ANONYMOUS_ROLE", "viewer"), \
-             patch("api.config.OAUTH2_ENABLED", False), \
-             patch("api.oauth2_config.OAUTH2_ENABLED", False), \
-             patch("api.oauth2_config.APIKEY_ROLE", "operator"), \
-             patch("api.job_manager.config") as mock_config:
+        with (
+            patch("api.config.SOURCE_FOLDER", str(source)),
+            patch("api.config.OUTPUT_FOLDER", str(output)),
+            patch("api.config.OCR_API_KEY", ""),
+            patch("api.auth.OCR_API_KEY", ""),
+            patch("api.config.ALLOW_UNAUTHENTICATED", True),
+            patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+            patch("api.config.ANONYMOUS_ROLE", "viewer"),
+            patch("api.auth.ANONYMOUS_ROLE", "viewer"),
+            patch("api.config.OAUTH2_ENABLED", False),
+            patch("api.oauth2_config.OAUTH2_ENABLED", False),
+            patch("api.oauth2_config.APIKEY_ROLE", "operator"),
+            patch("api.job_manager.config") as mock_config,
+        ):
             mock_config.SOURCE_FOLDER = str(source)
             mock_config.OUTPUT_FOLDER = str(output)
             mock_config.PIPELINE_SCRIPT = "echo"
@@ -65,7 +67,13 @@ class TestAnonymousRoleDefault:
 
             # Viewer cannot submit (requires operator or admin)
             pdf_path = source / "test.pdf"
-            pdf_path.write_bytes(b"%PDF-1.4 test")
+            pdf_path.write_bytes(
+                b"%PDF-1.0\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj "
+                b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj "
+                b"3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\n"
+                b"xref\n0 4\n0000000000 65535 f\n"
+                b"trailer<</Size 4/Root 1 0 R>>\nstartxref\n0\n%%EOF"
+            )
             with open(pdf_path, "rb") as f:
                 resp = tc.post(
                     "/api/v1/jobs",
@@ -81,18 +89,20 @@ class TestAnonymousRoleDefault:
         source.mkdir(exist_ok=True)
         output.mkdir(exist_ok=True)
 
-        with patch("api.config.SOURCE_FOLDER", str(source)), \
-             patch("api.config.OUTPUT_FOLDER", str(output)), \
-             patch("api.config.OCR_API_KEY", ""), \
-             patch("api.auth.OCR_API_KEY", ""), \
-             patch("api.config.ALLOW_UNAUTHENTICATED", True), \
-             patch("api.auth.ALLOW_UNAUTHENTICATED", True), \
-             patch("api.config.ANONYMOUS_ROLE", "operator"), \
-             patch("api.auth.ANONYMOUS_ROLE", "operator"), \
-             patch("api.config.OAUTH2_ENABLED", False), \
-             patch("api.oauth2_config.OAUTH2_ENABLED", False), \
-             patch("api.oauth2_config.APIKEY_ROLE", "operator"), \
-             patch("api.job_manager.config") as mock_config:
+        with (
+            patch("api.config.SOURCE_FOLDER", str(source)),
+            patch("api.config.OUTPUT_FOLDER", str(output)),
+            patch("api.config.OCR_API_KEY", ""),
+            patch("api.auth.OCR_API_KEY", ""),
+            patch("api.config.ALLOW_UNAUTHENTICATED", True),
+            patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+            patch("api.config.ANONYMOUS_ROLE", "operator"),
+            patch("api.auth.ANONYMOUS_ROLE", "operator"),
+            patch("api.config.OAUTH2_ENABLED", False),
+            patch("api.oauth2_config.OAUTH2_ENABLED", False),
+            patch("api.oauth2_config.APIKEY_ROLE", "operator"),
+            patch("api.job_manager.config") as mock_config,
+        ):
             mock_config.SOURCE_FOLDER = str(source)
             mock_config.OUTPUT_FOLDER = str(output)
             mock_config.PIPELINE_SCRIPT = "echo"
@@ -112,7 +122,13 @@ class TestAnonymousRoleDefault:
 
             # Operator can submit jobs
             pdf_path = source / "test.pdf"
-            pdf_path.write_bytes(b"%PDF-1.4 test")
+            pdf_path.write_bytes(
+                b"%PDF-1.0\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj "
+                b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj "
+                b"3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\n"
+                b"xref\n0 4\n0000000000 65535 f\n"
+                b"trailer<</Size 4/Root 1 0 R>>\nstartxref\n0\n%%EOF"
+            )
             with open(pdf_path, "rb") as f:
                 resp = tc.post(
                     "/api/v1/jobs",
@@ -143,12 +159,12 @@ class TestAnonymousRoleDefault:
 
 
 # ---------------------------------------------------------------------------
-# APIKEY_ROLE defaults to "operator"
+# maintenance review: APIKEY_ROLE defaults to "operator"
 # ---------------------------------------------------------------------------
 
 
 class TestApiKeyRoleDefault:
-    """APIKEY_ROLE should default to operator, not admin."""
+    """maintenance review: APIKEY_ROLE should default to operator, not admin."""
 
     def test_apikey_role_defaults_to_operator(self):
         """APIKEY_ROLE defaults to 'operator' when env var is unset."""
@@ -169,7 +185,7 @@ class TestApiKeyRoleDefault:
 
 
 # ---------------------------------------------------------------------------
-# Security headers middleware
+# maintenance review: Security headers middleware
 # ---------------------------------------------------------------------------
 
 
@@ -200,7 +216,7 @@ def _make_test_app() -> FastAPI:
 
 
 class TestSecurityHeadersMiddleware:
-    """Security headers middleware injects required headers."""
+    """maintenance review: Security headers middleware injects required headers."""
 
     @pytest.fixture()
     def client(self):
@@ -230,7 +246,10 @@ class TestSecurityHeadersMiddleware:
     def test_permissions_policy(self, client):
         """Permissions-Policy is set on all responses."""
         resp = client.get("/api/v1/test")
-        assert resp.headers["Permissions-Policy"] == "geolocation=(), microphone=(), camera=()"
+        assert (
+            resp.headers["Permissions-Policy"]
+            == "geolocation=(), microphone=(), camera=()"
+        )
 
     def test_csp_on_api_path(self, client):
         """Content-Security-Policy is set on non-docs API paths."""

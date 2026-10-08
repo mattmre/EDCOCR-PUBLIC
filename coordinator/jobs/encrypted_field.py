@@ -16,7 +16,7 @@ Usage in a Django model::
 
 from django.db import models
 
-from .pii_encryption import get_encryptor
+from .pii_encryption import PiiDecryptError, get_encryptor
 
 
 class EncryptedTextField(models.TextField):
@@ -27,6 +27,10 @@ class EncryptedTextField(models.TextField):
 
     When encryption is disabled (no ``PII_ENCRYPTION_KEY``), values pass
     through unchanged, preserving backward compatibility.
+
+    R2-RC-21: every normal write is plaintext-authoritative and receives a new
+    authenticated envelope; rotation uses the dedicated raw-ciphertext API.
+    ``from_db_value`` fails closed when ciphertext authentication fails.
     """
 
     def get_prep_value(self, value):
@@ -38,11 +42,18 @@ class EncryptedTextField(models.TextField):
         return enc.encrypt(value)
 
     def from_db_value(self, value, expression, connection):
-        """Decrypt after loading from the database."""
+        """Decrypt after loading from the database.
+
+        Propagates ``PiiDecryptError`` so callers never treat ciphertext as
+        application plaintext (double-encrypt root cause under R2-RC-21).
+        """
         if value is None:
             return value
         enc = get_encryptor()
-        return enc.decrypt(value)
+        try:
+            return enc.decrypt(value)
+        except PiiDecryptError:
+            raise
 
     def deconstruct(self):
         """Return field constructor arguments for migration serialization.

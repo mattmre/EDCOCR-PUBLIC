@@ -146,13 +146,12 @@ def test_health_provider_is_consulted():
     assert reg.is_peer_healthy("other") is False
 
 
-def test_default_health_provider_returns_true(tmp_path):
+def test_default_health_provider_fails_closed(tmp_path):
     path = tmp_path / "clusters.yaml"
     path.write_text("self:\n  name: lt\nclusters: []\n", encoding="utf-8")
     reg = ClusterRegistry(path=str(path))
-    # Default provider is "always healthy" so peer-router strategies don't
-    # silently drop everything when no Prometheus scrape is wired in.
-    assert reg.is_peer_healthy("anything") is True
+    # A missing health signal must not authorize routing to a peer.
+    assert reg.is_peer_healthy("anything") is False
 
 
 def test_configmap_mode_reads_from_kubernetes_api():

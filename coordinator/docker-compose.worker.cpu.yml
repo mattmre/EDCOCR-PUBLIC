@@ -1,0 +1,61 @@
+# Remote CPU worker node (multi-VM farm) — standalone, no control-plane services.
+#
+# Unlike docker-compose.cpu-only.yml (same-compose-network as control plane),
+# this file is for a **separate VM** that only runs a Celery worker and talks
+# to remote Postgres/RabbitMQ/Redis via env URLs. No depends_on local services.
+# No GPU reservation.
+#
+# Usage (worker VM):
+#   docker compose \
+#     --env-file .env.worker \
+#     -f docker-compose.worker.cpu.yml \
+#     up -d --build
+#
+# Prerequisites: CONTROL_PLANE_IP reachable; NFS/S3 shared storage configured.
+# Copy env template: deploy/farm/env/worker-node.env.example
+
+services:
+  ocr-cpu-worker:
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile.worker
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        SOURCE_TREE_SHA256: ${SOURCE_TREE_SHA256:-unknown}
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:?Set CELERY_BROKER_URL to control-plane RabbitMQ}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:?Set CELERY_RESULT_BACKEND to control-plane Redis}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to control-plane PostgreSQL}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
+      CELERY_TASK_SIGNING_KEY: ${CELERY_TASK_SIGNING_KEY:?Set CELERY_TASK_SIGNING_KEY in .env}
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY:?Set PII_ENCRYPTION_KEY in .env}
+      WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY:?Set WEBHOOK_SECRET_KEY in .env}
+      S3_PRESIGNED_TASK_KEY: ${S3_PRESIGNED_TASK_KEY:-}
+      DJANGO_SETTINGS_MODULE: coordinator.settings
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-staging}
+      PRODUCTION_READINESS_ACK: ${PRODUCTION_READINESS_ACK:-false}
+      NFS_ROOT: ${NFS_ROOT:-/shared}
+      PYTHONPATH: /app:/app/coordinator
+      WORKER_QUEUES: ${WORKER_QUEUES:-ocr_cpu,cpu_general,nlp_general}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      OCR_TASK_ROUTING: ${OCR_TASK_ROUTING:-cpu}
+      OCR_INFERENCE_BACKEND: ${OCR_INFERENCE_BACKEND:-paddle}
+      FASTTEXT_MODEL_PATH: ${FASTTEXT_MODEL_PATH:-/app/models/lid.176.bin}
+    command:
+      - celery
+      - -A
+      - coordinator
+      - worker
+      - -Q
+      - ${WORKER_QUEUES:-ocr_cpu,cpu_general,nlp_general}
+      - -c
+      - ${WORKER_CONCURRENCY:-2}
+      - --hostname
+      - cpu-worker@%h
+      - -l
+      - info
+      - --max-tasks-per-child
+      - "100"
+    volumes:
+      - ${NFS_HOST_PATH:-./shared}:/shared
+    restart: unless-stopped

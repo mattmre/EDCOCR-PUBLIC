@@ -108,9 +108,7 @@ def test_empty_registry_routes_local_regardless_of_strategy():
         "region_affinity",
         "custom",
     ):
-        router = ClusterRouter(
-            empty, strategy=strategy, local_cluster_name="local"
-        )
+        router = ClusterRouter(empty, strategy=strategy, local_cluster_name="local")
         decision = router.select_cluster(
             task_name="jobs.tasks.process_document",
             base_queue="ocr_gpu",
@@ -128,9 +126,7 @@ def test_unknown_strategy_falls_back_to_local(three_peer_registry):
         local_cluster_name="local",
     )
     assert router.strategy == "local"
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name is None
 
 
@@ -141,9 +137,7 @@ def test_local_strategy_keeps_base_queue(three_peer_registry):
     router = ClusterRouter(
         three_peer_registry, strategy="local", local_cluster_name="local"
     )
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name is None
     assert decision.queue_name == "ocr_gpu"
     assert decision.reason_code == "local_default"
@@ -156,9 +150,7 @@ def test_priority_strategy_picks_highest(three_peer_registry):
     router = ClusterRouter(
         three_peer_registry, strategy="priority", local_cluster_name="local"
     )
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name == "us-east"
     assert decision.queue_name == "ocr_gpu.us-east"
     assert decision.reason_code == "priority"
@@ -173,9 +165,7 @@ def test_priority_strategy_breaks_ties_by_name():
         ]
     )
     router = ClusterRouter(reg, strategy="priority", local_cluster_name="local")
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name == "aaa-west"
 
 
@@ -188,9 +178,7 @@ def test_priority_strategy_skips_unhealthy_peers():
         unhealthy={"us-east"},
     )
     router = ClusterRouter(reg, strategy="priority", local_cluster_name="local")
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name == "eu-central"
 
 
@@ -200,9 +188,7 @@ def test_no_healthy_peers_returns_local():
         unhealthy={"us-east", "eu-central"},
     )
     router = ClusterRouter(reg, strategy="priority", local_cluster_name="local")
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name is None
     assert decision.reason_code == "no_healthy_peers"
 
@@ -224,9 +210,7 @@ def test_round_robin_rotates_across_peers(three_peer_registry):
     )
     seen = []
     for _ in range(6):
-        d = router.select_cluster(
-            task_name="t", base_queue="ocr_gpu", kwargs={}
-        )
+        d = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
         seen.append(d.cluster_name)
     # Sorted-by-name peers are: airgap-gov, eu-central, us-east -> repeated
     assert seen == [
@@ -243,9 +227,7 @@ def test_round_robin_rotates_across_peers(three_peer_registry):
 # load_aware strategy
 # ---------------------------------------------------------------------------
 def test_load_aware_picks_lowest_unacked():
-    reg = _FakeRegistry(
-        [_entry("a"), _entry("b"), _entry("c")]
-    )
+    reg = _FakeRegistry([_entry("a"), _entry("b"), _entry("c")])
     loads = {"a": 50, "b": 5, "c": 30}
 
     def _probe(mgmt: str, queue: str) -> int | None:
@@ -260,9 +242,7 @@ def test_load_aware_picks_lowest_unacked():
         local_cluster_name="local",
         load_probe=_probe,
     )
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name == "b"
     assert decision.metadata["load"] == 5
 
@@ -308,9 +288,7 @@ def test_load_aware_unknown_loads_sort_last():
         local_cluster_name="local",
         load_probe=_probe,
     )
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name == "b"
 
 
@@ -352,9 +330,7 @@ def test_region_affinity_with_no_origin_region_falls_back(three_peer_registry):
         strategy="region_affinity",
         local_cluster_name="local",
     )
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name == "us-east"
 
 
@@ -385,9 +361,7 @@ def test_custom_strategy_with_unresolvable_path_returns_local(three_peer_registr
         local_cluster_name="local",
         custom_callable="nonexistent.module:fn",
     )
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name is None
     assert decision.reason_code == "custom_unresolved"
 
@@ -406,9 +380,7 @@ def test_custom_strategy_string_return_is_promoted(three_peer_registry, monkeypa
         local_cluster_name="local",
         custom_callable="federation.cluster_router:_test_picker",
     )
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name == "eu-central"
     assert decision.queue_name == "ocr_gpu.eu-central"
     assert decision.reason_code == "custom_picked"
@@ -432,9 +404,7 @@ def test_custom_strategy_returns_decision_directly(three_peer_registry, monkeypa
         local_cluster_name="local",
         custom_callable="federation.cluster_router:_test_picker_dec",
     )
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name == "airgap-gov"
     assert decision.reason_code == "custom_explicit"
 
@@ -452,9 +422,7 @@ def test_custom_strategy_none_return_routes_local(three_peer_registry, monkeypat
         local_cluster_name="local",
         custom_callable="federation.cluster_router:_test_picker_none",
     )
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
     assert decision.cluster_name is None
     assert decision.reason_code == "custom_local"
 
@@ -488,12 +456,8 @@ def test_prometheus_counter_increments_for_each_decision(three_peer_registry):
     router_priority = ClusterRouter(
         three_peer_registry, strategy="priority", local_cluster_name="local"
     )
-    router_local.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
-    router_priority.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
+    router_local.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
+    router_priority.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
 
     # Read the counter via the global registry.
     try:
@@ -542,16 +506,16 @@ def test_build_router_from_env_enabled_constructs_router(monkeypatch, tmp_path):
     router = build_router_from_env()
     assert router is not None
     assert router.strategy == "priority"
-    decision = router.select_cluster(
-        task_name="t", base_queue="ocr_gpu", kwargs={}
-    )
-    assert decision.cluster_name == "a"
-    assert decision.queue_name == "ocr_gpu.a"
+    decision = router.select_cluster(task_name="t", base_queue="ocr_gpu", kwargs={})
+    # The env builder has no live health provider in this unit context; the
+    # production-safe default is fail-closed rather than routing to an
+    # unverified peer.
+    assert decision.cluster_name is None
+    assert decision.reason_code == "no_healthy_peers"
+    assert decision.queue_name == "ocr_gpu"
 
 
-def test_build_router_from_env_invalid_strategy_falls_back(
-    monkeypatch, tmp_path
-):
+def test_build_router_from_env_invalid_strategy_falls_back(monkeypatch, tmp_path):
     registry_file = tmp_path / "clusters.yaml"
     registry_file.write_text("self:\n  name: lt\nclusters: []\n", encoding="utf-8")
     monkeypatch.setenv("OCR_FEDERATION_ROUTING_ENABLED", "1")

@@ -146,8 +146,8 @@ class _FakeResponse:
             body = json.dumps(body).encode("utf-8")
         self._buf = io.BytesIO(body)
 
-    def read(self) -> bytes:
-        return self._buf.read()
+    def read(self, size: int = -1) -> bytes:
+        return self._buf.read(size)
 
     def getcode(self) -> int:
         return self.status
@@ -164,9 +164,7 @@ def test_probe_management_api_success() -> None:
         del timeout
         return _FakeResponse(200, {"status": "ok"})
 
-    healthy, payload = _probe_management_api(
-        "https://rabbit.eu:15671", opener=opener
-    )
+    healthy, payload = _probe_management_api("https://rabbit.eu:15671", opener=opener)
     assert healthy is True
     assert payload == {"status": "ok"}
 
@@ -176,9 +174,7 @@ def test_probe_management_api_failure_status() -> None:
         del timeout
         return _FakeResponse(503)
 
-    healthy, payload = _probe_management_api(
-        "https://rabbit.eu:15671", opener=opener
-    )
+    healthy, payload = _probe_management_api("https://rabbit.eu:15671", opener=opener)
     assert healthy is False
     assert payload == {}
 
@@ -188,9 +184,7 @@ def test_probe_management_api_network_error() -> None:
         del timeout
         raise OSError("connection refused")
 
-    healthy, _ = _probe_management_api(
-        "https://rabbit.eu:15671", opener=opener
-    )
+    healthy, _ = _probe_management_api("https://rabbit.eu:15671", opener=opener)
     assert healthy is False
 
 
@@ -207,9 +201,7 @@ def test_probe_queue_metrics_returns_payload() -> None:
         captured["url"] = req.full_url
         return _FakeResponse(200, {"messages_unacknowledged": 17})
 
-    payload = _probe_queue_metrics(
-        "https://rabbit.eu:15671/", "ocr_gpu", opener=opener
-    )
+    payload = _probe_queue_metrics("https://rabbit.eu:15671/", "ocr_gpu", opener=opener)
     assert payload == {"messages_unacknowledged": 17}
     assert captured["url"].endswith("/api/queues/%2F/ocr_gpu")
 
@@ -237,7 +229,9 @@ def test_policy_body_shape() -> None:
     assert body["kind"] == "Policy"
     assert body["metadata"]["name"].endswith("-prod-eu-west-1-ocr-gpu")
     assert body["metadata"]["namespace"] == "ocr"
-    assert body["metadata"]["labels"]["federation.ocr-local.io/peer"] == "prod-eu-west-1"
+    assert (
+        body["metadata"]["labels"]["federation.ocr-local.io/peer"] == "prod-eu-west-1"
+    )
     spec = body["spec"]
     assert spec["pattern"] == "^ocr_gpu.*$"
     assert spec["applyTo"] == "queues"
@@ -337,9 +331,7 @@ def test_reconcile_unhealthy_peer_removes_policies_after_threshold(
     assert api.create_namespaced_custom_object.call_count == 8
 
     # Switch to a fully-unhealthy opener and step time past the threshold.
-    reconciler._opener = MagicMock(
-        side_effect=lambda *_a, **_k: _FakeResponse(503)
-    )
+    reconciler._opener = MagicMock(side_effect=lambda *_a, **_k: _FakeResponse(503))
     reconciler.reconcile_once(now=10.0)
     # Within threshold (60s) policies remain installed.
     assert api.delete_namespaced_custom_object.call_count == 0
@@ -354,6 +346,27 @@ def test_reconcile_unhealthy_peer_removes_policies_after_threshold(
     assert "ocr-local-fed-policy-prod-eu-west-1-nlp" in deleted_names
 
 
+def test_cold_start_failure_ages_from_first_failed_probe(
+    sample_registry: Registry, metrics: Metrics
+) -> None:
+    api = MagicMock()
+    reconciler = Reconciler(
+        sample_registry,
+        release_name="ocr-local",
+        namespace="ocr",
+        opener=MagicMock(side_effect=lambda *_a, **_k: _FakeResponse(503)),
+        kubernetes_api=api,
+        metrics=metrics,
+    )
+
+    health = reconciler.reconcile_once(now=0.0)
+    assert health["prod-eu-west-1"].healthy is True
+    assert health["prod-eu-west-1"].first_failure_ts == 0.0
+
+    health = reconciler.reconcile_once(now=100.0)
+    assert health["prod-eu-west-1"].healthy is False
+
+
 def test_reconcile_recovers_unhealthy_peer(
     sample_registry: Registry, metrics: Metrics
 ) -> None:
@@ -363,7 +376,11 @@ def test_reconcile_recovers_unhealthy_peer(
     def opener(req: Any, timeout: float | None = None) -> _FakeResponse:
         del timeout
         if "/aliveness-test/" in req.full_url:
-            return _FakeResponse(200, {"status": "ok"}) if state["healthy"] else _FakeResponse(503)
+            return (
+                _FakeResponse(200, {"status": "ok"})
+                if state["healthy"]
+                else _FakeResponse(503)
+            )
         return _FakeResponse(200, {})
 
     reconciler = Reconciler(

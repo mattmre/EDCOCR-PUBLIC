@@ -39,6 +39,14 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
+from ocr_distributed.text_io import read_text_bounded
+
+from .http import (
+    DEFAULT_MAX_RESPONSE_BYTES,
+    open_federation_request,
+    read_response_bounded,
+)
+
 # ---------------------------------------------------------------------------
 # Optional dependencies
 # ---------------------------------------------------------------------------
@@ -91,6 +99,7 @@ _VALID_STRATEGIES: tuple[str, ...] = (
     "region_affinity",
     "custom",
 )
+_MAX_REGISTRY_BYTES = DEFAULT_MAX_RESPONSE_BYTES
 
 
 # ---------------------------------------------------------------------------
@@ -168,8 +177,12 @@ class ClusterRegistry:
         self._configmap_name = configmap_name
         self._configmap_namespace = configmap_namespace
         self._poll_seconds = max(1.0, float(poll_seconds))
+        # A missing health signal must not be interpreted as permission to
+        # route work to an unverified peer.  Callers that have an explicit
+        # lab/operator health contract can inject a provider; otherwise the
+        # router stays local until a peer is positively known healthy.
         self._health_provider: HealthProvider = (
-            health_provider if health_provider is not None else (lambda _name: True)
+            health_provider if health_provider is not None else (lambda _name: False)
         )
         self._clock = clock if clock is not None else time.time
         self._kubernetes_api = kubernetes_api
@@ -241,10 +254,12 @@ class ClusterRegistry:
     @staticmethod
     def _load_from_path(path: str) -> dict[str, Any] | None:
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
+            text = read_text_bounded(path, max_bytes=_MAX_REGISTRY_BYTES)
         except OSError as exc:
             _LOG.warning("registry file %s unreadable: %s", path, exc)
+            return None
+        except ValueError as exc:
+            _LOG.warning("registry file %s exceeds safety limit: %s", path, exc)
             return None
         # Accept both YAML and JSON; YAML is optional, JSON is stdlib.
         try:
@@ -261,9 +276,7 @@ class ClusterRegistry:
             _LOG.warning("registry yaml parse failed: %s", exc)
             return None
 
-    def _load_from_configmap(
-        self, name: str, namespace: str
-    ) -> dict[str, Any] | None:
+    def _load_from_configmap(self, name: str, namespace: str) -> dict[str, Any] | None:
         api = self._kubernetes_api
         if api is None and _KUBERNETES_AVAILABLE:  # pragma: no cover
             try:
@@ -285,6 +298,8 @@ class ClusterRegistry:
             )
             if not text:
                 return None
+            if len(text.encode("utf-8")) > _MAX_REGISTRY_BYTES:
+                raise ValueError("registry ConfigMap payload exceeds safety limit")
             try:
                 return json.loads(text)
             except ValueError:
@@ -355,15 +370,24 @@ def _probe_messages_unacknowledged(
     url = f"{base}/api/queues/%2F/{encoded}"
     request = urllib.request.Request(url, method="GET")
     request.add_header("Accept", "application/json")
-    open_fn = opener if opener is not None else urllib.request.urlopen
+    open_fn = opener if opener is not None else open_federation_request
     try:
         with open_fn(request, timeout=timeout) as response:  # type: ignore[arg-type]
             status = getattr(response, "status", None) or response.getcode()
-            body = response.read()
+            body = read_response_bounded(
+                response,
+                max_bytes=DEFAULT_MAX_RESPONSE_BYTES,
+            )
         if not (200 <= int(status) < 300):
             return None
         payload = json.loads(body.decode("utf-8"))
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError, UnicodeDecodeError):
+    except (
+        urllib.error.URLError,
+        OSError,
+        TimeoutError,
+        ValueError,
+        UnicodeDecodeError,
+    ):
         return None
     val = payload.get("messages_unacknowledged", 0) or 0
     try:
@@ -435,9 +459,7 @@ class ClusterRouter:
         round_robin_state: Callable[[], int] | None = None,
     ) -> None:
         if strategy not in _VALID_STRATEGIES:
-            _LOG.warning(
-                "unknown strategy %r; falling back to 'local'", strategy
-            )
+            _LOG.warning("unknown strategy %r; falling back to 'local'", strategy)
             strategy = "local"
         self._registry = registry
         self._strategy: str = strategy
@@ -445,8 +467,10 @@ class ClusterRouter:
         self._custom_callable_path = custom_callable
         self._custom_callable = _resolve_custom_callable(custom_callable)
         self._load_aware_cache_seconds = max(0.0, float(load_aware_cache_seconds))
-        self._load_probe = load_probe if load_probe is not None else (
-            lambda mgmt, q: _probe_messages_unacknowledged(mgmt, q)
+        self._load_probe = (
+            load_probe
+            if load_probe is not None
+            else (lambda mgmt, q: _probe_messages_unacknowledged(mgmt, q))
         )
         self._clock = clock if clock is not None else time.time
         self._rr_counter = (
@@ -486,8 +510,15 @@ class ClusterRouter:
 
         # 2. Filter for healthy peers (the local cluster is always considered
         # "healthy" -- it is implicit, not in the peer registry).
+        excluded = {
+            str(name)
+            for name in (kwargs.get("exclude") or ())
+            if isinstance(name, str) and name
+        }
         healthy_peers = [
-            p for p in peers if self._registry.is_peer_healthy(p.name)
+            p
+            for p in peers
+            if p.name not in excluded and self._registry.is_peer_healthy(p.name)
         ]
         if not healthy_peers:
             return self._record(
@@ -505,9 +536,7 @@ class ClusterRouter:
             return self._record(self._build_decision(chosen, base_queue, "priority"))
         if self._strategy == "round_robin":
             chosen = self._pick_round_robin(healthy_peers)
-            return self._record(
-                self._build_decision(chosen, base_queue, "round_robin")
-            )
+            return self._record(self._build_decision(chosen, base_queue, "round_robin"))
         if self._strategy == "load_aware":
             chosen, load = self._pick_load_aware(healthy_peers, base_queue)
             return self._record(
@@ -575,18 +604,14 @@ class ClusterRouter:
         scored: list[tuple[int, ClusterEntry]] = []
         for p in peers:
             load = self._cached_load(p, base_queue)
-            scored.append(
-                (load if load is not None else _UNKNOWN_LOAD_SENTINEL, p)
-            )
+            scored.append((load if load is not None else _UNKNOWN_LOAD_SENTINEL, p))
         # Lowest load wins; ties broken by name. Unknown loads sort last.
         scored.sort(key=lambda t: (t[0], t[1].name))
         load, peer = scored[0]
         actual = None if load == _UNKNOWN_LOAD_SENTINEL else load
         return peer, actual
 
-    def _cached_load(
-        self, peer: ClusterEntry, queue: str
-    ) -> int | None:
+    def _cached_load(self, peer: ClusterEntry, queue: str) -> int | None:
         cache_key = f"{peer.name}::{queue}"
         now = self._clock()
         with self._load_cache_lock:
@@ -661,17 +686,11 @@ class ClusterRouter:
             metadata={"strategy": "custom"},
         )
 
-    def _record(
-        self, decision: ClusterRoutingDecision
-    ) -> ClusterRoutingDecision:
+    def _record(self, decision: ClusterRoutingDecision) -> ClusterRoutingDecision:
         try:
             counter = _get_decisions_counter()
-            decision_label = (
-                "local" if decision.cluster_name is None else "peer"
-            )
-            counter.labels(
-                strategy=self._strategy, decision=decision_label
-            ).inc()
+            decision_label = "local" if decision.cluster_name is None else "peer"
+            counter.labels(strategy=self._strategy, decision=decision_label).inc()
         except Exception:  # pragma: no cover - defensive
             pass
         return decision
@@ -694,9 +713,9 @@ def build_router_from_env() -> ClusterRouter | None:
     if enabled.strip().lower() not in ("1", "true", "yes"):
         return None
 
-    strategy_raw = os.environ.get(
-        "OCR_FEDERATION_ROUTING_STRATEGY", "local"
-    ).strip().lower()
+    strategy_raw = (
+        os.environ.get("OCR_FEDERATION_ROUTING_STRATEGY", "local").strip().lower()
+    )
     if strategy_raw not in _VALID_STRATEGIES:
         _LOG.warning(
             "OCR_FEDERATION_ROUTING_STRATEGY=%r invalid; using 'local'",
@@ -715,9 +734,9 @@ def build_router_from_env() -> ClusterRouter | None:
         "FEDERATION_REGISTRY_PATH"
     )
     cm_name = os.environ.get("OCR_FEDERATION_REGISTRY_CONFIGMAP")
-    cm_ns = os.environ.get(
-        "OCR_FEDERATION_REGISTRY_NAMESPACE"
-    ) or os.environ.get("FEDERATION_NAMESPACE")
+    cm_ns = os.environ.get("OCR_FEDERATION_REGISTRY_NAMESPACE") or os.environ.get(
+        "FEDERATION_NAMESPACE"
+    )
     local_name = os.environ.get("OCR_CLUSTER_NAME", "")
 
     registry = ClusterRegistry(
@@ -730,9 +749,7 @@ def build_router_from_env() -> ClusterRouter | None:
         registry,
         strategy=strategy_raw,  # type: ignore[arg-type]
         local_cluster_name=local_name,
-        custom_callable=os.environ.get(
-            "OCR_FEDERATION_ROUTER_CALLABLE", ""
-        ),
+        custom_callable=os.environ.get("OCR_FEDERATION_ROUTER_CALLABLE", ""),
         load_aware_cache_seconds=cache_seconds,
     )
 

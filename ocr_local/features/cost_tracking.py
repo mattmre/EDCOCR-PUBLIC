@@ -10,6 +10,7 @@ Gated behind ``ENABLE_COST_TRACKING`` (default: disabled).
 import copy
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -29,6 +30,7 @@ __all__ = [
     "CostTracker",
     "get_billing_formula",
     "validate_billing_formula",
+    "assert_cost_tracking_multi_process_policy",
     "get_tracker",
     "reset_global_tracker",
 ]
@@ -45,10 +47,22 @@ ENABLE_COST_TRACKING = os.environ.get("ENABLE_COST_TRACKING", "false").lower() =
 # Configurable unit costs (USD per unit)
 # ---------------------------------------------------------------------------
 
-COST_PER_PAGE = float(os.environ.get("COST_PER_PAGE", "0.01"))
-COST_PER_GPU_SECOND = float(os.environ.get("COST_PER_GPU_SECOND", "0.001"))
-COST_PER_GB_STORED = float(os.environ.get("COST_PER_GB_STORED", "0.05"))
-COST_PER_API_CALL = float(os.environ.get("COST_PER_API_CALL", "0.0001"))
+
+def _safe_cost_rate(name: str, default: float, maximum: float = 1_000_000.0) -> float:
+    """Read a finite positive rate without import-time billing corruption."""
+    try:
+        value = float(os.environ.get(name, str(default)) or str(default))
+    except (TypeError, ValueError):
+        value = default
+    if not math.isfinite(value) or value <= 0:
+        value = default
+    return min(value, maximum)
+
+
+COST_PER_PAGE = _safe_cost_rate("COST_PER_PAGE", 0.01)
+COST_PER_GPU_SECOND = _safe_cost_rate("COST_PER_GPU_SECOND", 0.001)
+COST_PER_GB_STORED = _safe_cost_rate("COST_PER_GB_STORED", 0.05)
+COST_PER_API_CALL = _safe_cost_rate("COST_PER_API_CALL", 0.0001)
 
 # ---------------------------------------------------------------------------
 # Versioned billing formula
@@ -217,6 +231,9 @@ class CostTracker:
 
     def record_pages(self, tenant_id: str, page_count: int) -> None:
         """Record pages processed for a tenant."""
+        # S2-11: refuse non-positive / forge deltas
+        if not isinstance(page_count, int) or page_count <= 0:
+            return
         with self._lock:
             usage = self._get_or_create(tenant_id)
             usage.pages_processed += page_count
@@ -224,13 +241,21 @@ class CostTracker:
 
     def record_gpu_time(self, tenant_id: str, seconds: float) -> None:
         """Record GPU processing time (in seconds) for a tenant."""
+        try:
+            sec = float(seconds)
+        except (TypeError, ValueError):
+            return
+        if sec <= 0 or sec != sec or sec == float("inf"):  # NaN/inf/non-positive
+            return
         with self._lock:
             usage = self._get_or_create(tenant_id)
-            usage.gpu_seconds += seconds
+            usage.gpu_seconds += sec
             self._touch_activity(usage)
 
     def record_storage(self, tenant_id: str, bytes_added: int) -> None:
         """Record storage bytes added for a tenant."""
+        if not isinstance(bytes_added, int) or bytes_added <= 0:
+            return
         with self._lock:
             usage = self._get_or_create(tenant_id)
             usage.storage_bytes += bytes_added
@@ -347,12 +372,65 @@ _global_tracker: CostTracker | None = None
 _tracker_lock = threading.Lock()
 
 
+def assert_cost_tracking_multi_process_policy() -> None:
+    """LT-04 / S2-20: in-memory cost tracker is not multi-process honest.
+
+    Under production with multi-worker layout and cost tracking enabled,
+    require ``COST_TRACKING_PERSIST_PATH`` (or explicit
+    ``COST_TRACKING_ALLOW_MEMORY`` waiver).
+    """
+    if not ENABLE_COST_TRACKING:
+        return
+    dep = (os.environ.get("DEPLOYMENT_ENV") or "").strip().lower()
+    if dep not in ("production", "prod"):
+        return
+    allow_mem = (
+        os.environ.get("COST_TRACKING_ALLOW_MEMORY") or ""
+    ).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if allow_mem:
+        logger.warning(
+            "LT-04: COST_TRACKING_ALLOW_MEMORY under production — multi-process "
+            "cost forge/loss residual accepted by operator waiver"
+        )
+        return
+    persist = (
+        os.environ.get("COST_TRACKING_PERSIST_PATH")
+        or os.environ.get("COST_TRACKING_LEDGER")
+        or ""
+    ).strip()
+    workers = 1
+    for key in (
+        "WEB_CONCURRENCY",
+        "GUNICORN_WORKERS",
+        "UVICORN_WORKERS",
+        "API_REPLICAS",
+    ):
+        raw = (os.environ.get(key) or "").strip()
+        if raw.isdigit():
+            workers = max(workers, int(raw))
+    if workers > 1 and not persist:
+        raise RuntimeError(
+            "LT-04/S2-20: ENABLE_COST_TRACKING under production multi-worker "
+            "requires COST_TRACKING_PERSIST_PATH (or COST_TRACKING_ALLOW_MEMORY=true)"
+        )
+
+
 def get_tracker(persist_path=None) -> CostTracker:
     """Return the module-level global :class:`CostTracker`, creating it on first call."""
     global _global_tracker
+    assert_cost_tracking_multi_process_policy()
     with _tracker_lock:
         if _global_tracker is None:
-            _global_tracker = CostTracker(persist_path=persist_path)
+            path = persist_path or (
+                os.environ.get("COST_TRACKING_PERSIST_PATH")
+                or os.environ.get("COST_TRACKING_LEDGER")
+                or None
+            )
+            _global_tracker = CostTracker(persist_path=path)
         return _global_tracker
 
 

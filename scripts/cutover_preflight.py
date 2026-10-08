@@ -461,11 +461,15 @@ def check_pipeline_drain(
     env_vars: dict[str, str],
     require_drain: bool = False,
 ) -> list[dict[str, Any]]:
-    """Check coordinator for active jobs if reachable."""
+    """Require an explicit global work snapshot; liveness is not drain proof.
+
+    This observes tracked work only. Operators must stop new admission and drain
+    worker/broker activity before migration; a zero snapshot does not stop them.
+    """
     results: list[dict[str, Any]] = []
 
     # Try to determine coordinator URL from common env vars
-    coordinator_url = env_vars.get("COORDINATOR_URL", "")
+    coordinator_url = env_vars.get("OCR_API_URL", "") or env_vars.get("COORDINATOR_URL", "")
     if not coordinator_url:
         # Fall back to API_HOST/API_PORT or Django settings
         api_host = env_vars.get("API_HOST", "")
@@ -476,61 +480,63 @@ def check_pipeline_drain(
     if not coordinator_url:
         results.append(_result(
             name="pipeline_drain",
-            status=SKIP,
-            details="No COORDINATOR_URL or API_HOST set; cannot check drain status",
+            status=FAIL if require_drain else SKIP,
+            details="No OCR_API_URL, COORDINATOR_URL or API_HOST set; cannot check drain status",
         ))
         return results
 
-    # Try health endpoint
+    # Only the standalone API currently provides a global writer-aware snapshot.
+    # A coordinator metrics response cannot establish broker/worker quiescence.
     try:
-        from urllib.request import Request, urlopen
+        from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-        health_url = f"{coordinator_url.rstrip('/')}/api/v1/health/"
+        class NoRedirect(HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        parsed = urlparse(coordinator_url)
+        if (
+            parsed.scheme not in {"http", "https"} or not parsed.hostname
+            or parsed.username or parsed.password or parsed.query or parsed.fragment
+        ):
+            raise ValueError("invalid operator endpoint")
+        health_url = f"{coordinator_url.rstrip('/')}/api/v1/health/detailed"
         req = Request(health_url, method="GET")
         req.add_header("Accept", "application/json")
-
-        with urlopen(req, timeout=5) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            try:
-                data = json.loads(body)
-                active_jobs = data.get("active_jobs", data.get("jobs_active", 0))
-                if isinstance(active_jobs, int) and active_jobs > 0:
-                    if require_drain:
-                        results.append(_result(
-                            name="pipeline_drain",
-                            status=FAIL,
-                            details=f"{active_jobs} active job(s) -- drain required before cutover",
-                            remediation="Wait for active jobs to complete or cancel them",
-                        ))
-                    else:
-                        results.append(_result(
-                            name="pipeline_drain",
-                            status=WARN,
-                            details=f"{active_jobs} active job(s) -- consider draining before cutover",
-                        ))
-                else:
-                    results.append(_result(
-                        name="pipeline_drain",
-                        status=PASS,
-                        details="No active jobs detected; pipeline is drained",
-                    ))
-            except (json.JSONDecodeError, TypeError):
-                results.append(_result(
-                    name="pipeline_drain",
-                    status=WARN,
-                    details="Coordinator responded but could not parse active job count",
-                ))
-    except ImportError:
-        results.append(_result(
-            name="pipeline_drain",
-            status=SKIP,
-            details="urllib not available",
-        ))
+        if key := env_vars.get("OCR_API_KEY", "").strip():
+            req.add_header("X-API-Key", key)
+        with build_opener(NoRedirect()).open(req, timeout=5) as resp:
+            body = resp.read(1024 * 1024 + 1)
+        if len(body) > 1024 * 1024:
+            raise ValueError("oversized response")
+        data = json.loads(body)
+        snapshot = data.get("drain") if isinstance(data, dict) else None
+        if not isinstance(snapshot, dict) or snapshot.get("scope") != "global":
+            raise ValueError("missing global snapshot")
+        counts = [snapshot.get(name) for name in (
+            "nonterminal_jobs", "pipeline_writers", "background_writers", "manager_tasks",
+        )]
+        if any(type(count) is not int or count < 0 for count in counts):
+            raise ValueError("invalid work count")
+        if any(counts):
+            results.append(_result(
+                name="pipeline_drain", status=FAIL if require_drain else WARN,
+                details=(f"{counts[0]} unfinished job(s), {counts[1]} pipeline writer fence(s), "
+                         f"{counts[2]} background writer(s), {counts[3]} manager task(s)"),
+                remediation="Stop admission, then wait for work and writer recovery to finish",
+            ))
+        else:
+            results.append(_result(
+                name="pipeline_drain", status=PASS,
+                details="Global API snapshot reports zero unfinished jobs, writer fences, background writers and manager tasks",
+                remediation="Keep admission stopped; separately drain coordinator workers and broker queues before migration",
+            ))
     except Exception:
         results.append(_result(
             name="pipeline_drain",
-            status=SKIP,
-            details="Coordinator not reachable; skipping drain check",
+            status=FAIL if require_drain else WARN,
+            details="Global drain state unavailable, incomplete, or not authorized; zero work is not established",
+            remediation="Use the standalone API detailed-health endpoint with a platform credential; coordinator-only rollout requires its operator drain checks",
         ))
 
     return results
@@ -824,7 +830,7 @@ def compute_verdict(results: list[dict[str, Any]]) -> str:
 
     if has_fail:
         return "NOT READY"
-    elif has_warn:
+    elif has_warn or SKIP in statuses or not statuses:
         return "PARTIAL"
     else:
         return "READY"

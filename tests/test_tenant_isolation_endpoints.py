@@ -1,4 +1,4 @@
-"""Cross-tenant isolation tests for 7 API endpoints ( through ).
+"""Cross-tenant isolation tests for 7 API endpoints (maintenance review through maintenance review).
 
 Validates that tenant A cannot access tenant B's job data through any of the
 streaming, output, event, recall, or review endpoints. Every cross-tenant
@@ -32,8 +32,10 @@ def _isolate_db(tmp_path):
     """Give each test a fresh SQLite database and reset singletons."""
     reset_engine()
     db_file = str(tmp_path / "test_tenant_iso.db")
+    event_store_file = str(tmp_path / "event_store.db")
     with (
         patch("api.config.DB_PATH", db_file),
+        patch("api.config.EVENT_STORE_PATH", event_store_file),
         patch("api.database.DB_PATH", db_file),
         patch("api.review_queue.DB_PATH", db_file),
     ):
@@ -42,13 +44,20 @@ def _isolate_db(tmp_path):
 
         # Reset review queue singleton so each test gets a fresh DB
         import api.routers.review as _review_mod
+
         _review_mod._review_queue = None
 
         # Reset entity index singleton
         import api.routers.recall as _recall_mod
-        _recall_mod._entity_index = None
+        from api.entity_index import EntityIndex
+        from api.event_store import reset_event_store
+
+        _recall_mod._entity_index = EntityIndex(str(tmp_path / "entity_index.db"))
+        reset_event_store()
 
         yield
+        _recall_mod._entity_index = None
+        reset_event_store()
         reset_engine()
 
 
@@ -73,7 +82,10 @@ def _seed_jobs(session):
         source_file="doc_a.pdf",
         created_at=now,
         tenant_id=TENANT_A,
-        result_path="/app/output/a",
+        # An empty result path exercises the valid "no outputs yet" branch;
+        # an arbitrary absolute path would correctly fail the production
+        # output-path jail before the endpoint can return an empty manifest.
+        result_path="",
     )
     job_b = Job(
         job_id=JOB_B_ID,
@@ -81,7 +93,7 @@ def _seed_jobs(session):
         source_file="doc_b.pdf",
         created_at=now,
         tenant_id=TENANT_B,
-        result_path="/app/output/b",
+        result_path="",
     )
     session.add_all([job_a, job_b])
     session.commit()
@@ -94,8 +106,24 @@ def _make_client(tmp_path, tenant_id):
     source.mkdir(exist_ok=True)
     output.mkdir(exist_ok=True)
 
-    # We run with ALLOW_UNAUTHENTICATED=True but inject tenant_id via
-    # a custom middleware that simulates multi-tenant auth resolution.
+    # Simulate a successful tenant API-key resolution at the same auth seam
+    # production requests use.  Using the legacy OCR_API_KEY here would make
+    # the request a platform-admin break-glass principal and invalidate the
+    # isolation assertions.
+    from api.identity import AuthIdentity
+
+    def _fake_multitenant_auth(request, _provided_key):
+        request.state.tenant_id = tenant_id
+        request.state.tenant_permissions = ["submit", "read"]
+        request.state.key_id = f"key-{tenant_id}"
+        request.state.identity = AuthIdentity(
+            subject=tenant_id,
+            role="operator",
+            auth_method="apikey",
+            claims={"tenant_id": tenant_id},
+        )
+        return True
+
     with (
         patch("api.config.SOURCE_FOLDER", str(source)),
         patch("api.config.OUTPUT_FOLDER", str(output)),
@@ -103,26 +131,20 @@ def _make_client(tmp_path, tenant_id):
         patch("api.auth.OCR_API_KEY", "test-key-123"),
         patch("api.config.ALLOW_UNAUTHENTICATED", False),
         patch("api.auth.ALLOW_UNAUTHENTICATED", False),
-        patch.dict(os.environ, {
-            "SSE_POLL_INTERVAL": "0.05",
-            "SSE_STREAM_TIMEOUT": "2",
-        }),
+        patch("api.config.ENABLE_MULTITENANCY", True),
+        patch("api.auth.ENABLE_MULTITENANCY", True),
+        patch(
+            "api.config.API_AUDIT_LOG_PATH", str(output / "logs" / "api-audit.jsonl")
+        ),
+        patch("api.auth._try_multitenant_auth", side_effect=_fake_multitenant_auth),
+        patch.dict(
+            os.environ, {"SSE_POLL_INTERVAL": "0.05", "SSE_STREAM_TIMEOUT": "2"}
+        ),
     ):
         from api.main import create_app
 
         app = create_app()
         app.state.limiter.enabled = False
-
-        # Inject tenant_id into request.state after auth
-        from fastapi import Request
-        from starlette.middleware.base import BaseHTTPMiddleware
-
-        class TenantInjector(BaseHTTPMiddleware):
-            async def dispatch(self, request: Request, call_next):
-                request.state.tenant_id = tenant_id
-                return await call_next(request)
-
-        app.add_middleware(TenantInjector)
 
         client = TestClient(app)
         # Provide the API key header for all requests
@@ -143,7 +165,7 @@ def client_b(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# / SSE stream endpoint (jobs.py)
+# maintenance review / maintenance review: SSE stream endpoint (jobs.py)
 # ---------------------------------------------------------------------------
 
 
@@ -168,7 +190,7 @@ class TestSSETenantIsolation:
 
 
 # ---------------------------------------------------------------------------
-# WebSocket endpoint (ws.py)
+# maintenance review: WebSocket endpoint (ws.py)
 # ---------------------------------------------------------------------------
 
 # WebSocket tenant isolation is harder to test with TestClient because the
@@ -194,7 +216,7 @@ class TestWebSocketTenantIsolation:
 
 
 # ---------------------------------------------------------------------------
-# Output manifest endpoint (outputs.py)
+# maintenance review: Output manifest endpoint (outputs.py)
 # ---------------------------------------------------------------------------
 
 
@@ -205,7 +227,7 @@ class TestOutputsTenantIsolation:
         """Tenant A can list outputs for its own job."""
         resp = client_a.get(f"/api/v1/jobs/{JOB_A_ID}/outputs")
         # 200 even if no actual files on disk (empty manifest)
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
 
     def test_cross_tenant_outputs_returns_404(self, client_b, _seed_jobs):
         """Tenant B cannot list outputs for tenant A's job."""
@@ -219,7 +241,7 @@ class TestOutputsTenantIsolation:
 
 
 # ---------------------------------------------------------------------------
-# Events endpoint (events.py)
+# maintenance review: Events endpoint (events.py)
 # ---------------------------------------------------------------------------
 
 
@@ -244,36 +266,28 @@ class TestEventsTenantIsolation:
 
 
 # ---------------------------------------------------------------------------
-# Entity/extraction recall (recall.py)
+# maintenance review: Entity/extraction recall (recall.py)
 # ---------------------------------------------------------------------------
 
 
 class TestRecallTenantIsolation:
     """Entity and extraction recall must restrict results to own tenant."""
 
-    def test_entities_with_other_tenant_job_id_returns_404(
-        self, client_b, _seed_jobs
-    ):
+    def test_entities_with_other_tenant_job_id_returns_404(self, client_b, _seed_jobs):
         """Tenant B searching entities for tenant A's job_id gets 404."""
-        resp = client_b.get(
-            "/api/v1/entities", params={"job_id": JOB_A_ID}
-        )
+        resp = client_b.get("/api/v1/entities", params={"job_id": JOB_A_ID})
         assert resp.status_code == 404
 
     def test_extractions_with_other_tenant_job_id_returns_404(
         self, client_b, _seed_jobs
     ):
         """Tenant B searching extractions for tenant A's job_id gets 404."""
-        resp = client_b.get(
-            "/api/v1/extractions", params={"job_id": JOB_A_ID}
-        )
+        resp = client_b.get("/api/v1/extractions", params={"job_id": JOB_A_ID})
         assert resp.status_code == 404
 
     def test_entities_own_tenant_allowed(self, client_a, _seed_jobs):
         """Tenant A searching entities for its own job returns 200."""
-        resp = client_a.get(
-            "/api/v1/entities", params={"job_id": JOB_A_ID}
-        )
+        resp = client_a.get("/api/v1/entities", params={"job_id": JOB_A_ID})
         assert resp.status_code == 200
 
     def test_entities_no_job_filter_only_returns_own(self, client_a, _seed_jobs):
@@ -287,7 +301,7 @@ class TestRecallTenantIsolation:
 
 
 # ---------------------------------------------------------------------------
-# Review queue (review.py)
+# maintenance review: Review queue (review.py)
 # ---------------------------------------------------------------------------
 
 
@@ -332,9 +346,7 @@ class TestReviewTenantIsolation:
         assert len(body["items"]) == 1
         assert body["items"][0]["job_id"] == JOB_A_ID
 
-    def test_get_review_item_cross_tenant_returns_404(
-        self, client_b, _seed_jobs
-    ):
+    def test_get_review_item_cross_tenant_returns_404(self, client_b, _seed_jobs):
         """Tenant B cannot read a review item belonging to tenant A's job."""
         from api.review_queue import ReviewQueue
 
@@ -348,10 +360,8 @@ class TestReviewTenantIsolation:
         resp = client_b.get(f"/api/v1/review/{item.review_id}")
         assert resp.status_code == 404
 
-    def test_review_decision_cross_tenant_returns_404(
-        self, client_b, _seed_jobs
-    ):
-        """Tenant B cannot submit a decision for tenant A's review item."""
+    def test_review_decision_requires_admin_capability(self, client_b, _seed_jobs):
+        """A submit/read tenant key cannot decide any review item."""
         from api.review_queue import ReviewQueue
 
         queue = ReviewQueue()
@@ -365,7 +375,8 @@ class TestReviewTenantIsolation:
             f"/api/v1/review/{item.review_id}/decision",
             json={"status": "approved", "reviewer": "attacker"},
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["error"] == "tenant_capability_required"
 
 
 # ---------------------------------------------------------------------------
@@ -382,9 +393,13 @@ class TestEntityIndexTenantFiltering:
         from api.entity_index import EntityIndex
 
         idx = EntityIndex(db_path=str(tmp_path / "eidx.db"))
-        idx.index_entities(JOB_A_ID, "doc.pdf", [
-            {"type": "PERSON", "text": "Alice", "confidence": 0.9},
-        ])
+        idx.index_entities(
+            JOB_A_ID,
+            "doc.pdf",
+            [
+                {"type": "PERSON", "text": "Alice", "confidence": 0.9},
+            ],
+        )
 
         results, total = idx.search_entities(allowed_job_ids=[])
         assert total == 0
@@ -395,12 +410,20 @@ class TestEntityIndexTenantFiltering:
         from api.entity_index import EntityIndex
 
         idx = EntityIndex(db_path=str(tmp_path / "eidx.db"))
-        idx.index_entities(JOB_A_ID, "doc_a.pdf", [
-            {"type": "PERSON", "text": "Alice", "confidence": 0.9},
-        ])
-        idx.index_entities(JOB_B_ID, "doc_b.pdf", [
-            {"type": "PERSON", "text": "Bob", "confidence": 0.8},
-        ])
+        idx.index_entities(
+            JOB_A_ID,
+            "doc_a.pdf",
+            [
+                {"type": "PERSON", "text": "Alice", "confidence": 0.9},
+            ],
+        )
+        idx.index_entities(
+            JOB_B_ID,
+            "doc_b.pdf",
+            [
+                {"type": "PERSON", "text": "Bob", "confidence": 0.8},
+            ],
+        )
 
         results, total = idx.search_entities(allowed_job_ids=[JOB_A_ID])
         assert total == 1
@@ -411,31 +434,62 @@ class TestEntityIndexTenantFiltering:
         from api.entity_index import EntityIndex
 
         idx = EntityIndex(db_path=str(tmp_path / "eidx.db"))
-        idx.index_extractions(JOB_A_ID, "doc_a.pdf", [
-            {"key": "invoice_number", "value": "INV-001", "confidence": 0.9},
-        ])
-        idx.index_extractions(JOB_B_ID, "doc_b.pdf", [
-            {"key": "invoice_number", "value": "INV-002", "confidence": 0.8},
-        ])
+        idx.index_extractions(
+            JOB_A_ID,
+            "doc_a.pdf",
+            [
+                {"key": "invoice_number", "value": "INV-001", "confidence": 0.9},
+            ],
+        )
+        idx.index_extractions(
+            JOB_B_ID,
+            "doc_b.pdf",
+            [
+                {"key": "invoice_number", "value": "INV-002", "confidence": 0.8},
+            ],
+        )
 
         results, total = idx.search_extractions(allowed_job_ids=[JOB_A_ID])
         assert total == 1
         assert results[0].field_value == "INV-001"
 
-    def test_search_entities_job_id_overrides_allowed(self, tmp_path):
-        """When both job_id and allowed_job_ids are set, job_id takes precedence."""
+    def test_search_entities_job_id_intersects_allowed(self, tmp_path):
+        """A direct job filter cannot bypass the tenant allowlist."""
         from api.entity_index import EntityIndex
 
         idx = EntityIndex(db_path=str(tmp_path / "eidx.db"))
-        idx.index_entities(JOB_A_ID, "doc_a.pdf", [
-            {"type": "PERSON", "text": "Alice", "confidence": 0.9},
-        ])
+        idx.index_entities(
+            JOB_A_ID,
+            "doc_a.pdf",
+            [
+                {"type": "PERSON", "text": "Alice", "confidence": 0.9},
+            ],
+        )
 
-        # job_id is set, so allowed_job_ids is ignored
+        # Both constraints must hold; the caller is not allowed to override
+        # the authorization allowlist by supplying a foreign job_id.
         results, total = idx.search_entities(
             job_id=JOB_A_ID, allowed_job_ids=[JOB_B_ID]
         )
+        assert total == 0
+        assert results == []
+
+    def test_search_entities_large_allowed_set_uses_bounded_bindings(self, tmp_path):
+        """Large tenants remain queryable past SQLite's host-variable limit."""
+        from api.entity_index import EntityIndex
+
+        idx = EntityIndex(db_path=str(tmp_path / "eidx-large.db"))
+        idx.index_entities(
+            JOB_A_ID,
+            "doc_a.pdf",
+            [{"type": "PERSON", "text": "Alice", "confidence": 0.9}],
+        )
+        allowed = [f"job_{index}" for index in range(40_000)]
+        allowed.append(JOB_A_ID)
+
+        results, total = idx.search_entities(allowed_job_ids=allowed)
         assert total == 1
+        assert results[0].job_id == JOB_A_ID
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 # KEDA Deployment via Helm
-# EDCOCR — Event-Driven Autoscaling
+# Industrial Adaptive OCR — Event-Driven Autoscaling
 #
 # Deploys KEDA into the Kubernetes cluster for queue-length-based autoscaling
 # of OCR GPU and CPU worker pods.

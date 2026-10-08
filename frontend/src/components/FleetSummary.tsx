@@ -21,7 +21,7 @@ export interface FleetSummaryProps {
   throughputPerMinute?: number | null;
   /** When non-null, the stale card is rendered as a toggle button. */
   staleFilterActive?: boolean;
-  onToggleStaleFilter?: => void;
+  onToggleStaleFilter?: () => void;
 }
 
 interface CapabilityCount {
@@ -76,7 +76,8 @@ export function FleetSummary({
   staleFilterActive = false,
   onToggleStaleFilter,
 }: FleetSummaryProps) {
-  const capabilityCounts = useMemo( => countCapabilities(fleet?.workers ?? []),
+  const capabilityCounts = useMemo(
+    () => countCapabilities(fleet?.workers ?? []),
     [fleet]
   );
   const staleCount = useMemo(() => {

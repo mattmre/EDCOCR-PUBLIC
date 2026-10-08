@@ -1,6 +1,6 @@
 # =============================================================================
 # Production Environment -- terraform.tfvars Example
-# EDCOCR -- Cloud-Native Deployment
+# Industrial Adaptive OCR -- Cloud-Native Deployment
 #
 # Usage:
 #   1. Copy this file to terraform.tfvars

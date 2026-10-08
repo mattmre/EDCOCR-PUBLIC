@@ -5,7 +5,7 @@ import AlertsPage from "@/app/admin/alerts/page";
 import { setApiKey } from "@/lib/auth";
 import type { Alert } from "@/lib/types";
 
-vi.mock("next/link", => ({
+vi.mock("next/link", () => ({
   __esModule: true,
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
     <a href={href} {...rest}>
@@ -14,11 +14,11 @@ vi.mock("next/link", => ({
   ),
 }));
 
-vi.mock("next/navigation", async => ({
-  useParams: => ({}),
-  useRouter: => ({ push: vi.fn(), replace: vi.fn() }),
-  useSearchParams: => new URLSearchParams(),
-  usePathname: => "/admin/alerts",
+vi.mock("next/navigation", async () => ({
+  useParams: () => ({}),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/admin/alerts",
 }));
 
 function mkAlert(overrides: Partial<Alert> = {}): Alert {
@@ -36,17 +36,17 @@ function mkAlert(overrides: Partial<Alert> = {}): Alert {
   };
 }
 
-describe("<AlertsList />", => {
+describe("<AlertsList />", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("renders an empty-state when no alerts are present", => {
+  it("renders an empty-state when no alerts are present", () => {
     render(<AlertsList alerts={[]} />);
     expect(screen.getByTestId("alerts-empty")).toBeInTheDocument();
   });
 
-  it("renders rows for each alert with severity badges", => {
+  it("renders rows for each alert with severity badges", () => {
     const alerts: Alert[] = [
       mkAlert({ id: "a1", severity: "critical" }),
       mkAlert({ id: "a2", severity: "warning", rule_id: "sla_warning" }),
@@ -58,7 +58,7 @@ describe("<AlertsList />", => {
     expect(screen.getByTestId("alert-row-a3")).toBeInTheDocument();
   });
 
-  it("uses red tone for critical, amber for warning, blue for info", => {
+  it("uses red tone for critical, amber for warning, blue for info", () => {
     render(
       <div>
         <SeverityBadge severity="critical" />
@@ -74,7 +74,7 @@ describe("<AlertsList />", => {
     expect(info.className).toMatch(/blue/);
   });
 
-  it("shows a confirm dialog when the operator clicks Mute", => {
+  it("shows a confirm dialog when the operator clicks Mute", () => {
     render(<AlertsList alerts={[mkAlert()]} onMute={vi.fn()} />);
     fireEvent.click(screen.getByTestId("alert-mute-a1"));
     expect(screen.getByTestId("mute-dialog")).toBeInTheDocument();
@@ -83,7 +83,7 @@ describe("<AlertsList />", => {
     expect(screen.getByTestId("mute-confirm")).toBeDisabled();
   });
 
-  it("posts the reason and closes the dialog when mute succeeds", async => {
+  it("posts the reason and closes the dialog when mute succeeds", async () => {
     const onMute = vi.fn().mockResolvedValue(undefined);
     render(<AlertsList alerts={[mkAlert()]} onMute={onMute} />);
 
@@ -103,7 +103,7 @@ describe("<AlertsList />", => {
     });
   });
 
-  it("renders an unmute button for already-muted alerts", => {
+  it("renders an unmute button for already-muted alerts", () => {
     render(
       <AlertsList
         alerts={[mkAlert({ state: "muted" })]}
@@ -114,7 +114,7 @@ describe("<AlertsList />", => {
     expect(screen.queryByTestId("alert-mute-a1")).not.toBeInTheDocument();
   });
 
-  it("calls onUnmute when the operator clicks Unmute", async => {
+  it("calls onUnmute when the operator clicks Unmute", async () => {
     const onUnmute = vi.fn().mockResolvedValue(undefined);
     render(
       <AlertsList alerts={[mkAlert({ state: "muted" })]} onUnmute={onUnmute} />
@@ -125,12 +125,12 @@ describe("<AlertsList />", => {
     });
   });
 
-  it("renders the alert state pill with the alert state", => {
+  it("renders the alert state pill with the alert state", () => {
     render(<AlertsList alerts={[mkAlert({ state: "pending" })]} />);
     expect(screen.getByTestId("alert-state-a1").textContent).toBe("pending");
   });
 
-  it("computes a deterministic relative age when nowMs is supplied", => {
+  it("computes a deterministic relative age when nowMs is supplied", () => {
     const alerts = [
       mkAlert({ id: "fresh", started_at: "2026-04-27T00:04:30Z" }),
       mkAlert({ id: "old", started_at: "2026-04-26T20:00:00Z" }),
@@ -144,7 +144,7 @@ describe("<AlertsList />", => {
   });
 });
 
-describe("<AlertsPage />", => {
+describe("<AlertsPage />", () => {
   beforeEach(() => {
     setApiKey("admin-key");
   });
@@ -160,7 +160,7 @@ describe("<AlertsPage />", => {
     });
   }
 
-  it("renders the access-denied empty-state on 403", async => {
+  it("renders the access-denied empty-state on 403", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input);
       if (url.includes("/api/v1/admin/alerts")) {
@@ -179,7 +179,7 @@ describe("<AlertsPage />", => {
     });
   });
 
-  it("renders the not-provisioned empty-state on 404", async => {
+  it("renders the not-provisioned empty-state on 404", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       Promise.resolve(jsonResponse(404, { detail: "not provisioned" }))
     );
@@ -192,7 +192,7 @@ describe("<AlertsPage />", => {
     expect(screen.getByTestId("alerts-grafana-link")).toHaveAttribute("href", "/grafana");
   });
 
-  it("auto-refresh tick triggers a second listAlerts call", async => {
+  it("auto-refresh tick triggers a second listAlerts call", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation((input) => {
@@ -226,7 +226,7 @@ describe("<AlertsPage />", => {
     ).length;
 
     // Advance past the 15 s polling interval.
-    await act(async => {
+    await act(async () => {
       vi.advanceTimersByTime(16000);
       await Promise.resolve();
     });

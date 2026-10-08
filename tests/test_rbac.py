@@ -99,6 +99,7 @@ def _make_sample_pdf(path: Path) -> Path:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _reset_oauth2():
     """Reset OAuth2 module state between tests."""
@@ -117,14 +118,16 @@ def client(tmp_path):
     source.mkdir(exist_ok=True)
     output.mkdir(exist_ok=True)
 
-    with patch("api.config.SOURCE_FOLDER", str(source)), \
-         patch("api.config.OUTPUT_FOLDER", str(output)), \
-         patch("api.config.OCR_API_KEY", "test-key-123"), \
-         patch("api.auth.OCR_API_KEY", "test-key-123"), \
-         patch("api.config.OAUTH2_ENABLED", False), \
-         patch("api.oauth2_config.OAUTH2_ENABLED", False), \
-         patch("api.oauth2_config.APIKEY_ROLE", "admin"), \
-         patch("api.job_manager.config") as mock_config:
+    with (
+        patch("api.config.SOURCE_FOLDER", str(source)),
+        patch("api.config.OUTPUT_FOLDER", str(output)),
+        patch("api.config.OCR_API_KEY", "test-key-123"),
+        patch("api.auth.OCR_API_KEY", "test-key-123"),
+        patch("api.config.OAUTH2_ENABLED", False),
+        patch("api.oauth2_config.OAUTH2_ENABLED", False),
+        patch("api.oauth2_config.APIKEY_ROLE", "admin"),
+        patch("api.job_manager.config") as mock_config,
+    ):
         mock_config.SOURCE_FOLDER = str(source)
         mock_config.OUTPUT_FOLDER = str(output)
         mock_config.PIPELINE_SCRIPT = "echo"
@@ -132,6 +135,7 @@ def client(tmp_path):
         mock_config.MAX_CONCURRENT_JOBS = 64
 
         from api.main import create_app
+
         app = create_app()
         app.state.limiter.enabled = False
         app.state.limiter.reset()
@@ -159,23 +163,28 @@ def oauth2_client(tmp_path):
     source.mkdir(exist_ok=True)
     output.mkdir(exist_ok=True)
 
-    with patch("api.config.SOURCE_FOLDER", str(source)), \
-         patch("api.config.OUTPUT_FOLDER", str(output)), \
-         patch("api.config.OCR_API_KEY", "test-key-123"), \
-         patch("api.auth.OCR_API_KEY", "test-key-123"), \
-         patch("api.config.OAUTH2_ENABLED", True), \
-         patch("api.oauth2_config.OAUTH2_ENABLED", True), \
-         patch("api.oauth2_config.OAUTH2_ISSUER", "https://test-issuer.example.com"), \
-         patch("api.oauth2_config.OAUTH2_AUDIENCE", "test-audience"), \
-         patch("api.oauth2_config.OAUTH2_JWKS_URI", "https://test-issuer.example.com/.well-known/jwks.json"), \
-         patch("api.oauth2_config.OAUTH2_ALGORITHMS", ["RS256"]), \
-         patch("api.oauth2_config.OAUTH2_ROLE_CLAIM", "roles"), \
-         patch("api.oauth2_config.OAUTH2_ADMIN_ROLE", "admin"), \
-         patch("api.oauth2_config.OAUTH2_OPERATOR_ROLE", "operator"), \
-         patch("api.oauth2_config.OAUTH2_VIEWER_ROLE", "viewer"), \
-         patch("api.oauth2_config.OAUTH2_DEFAULT_ROLE", "viewer"), \
-         patch("api.oauth2_config.APIKEY_ROLE", "admin"), \
-         patch("api.job_manager.config") as mock_config:
+    with (
+        patch("api.config.SOURCE_FOLDER", str(source)),
+        patch("api.config.OUTPUT_FOLDER", str(output)),
+        patch("api.config.OCR_API_KEY", "test-key-123"),
+        patch("api.auth.OCR_API_KEY", "test-key-123"),
+        patch("api.config.OAUTH2_ENABLED", True),
+        patch("api.oauth2_config.OAUTH2_ENABLED", True),
+        patch("api.oauth2_config.OAUTH2_ISSUER", "https://test-issuer.example.com"),
+        patch("api.oauth2_config.OAUTH2_AUDIENCE", "test-audience"),
+        patch(
+            "api.oauth2_config.OAUTH2_JWKS_URI",
+            "https://test-issuer.example.com/.well-known/jwks.json",
+        ),
+        patch("api.oauth2_config.OAUTH2_ALGORITHMS", ["RS256"]),
+        patch("api.oauth2_config.OAUTH2_ROLE_CLAIM", "roles"),
+        patch("api.oauth2_config.OAUTH2_ADMIN_ROLE", "admin"),
+        patch("api.oauth2_config.OAUTH2_OPERATOR_ROLE", "operator"),
+        patch("api.oauth2_config.OAUTH2_VIEWER_ROLE", "viewer"),
+        patch("api.oauth2_config.OAUTH2_DEFAULT_ROLE", "viewer"),
+        patch("api.oauth2_config.APIKEY_ROLE", "admin"),
+        patch("api.job_manager.config") as mock_config,
+    ):
         mock_config.SOURCE_FOLDER = str(source)
         mock_config.OUTPUT_FOLDER = str(output)
         mock_config.PIPELINE_SCRIPT = "echo"
@@ -183,6 +192,7 @@ def oauth2_client(tmp_path):
         mock_config.MAX_CONCURRENT_JOBS = 64
 
         from api.main import create_app
+
         app = create_app()
         app.state.limiter.enabled = False
         app.state.limiter.reset()
@@ -197,18 +207,21 @@ def unauth_client(tmp_path):
     source.mkdir(exist_ok=True)
     output.mkdir(exist_ok=True)
 
-    with patch("api.config.SOURCE_FOLDER", str(source)), \
-         patch("api.config.OUTPUT_FOLDER", str(output)), \
-         patch("api.config.OCR_API_KEY", ""), \
-         patch("api.auth.OCR_API_KEY", ""), \
-         patch("api.config.ALLOW_UNAUTHENTICATED", True), \
-         patch("api.auth.ALLOW_UNAUTHENTICATED", True), \
-         patch("api.config.ANONYMOUS_ROLE", "viewer"), \
-         patch("api.auth.ANONYMOUS_ROLE", "viewer"), \
-         patch("api.config.OAUTH2_ENABLED", False), \
-         patch("api.oauth2_config.OAUTH2_ENABLED", False), \
-         patch("api.oauth2_config.APIKEY_ROLE", "operator"), \
-         patch("api.job_manager.config") as mock_config:
+    with (
+        patch("api.config.SOURCE_FOLDER", str(source)),
+        patch("api.config.OUTPUT_FOLDER", str(output)),
+        patch("api.config.OCR_API_KEY", ""),
+        patch("api.auth.OCR_API_KEY", ""),
+        patch("api.config.ALLOW_UNAUTHENTICATED", True),
+        patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+        patch("api.config.ANONYMOUS_ROLE", "viewer"),
+        patch("api.auth.ANONYMOUS_ROLE", "viewer"),
+        patch("api.config.ENABLE_MULTITENANCY", False),
+        patch("api.config.OAUTH2_ENABLED", False),
+        patch("api.oauth2_config.OAUTH2_ENABLED", False),
+        patch("api.oauth2_config.APIKEY_ROLE", "operator"),
+        patch("api.job_manager.config") as mock_config,
+    ):
         mock_config.SOURCE_FOLDER = str(source)
         mock_config.OUTPUT_FOLDER = str(output)
         mock_config.PIPELINE_SCRIPT = "echo"
@@ -216,6 +229,7 @@ def unauth_client(tmp_path):
         mock_config.MAX_CONCURRENT_JOBS = 64
 
         from api.main import create_app
+
         app = create_app()
         app.state.limiter.enabled = False
         app.state.limiter.reset()
@@ -225,6 +239,7 @@ def unauth_client(tmp_path):
 # ---------------------------------------------------------------------------
 # TestAuthIdentity -- dataclass creation
 # ---------------------------------------------------------------------------
+
 
 class TestAuthIdentity:
     """Test AuthIdentity dataclass creation and properties."""
@@ -271,20 +286,38 @@ class TestAuthIdentity:
             identity.role = "admin"
 
     def test_get_identity_returns_default_when_no_state(self):
-        """get_identity returns admin identity when no identity is set on request."""
+        """R4-RC-14: unauth mode returns configured role, never invents admin under MT."""
         from api.identity import get_identity
 
         mock_request = MagicMock()
         mock_request.state = MagicMock(spec=[])  # No identity attribute
-        identity = get_identity(mock_request)
-        assert identity.role == "admin"
+        with (
+            patch("api.config.ALLOW_UNAUTHENTICATED", True),
+            patch("api.config.ENABLE_MULTITENANCY", False),
+            patch("api.config.ANONYMOUS_ROLE", "viewer"),
+        ):
+            identity = get_identity(mock_request)
+        assert identity.role == "viewer"
         assert identity.auth_method == "none"
         assert identity.subject == "anonymous"
+
+    def test_get_identity_401_when_auth_required(self):
+        from fastapi import HTTPException
+
+        from api.identity import get_identity
+
+        mock_request = MagicMock()
+        mock_request.state = MagicMock(spec=[])
+        with patch("api.config.ALLOW_UNAUTHENTICATED", False):
+            with pytest.raises(HTTPException) as exc:
+                get_identity(mock_request)
+        assert exc.value.status_code == 401
 
 
 # ---------------------------------------------------------------------------
 # TestRequireRole -- unit tests for the dependency factory
 # ---------------------------------------------------------------------------
+
 
 class TestRequireRole:
     """Test the require_role() dependency factory in isolation."""
@@ -348,16 +381,20 @@ class TestRequireRole:
         await checker(mock_request)
 
     @pytest.mark.anyio
-    async def test_no_identity_defaults_admin(self):
-        """When no identity is set, get_identity() returns admin which always passes."""
+    async def test_no_identity_requires_authentication(self):
+        """Missing identity must not be promoted to an administrator."""
+        from fastapi import HTTPException
+
         from api.identity import require_role
 
         mock_request = MagicMock()
         mock_request.state = MagicMock(spec=[])  # No identity attribute
 
         checker = require_role("operator")
-        # Should not raise because default is admin
-        await checker(mock_request)
+        with patch("api.config.ALLOW_UNAUTHENTICATED", False):
+            with pytest.raises(HTTPException) as exc_info:
+                await checker(mock_request)
+        assert exc_info.value.status_code == 401
 
     @pytest.mark.anyio
     async def test_403_includes_role_info_in_detail(self):
@@ -384,6 +421,7 @@ class TestRequireRole:
 # ---------------------------------------------------------------------------
 # TestAPIKeyAuth -- API key backward compatibility
 # ---------------------------------------------------------------------------
+
 
 class TestAPIKeyAuth:
     """Verify existing API key auth still works and gets correct role."""
@@ -440,6 +478,7 @@ class TestAPIKeyAuth:
 # ---------------------------------------------------------------------------
 # TestBearerAuth -- OAuth2 Bearer token integration
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.skipif(not _HAS_JOSE, reason="PyJWT not installed")
 class TestBearerAuth:
@@ -547,6 +586,7 @@ class TestBearerAuth:
 # TestDualAuth -- API key + Bearer coexistence
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(not _HAS_JOSE, reason="PyJWT not installed")
 class TestDualAuth:
     """Test behavior when both API key and Bearer token are provided."""
@@ -590,6 +630,7 @@ class TestDualAuth:
 # TestUnauthenticated -- ALLOW_UNAUTHENTICATED=true behavior
 # ---------------------------------------------------------------------------
 
+
 class TestUnauthenticatedMode:
     """Test behavior when ALLOW_UNAUTHENTICATED=true and no API key."""
 
@@ -619,6 +660,7 @@ class TestUnauthenticatedMode:
 # ---------------------------------------------------------------------------
 # TestEndpointProtection -- permission matrix for all RBAC-protected endpoints
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.skipif(not _HAS_JOSE, reason="PyJWT not installed")
 class TestEndpointProtection:
@@ -681,6 +723,7 @@ class TestEndpointProtection:
 # TestAPIKeyRoleConfig -- APIKEY_ROLE configuration
 # ---------------------------------------------------------------------------
 
+
 class TestAPIKeyRoleConfig:
     """Test that APIKEY_ROLE configuration is respected."""
 
@@ -691,14 +734,16 @@ class TestAPIKeyRoleConfig:
         source.mkdir(exist_ok=True)
         output.mkdir(exist_ok=True)
 
-        with patch("api.config.SOURCE_FOLDER", str(source)), \
-             patch("api.config.OUTPUT_FOLDER", str(output)), \
-             patch("api.config.OCR_API_KEY", "test-key-123"), \
-             patch("api.auth.OCR_API_KEY", "test-key-123"), \
-             patch("api.oauth2_config.APIKEY_ROLE", "operator"), \
-             patch("api.config.OAUTH2_ENABLED", False), \
-             patch("api.oauth2_config.OAUTH2_ENABLED", False), \
-             patch("api.job_manager.config") as mock_config:
+        with (
+            patch("api.config.SOURCE_FOLDER", str(source)),
+            patch("api.config.OUTPUT_FOLDER", str(output)),
+            patch("api.config.OCR_API_KEY", "test-key-123"),
+            patch("api.auth.OCR_API_KEY", "test-key-123"),
+            patch("api.oauth2_config.APIKEY_ROLE", "operator"),
+            patch("api.config.OAUTH2_ENABLED", False),
+            patch("api.oauth2_config.OAUTH2_ENABLED", False),
+            patch("api.job_manager.config") as mock_config,
+        ):
             mock_config.SOURCE_FOLDER = str(source)
             mock_config.OUTPUT_FOLDER = str(output)
             mock_config.PIPELINE_SCRIPT = "echo"
@@ -706,6 +751,7 @@ class TestAPIKeyRoleConfig:
             mock_config.MAX_CONCURRENT_JOBS = 64
 
             from api.main import create_app
+
             app = create_app()
             app.state.limiter.enabled = False
             app.state.limiter.reset()
@@ -724,14 +770,16 @@ class TestAPIKeyRoleConfig:
         source.mkdir(exist_ok=True)
         output.mkdir(exist_ok=True)
 
-        with patch("api.config.SOURCE_FOLDER", str(source)), \
-             patch("api.config.OUTPUT_FOLDER", str(output)), \
-             patch("api.config.OCR_API_KEY", "test-key-123"), \
-             patch("api.auth.OCR_API_KEY", "test-key-123"), \
-             patch("api.oauth2_config.APIKEY_ROLE", "viewer"), \
-             patch("api.config.OAUTH2_ENABLED", False), \
-             patch("api.oauth2_config.OAUTH2_ENABLED", False), \
-             patch("api.job_manager.config") as mock_config:
+        with (
+            patch("api.config.SOURCE_FOLDER", str(source)),
+            patch("api.config.OUTPUT_FOLDER", str(output)),
+            patch("api.config.OCR_API_KEY", "test-key-123"),
+            patch("api.auth.OCR_API_KEY", "test-key-123"),
+            patch("api.oauth2_config.APIKEY_ROLE", "viewer"),
+            patch("api.config.OAUTH2_ENABLED", False),
+            patch("api.oauth2_config.OAUTH2_ENABLED", False),
+            patch("api.job_manager.config") as mock_config,
+        ):
             mock_config.SOURCE_FOLDER = str(source)
             mock_config.OUTPUT_FOLDER = str(output)
             mock_config.PIPELINE_SCRIPT = "echo"
@@ -739,6 +787,7 @@ class TestAPIKeyRoleConfig:
             mock_config.MAX_CONCURRENT_JOBS = 64
 
             from api.main import create_app
+
             app = create_app()
             app.state.limiter.enabled = False
             app.state.limiter.reset()
@@ -757,14 +806,15 @@ class TestAPIKeyRoleConfig:
 
 
 # ---------------------------------------------------------------------------
-# TestWebSocketAuth -- WebSocket authentication via auth frame
+# TestWebSocketAuth -- WebSocket authentication via auth frame (maintenance review)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.skipif(not _HAS_JOSE, reason="PyJWT not installed")
 class TestWebSocketAuth:
     """Test WebSocket authentication using auth frames.
 
-    OAuth2 tokens are no longer accepted as query parameters.
+    OAuth2 tokens are no longer accepted as query parameters (maintenance review).
     They must be sent via ``{"type": "auth", "token": "..."}``.
     """
 
@@ -784,10 +834,15 @@ class TestWebSocketAuth:
             return_value=_json.dumps({"type": "auth", "token": token}),
         )
 
-        with patch("api.routers.ws.OCR_API_KEY", ""), \
-             patch("api.oauth2_config.OAUTH2_ENABLED", True), \
-             patch("api.oauth2.validate_jwt", return_value={"sub": "user", "roles": ["operator"]}), \
-             patch("api.oauth2.extract_role", return_value="operator"):
+        with (
+            patch("api.routers.ws.OCR_API_KEY", ""),
+            patch("api.oauth2_config.OAUTH2_ENABLED", True),
+            patch(
+                "api.oauth2.validate_jwt",
+                return_value={"sub": "user", "roles": ["operator"]},
+            ),
+            patch("api.oauth2.extract_role", return_value="operator"),
+        ):
             result = await _authenticate_ws(mock_ws)
 
         assert result is True
@@ -801,8 +856,10 @@ class TestWebSocketAuth:
         mock_ws = MagicMock()
         mock_ws.state = SimpleNamespace()
 
-        with patch("api.routers.ws.OCR_API_KEY", "test-key-123"), \
-             patch("api.oauth2_config.APIKEY_ROLE", "admin"):
+        with (
+            patch("api.routers.ws.OCR_API_KEY", "test-key-123"),
+            patch("api.oauth2_config.APIKEY_ROLE", "admin"),
+        ):
             result = await _authenticate_ws(mock_ws, api_key="test-key-123")
 
         assert result is True
@@ -823,9 +880,11 @@ class TestWebSocketAuth:
             return_value=_json.dumps({"type": "auth", "token": "bad-token"}),
         )
 
-        with patch("api.routers.ws.OCR_API_KEY", ""), \
-             patch("api.oauth2_config.OAUTH2_ENABLED", True), \
-             patch("api.oauth2.validate_jwt", side_effect=ValueError("invalid")):
+        with (
+            patch("api.routers.ws.OCR_API_KEY", ""),
+            patch("api.oauth2_config.OAUTH2_ENABLED", True),
+            patch("api.oauth2.validate_jwt", side_effect=ValueError("invalid")),
+        ):
             result = await _authenticate_ws(mock_ws)
 
         assert result is False
@@ -857,10 +916,12 @@ class TestWebSocketAuth:
         mock_ws = MagicMock()
         mock_ws.state = SimpleNamespace()
 
-        with patch("api.routers.ws.OCR_API_KEY", ""), \
-             patch("api.oauth2_config.OAUTH2_ENABLED", False), \
-             patch("api.auth.ALLOW_UNAUTHENTICATED", True), \
-             patch("api.config.ANONYMOUS_ROLE", "viewer"):
+        with (
+            patch("api.routers.ws.OCR_API_KEY", ""),
+            patch("api.oauth2_config.OAUTH2_ENABLED", False),
+            patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+            patch("api.config.ANONYMOUS_ROLE", "viewer"),
+        ):
             result = await _authenticate_ws(mock_ws)
 
         assert result is True
@@ -894,9 +955,11 @@ class TestWebSocketAuth:
             return_value=_json.dumps({"type": "auth", "token": "some-token"}),
         )
 
-        with patch("api.routers.ws.OCR_API_KEY", ""), \
-             patch("api.oauth2_config.OAUTH2_ENABLED", False), \
-             patch("api.auth.ALLOW_UNAUTHENTICATED", False):
+        with (
+            patch("api.routers.ws.OCR_API_KEY", ""),
+            patch("api.oauth2_config.OAUTH2_ENABLED", False),
+            patch("api.config.ALLOW_UNAUTHENTICATED", False),
+        ):
             result = await _authenticate_ws(mock_ws)
 
         assert result is False
@@ -915,9 +978,11 @@ class TestWebSocketAuth:
             return_value='{"type":"auth"}',
         )
 
-        with patch("api.routers.ws.OCR_API_KEY", ""), \
-             patch("api.oauth2_config.OAUTH2_ENABLED", True), \
-             patch("api.auth.ALLOW_UNAUTHENTICATED", False):
+        with (
+            patch("api.routers.ws.OCR_API_KEY", ""),
+            patch("api.oauth2_config.OAUTH2_ENABLED", True),
+            patch("api.config.ALLOW_UNAUTHENTICATED", False),
+        ):
             result = await _authenticate_ws(mock_ws)
 
         assert result is False
@@ -937,12 +1002,18 @@ class TestWebSocketAuth:
             return_value=_json.dumps({"type": "auth", "token": "valid-token"}),
         )
 
-        claims = {"sub": "viewer-user", "roles": ["viewer"], "email": "viewer@example.com"}
-        with patch("api.routers.ws.OCR_API_KEY", ""), \
-             patch("api.oauth2_config.OAUTH2_ENABLED", True), \
-             patch("api.auth.ALLOW_UNAUTHENTICATED", False), \
-             patch("api.oauth2.validate_jwt", return_value=claims), \
-             patch("api.oauth2.extract_role", return_value="viewer"):
+        claims = {
+            "sub": "viewer-user",
+            "roles": ["viewer"],
+            "email": "viewer@example.com",
+        }
+        with (
+            patch("api.routers.ws.OCR_API_KEY", ""),
+            patch("api.oauth2_config.OAUTH2_ENABLED", True),
+            patch("api.config.ALLOW_UNAUTHENTICATED", False),
+            patch("api.oauth2.validate_jwt", return_value=claims),
+            patch("api.oauth2.extract_role", return_value="viewer"),
+        ):
             result = await _authenticate_ws(mock_ws)
 
         assert result is True
@@ -951,12 +1022,13 @@ class TestWebSocketAuth:
 
     @pytest.mark.anyio
     async def test_ws_token_query_param_no_longer_accepted(self):
-        """Endpoint signature no longer accepts token as a query parameter."""
+        """Endpoint signature no longer accepts token as a query parameter (maintenance review)."""
         import inspect as _inspect
 
         from api.routers.ws import job_progress_ws
 
         sig = _inspect.signature(job_progress_ws)
         param_names = list(sig.parameters.keys())
-        assert "token" not in param_names, \
-            "token query parameter must be removed ( credential leakage)"
+        assert (
+            "token" not in param_names
+        ), "token query parameter must be removed (maintenance review credential leakage)"

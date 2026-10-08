@@ -1,5 +1,5 @@
 """
-Gap detection regression tests for crash-resume scheduler logic.
+maintenance review: Gap detection regression tests for crash-resume scheduler logic.
 
 Verifies ``compute_resume_gap_chunks`` — the set-difference-based helper
 that the scheduler uses to decide which pages to re-extract after a crash.
@@ -160,7 +160,7 @@ class TestContiguousGap:
 
 
 class TestNonContiguousGaps:
-    """The critical  regression scenario: non-contiguous gaps must
+    """The critical maintenance review regression scenario: non-contiguous gaps must
     NEVER dispatch chunks that span across an already-processed page."""
 
     def test_alternating_missing_existing(self):

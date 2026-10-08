@@ -564,11 +564,8 @@ class TestWriteConsolidatedEntitiesJson:
             "traversal.pdf",
         )
 
-        # Should still write but inside the entities dir
-        assert json_path is not None
-        entities_root = os.path.join(str(tmp_path), "EXPORT", "ENTITIES")
-        resolved = os.path.realpath(json_path)
-        assert resolved.startswith(os.path.realpath(entities_root))
+        assert json_path is None
+        assert not (tmp_path / "etc").exists()
 
     def test_empty_consolidated_still_writes(self, tmp_path):
         result = consolidate_entities(doc_name="empty.pdf")

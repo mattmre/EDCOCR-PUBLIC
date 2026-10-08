@@ -1,4 +1,4 @@
-"""Tests for webhook DLQ write failure logging.
+"""Tests for webhook DLQ write failure logging (maintenance review).
 
 Verifies that when the dead-letter queue write fails during webhook
 delivery, the error is logged explicitly instead of being silently dropped.
@@ -33,7 +33,7 @@ def _make_mock_job(job_id="job-dlq-test", status="completed"):
 
 
 class TestWebhookDlqWriteFailureLogging:
-    """Verify DLQ write failures are logged, not silently dropped."""
+    """maintenance review: Verify DLQ write failures are logged, not silently dropped."""
 
     @patch("api.webhooks.validate_webhook_url")
     @patch("api.webhooks._safe_opener")

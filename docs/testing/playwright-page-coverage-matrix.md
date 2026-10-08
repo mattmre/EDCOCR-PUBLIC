@@ -1,3 +1,5 @@
+> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](../release-candidate.md) and the root installation guide.
+
 # Playwright Page And Surface Coverage Matrix
 
 This is the current page-by-page and surface-by-surface plan for Playwright.

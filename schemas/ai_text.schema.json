@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AI-Enhanced OCR Text Sidecar",
+  "description": "Additive, advisory output of a generative AI-enhanced OCR engine (e.g. PaddleOCR-VL). NEVER the forensic PDF text-of-record. Always advisory:true, deterministic:false.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "document_id",
+    "source_file",
+    "advisory",
+    "deterministic",
+    "engine",
+    "processing",
+    "pages"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "document_id": { "type": "string" },
+    "source_file": { "type": "string" },
+    "advisory": { "const": true },
+    "deterministic": { "const": false },
+    "engine": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["engine_id", "lane", "is_generative", "license_spdx"],
+      "properties": {
+        "engine_id": { "type": "string" },
+        "engine_version": { "type": ["string", "null"] },
+        "lane": { "const": "ai_enhanced" },
+        "is_generative": { "const": true },
+        "license_spdx": { "type": "string" }
+      }
+    },
+    "processing": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["pipeline_version", "timestamp"],
+      "properties": {
+        "pipeline_version": { "type": "string" },
+        "timestamp": { "type": "string" }
+      }
+    },
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["page_num"],
+        "properties": {
+          "page_num": { "type": "integer", "minimum": 1 },
+          "markdown": { "type": "string" },
+          "text": { "type": "string" },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["text"],
+              "properties": {
+                "type": { "type": "string" },
+                "text": { "type": "string" },
+                "bbox": {
+                  "type": ["array", "null"],
+                  "items": { "type": "number" }
+                },
+                "confidence": { "type": ["number", "null"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

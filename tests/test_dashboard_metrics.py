@@ -22,7 +22,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Add coordinator to sys.path for model imports, but do NOT set
 # DJANGO_SETTINGS_MODULE at module level -- that would poison the env
-# for all other tests in the root suite.  See .
+# for all other tests in the root suite.  See docs/release-candidate.md.
 # ---------------------------------------------------------------------------
 _coordinator_dir = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "coordinator"

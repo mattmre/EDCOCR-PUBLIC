@@ -1,4 +1,4 @@
-"""Tests verifying WAL journal mode is enabled on all SQLite databases.
+"""Tests verifying WAL journal mode is enabled on all SQLite databases (maintenance review).
 
 Each of the three API-layer SQLite databases must use WAL mode to enable
 concurrent reads during writes. This test module verifies that PRAGMA

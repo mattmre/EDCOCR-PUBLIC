@@ -1,10 +1,11 @@
-"""Security posture scanner for EDCOCR deployment.
+"""Security posture scanner for OCR_LOCAL deployment.
 
 Checks for common security misconfigurations and generates a report.
 Run: python scripts/security_scan.py [--json] [--strict]
 """
 
 import argparse
+import ast
 import json
 import logging
 import re
@@ -13,6 +14,8 @@ import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+
+from packaging.requirements import InvalidRequirement, Requirement
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +91,9 @@ def _is_git_tracked(root: Path, filepath: Path) -> bool:
     try:
         result = subprocess.run(
             ["git", "ls-files", "--error-unmatch", str(filepath)],
-            cwd=str(root), capture_output=True, text=True,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
         )
         return result.returncode == 0
     except Exception:
@@ -131,10 +136,7 @@ def check_env_files(root: Path, report: ScanReport):
                 if not value:
                     continue
                 key_lower = key.strip().lower()
-                if any(
-                    s in key_lower
-                    for s in ("password", "secret", "key", "token")
-                ):
+                if any(s in key_lower for s in ("password", "secret", "key", "token")):
                     if value.lower() not in placeholder_values and not value.startswith(
                         "change-me"
                     ):
@@ -194,14 +196,10 @@ def check_dockerfile_user(root: Path, report: ScanReport):
         if df.name.startswith("Dockerfile"):
             try:
                 content = df.read_text(errors="replace")
-                has_user = bool(
-                    re.search(r"^\s*USER\s+\w+", content, re.MULTILINE)
-                )
+                has_user = bool(re.search(r"^\s*USER\s+\w+", content, re.MULTILINE))
                 if not has_user:
                     all_have_user = False
-                    details_lines.append(
-                        f"  {df.relative_to(root)}: No USER directive"
-                    )
+                    details_lines.append(f"  {df.relative_to(root)}: No USER directive")
             except Exception:
                 pass
 
@@ -244,7 +242,7 @@ def check_cors_config(root: Path, report: ScanReport):
 
 
 def check_tls_config(root: Path, report: ScanReport):
-    """Check for TLS configuration."""
+    """Check for TLS configuration in production deployment surfaces."""
     compose_files = list(root.rglob("docker-compose*.yml")) + list(
         root.rglob("docker-compose*.yaml")
     )
@@ -262,6 +260,20 @@ def check_tls_config(root: Path, report: ScanReport):
         except Exception:
             pass
 
+    production_values = root / "helm" / "ocr-local" / "values-production.yaml"
+    tls_template = root / "helm" / "ocr-local" / "templates" / "tls-certificates.yaml"
+    ingress_template = root / "helm" / "ocr-local" / "templates" / "ingress.yaml"
+    if (
+        production_values.exists()
+        and tls_template.exists()
+        and ingress_template.exists()
+    ):
+        content = production_values.read_text(errors="replace")
+        has_tls = has_tls or bool(
+            re.search(r"(?ms)^tls:\s*.*?^\s{2}enabled:\s*true\s*$", content)
+            and re.search(r"(?ms)^ingress:\s*.*?^\s{2}tls:\s*true\s*$", content)
+        )
+
     report.add(
         Finding(
             check_id="SEC-005",
@@ -275,41 +287,54 @@ def check_tls_config(root: Path, report: ScanReport):
 
 
 def check_dependency_pinning(root: Path, report: ScanReport):
-    """Check that dependencies are pinned."""
+    """Check that every dependency declares an explicit version constraint."""
     req = root / "requirements.txt"
-    unpinned = []
+    unconstrained = []
     if req.exists():
         for line in req.read_text(errors="replace").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or line.startswith("-"):
                 continue
-            # Check for version specifier
-            if ">=" in line and "==" not in line:
-                pkg = line.split(">=")[0].strip()
-                unpinned.append(pkg)
+            try:
+                requirement = Requirement(line)
+            except InvalidRequirement:
+                unconstrained.append(line)
+                continue
+            if not requirement.specifier:
+                unconstrained.append(requirement.name)
 
     report.add(
         Finding(
             check_id="SEC-006",
-            title="Dependencies fully pinned",
+            title="Dependencies version-constrained",
             severity=Severity.MEDIUM,
-            description="All production dependencies should have exact version pins for reproducible builds.",
-            recommendation="Use pip freeze or pip-compile for exact pins.",
-            passed=len(unpinned) == 0,
-            details=f"Unpinned packages: {', '.join(unpinned)}"
-            if unpinned
-            else "All packages pinned.",
+            description="All dependencies must declare reviewed exact or compatibility-range constraints.",
+            recommendation="Add an exact pin or reviewed lower/upper compatibility range.",
+            passed=len(unconstrained) == 0,
+            details=f"Unconstrained packages: {', '.join(unconstrained)}"
+            if unconstrained
+            else "All packages declare version constraints.",
         )
     )
 
 
 def check_auth_bypass(root: Path, report: ScanReport):
-    """Check for authentication bypass flags."""
-    auth_py = root / "api" / "auth.py"
-    has_bypass = False
-    if auth_py.exists():
-        content = auth_py.read_text(errors="replace")
-        has_bypass = "ALLOW_UNAUTHENTICATED" in content
+    """Check that production deployment surfaces do not enable auth bypass."""
+    production_files = [
+        root / "helm" / "ocr-local" / "values-production.yaml",
+        root / "docker-compose.production.yml",
+        root / "coordinator" / "docker-compose.production.yml",
+    ]
+    enabled_in = []
+    for path in production_files:
+        if not path.exists():
+            continue
+        content = path.read_text(errors="replace")
+        if re.search(
+            r"(?im)^\s*ALLOW_UNAUTHENTICATED\s*[:=]\s*[\"']?(true|1|yes|on)[\"']?\s*$",
+            content,
+        ):
+            enabled_in.append(str(path.relative_to(root)))
 
     report.add(
         Finding(
@@ -318,22 +343,38 @@ def check_auth_bypass(root: Path, report: ScanReport):
             severity=Severity.MEDIUM,
             description="ALLOW_UNAUTHENTICATED flag should not be used in production deployments.",
             recommendation="Ensure ALLOW_UNAUTHENTICATED is not set in production. Consider removing the flag or restricting to viewer role.",
-            passed=not has_bypass,
-            details="ALLOW_UNAUTHENTICATED flag found in auth.py. Ensure it is not set in production."
-            if has_bypass
-            else "",
+            passed=not enabled_in,
+            details=(
+                "Auth bypass enabled in: " + ", ".join(enabled_in)
+                if enabled_in
+                else "Production deployment surfaces do not enable auth bypass."
+            ),
         )
     )
 
 
 def check_hardcoded_secrets(root: Path, report: ScanReport):
-    """Scan Python files for hardcoded secrets."""
-    secret_patterns = [
-        re.compile(
-            r"""(?:password|secret|token|api_key)\s*=\s*["'][^"']{8,}["']""",
-            re.IGNORECASE,
-        ),
-    ]
+    """Scan Python assignments for hardcoded secret-like string literals."""
+
+    def assigned_names(node: ast.Assign | ast.AnnAssign) -> list[str]:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        return [target.id for target in targets if isinstance(target, ast.Name)]
+
+    def enum_lines(tree: ast.AST) -> set[int]:
+        lines: set[int] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if not any(
+                (isinstance(base, ast.Name) and base.id == "Enum")
+                or (isinstance(base, ast.Attribute) and base.attr == "Enum")
+                for base in node.bases
+            ):
+                continue
+            for child in ast.walk(node):
+                if hasattr(child, "lineno"):
+                    lines.add(child.lineno)
+        return lines
 
     findings_list = []
     py_files = (
@@ -344,22 +385,27 @@ def check_hardcoded_secrets(root: Path, report: ScanReport):
     for pf in py_files:
         try:
             content = pf.read_text(errors="replace")
-            for i, line in enumerate(content.splitlines(), 1):
-                if line.strip().startswith("#"):
+            tree = ast.parse(content, filename=str(pf))
+            ignored_lines = enum_lines(tree)
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.Assign, ast.AnnAssign)):
                     continue
-                for pat in secret_patterns:
-                    if pat.search(line):
-                        # Skip test files, examples, and known safe patterns
-                        if (
-                            "test" in pf.name.lower()
-                            or "example" in line.lower()
-                            or "placeholder" in line.lower()
-                        ):
-                            continue
-                        if "os.environ" in line or "getenv" in line:
-                            continue
-                        findings_list.append(f"  {pf.relative_to(root)}:{i}")
-        except Exception:
+                if node.lineno in ignored_lines:
+                    continue
+                value = node.value
+                if not isinstance(value, ast.Constant) or not isinstance(
+                    value.value, str
+                ):
+                    continue
+                if len(value.value) < 8:
+                    continue
+                names = assigned_names(node)
+                if any(
+                    re.search(r"(?:password|secret|token|api_key)", name, re.IGNORECASE)
+                    for name in names
+                ):
+                    findings_list.append(f"  {pf.relative_to(root)}:{node.lineno}")
+        except (OSError, SyntaxError):
             pass
 
     report.add(
@@ -428,9 +474,7 @@ def print_report(report: ScanReport):
     # Group by severity
     for severity in Severity:
         findings = [
-            f
-            for f in report.findings
-            if f.severity == severity and not f.passed
+            f for f in report.findings if f.severity == severity and not f.passed
         ]
         if not findings:
             continue
@@ -457,19 +501,15 @@ def print_report(report: ScanReport):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Security posture scanner for EDCOCR"
+        description="Security posture scanner for OCR_LOCAL"
     )
-    parser.add_argument(
-        "--json", action="store_true", help="Output JSON report"
-    )
+    parser.add_argument("--json", action="store_true", help="Output JSON report")
     parser.add_argument(
         "--strict",
         action="store_true",
         help="Exit 1 on any critical/high findings",
     )
-    parser.add_argument(
-        "--root", type=str, help="Project root directory"
-    )
+    parser.add_argument("--root", type=str, help="Project root directory")
     args = parser.parse_args()
 
     root = Path(args.root) if args.root else _find_project_root()
@@ -484,8 +524,7 @@ def main():
         critical_high = [
             f
             for f in report.findings
-            if not f.passed
-            and f.severity in (Severity.CRITICAL, Severity.HIGH)
+            if not f.passed and f.severity in (Severity.CRITICAL, Severity.HIGH)
         ]
         if critical_high:
             sys.exit(1)

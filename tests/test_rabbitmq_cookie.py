@@ -50,8 +50,7 @@ class TestGenerateEnvErlangCookie:
     def test_render_replaces_placeholder_cookie(self):
         """_render_env_content must replace the placeholder cookie value."""
         template = (
-            "RABBITMQ_ERLANG_COOKIE=change-me-in-production\n"
-            "DEPLOYMENT_ENV=staging\n"
+            "RABBITMQ_ERLANG_COOKIE=change-me-in-production\nDEPLOYMENT_ENV=staging\n"
         )
         values = {
             "django_secret": "ds",
@@ -71,8 +70,7 @@ class TestGenerateEnvErlangCookie:
     def test_render_preserves_cookie_when_not_placeholder(self):
         """If the cookie value is not the placeholder, it should stay unchanged."""
         template = (
-            "RABBITMQ_ERLANG_COOKIE=already-set-to-real-value\n"
-            "DEPLOYMENT_ENV=staging\n"
+            "RABBITMQ_ERLANG_COOKIE=already-set-to-real-value\nDEPLOYMENT_ENV=staging\n"
         )
         values = {
             "django_secret": "ds",
@@ -93,8 +91,7 @@ class TestGenerateEnvErlangCookie:
         template = tmp_path / ".env.example"
         output = tmp_path / ".env"
         template.write_text(
-            "RABBITMQ_ERLANG_COOKIE=change-me-in-production\n"
-            "DEPLOYMENT_ENV=staging\n",
+            "RABBITMQ_ERLANG_COOKIE=change-me-in-production\nDEPLOYMENT_ENV=staging\n",
             encoding="utf-8",
         )
         values = {
@@ -108,7 +105,9 @@ class TestGenerateEnvErlangCookie:
             "minio_root_user": "mu",
             "minio_root_password": "mp",
         }
-        rc = generate_env.write_env_file(template, output, force=False, generated_values=values)
+        rc = generate_env.write_env_file(
+            template, output, force=False, generated_values=values
+        )
         assert rc == 0
         content = output.read_text(encoding="utf-8")
         assert "RABBITMQ_ERLANG_COOKIE=test-cookie-value" in content
@@ -135,9 +134,9 @@ class TestValidateErlangCookie:
         }
         results = env_script._validate_baseline(env_vars, strict_placeholders=True)
         cookie_result = next(r for r in results if r.key == "RABBITMQ_ERLANG_COOKIE")
-        assert cookie_result.status == "placeholder", (
-            f"Expected 'placeholder' status but got '{cookie_result.status}'"
-        )
+        assert (
+            cookie_result.status == "placeholder"
+        ), f"Expected 'placeholder' status but got '{cookie_result.status}'"
 
     def test_real_cookie_passes_strict_baseline(self):
         """A real cookie value must pass baseline validation."""
@@ -254,33 +253,31 @@ class TestHelmTemplateErlangCookie:
 
     def test_secret_yaml_has_else_branch_for_cookie(self, secret_yaml: str):
         """secret.yaml must auto-generate cookie when erlangCookieSecret is empty."""
-        assert "randAlphaNum 64" in secret_yaml, (
-            "secret.yaml must use randAlphaNum 64 to auto-generate cookie"
-        )
-        assert "{{- else }}" in secret_yaml, (
-            "secret.yaml must have an else branch for cookie generation"
-        )
+        assert (
+            "randAlphaNum 64" in secret_yaml
+        ), "secret.yaml must use randAlphaNum 64 to auto-generate cookie"
+        assert (
+            "{{- else }}" in secret_yaml
+        ), "secret.yaml must have an else branch for cookie generation"
 
     def test_secret_yaml_uses_lookup_for_stable_cookie(self, secret_yaml: str):
         """secret.yaml must use lookup to preserve cookie across upgrades."""
-        assert "lookup" in secret_yaml, (
-            "secret.yaml must use Helm lookup to check for existing secret"
-        )
-        assert "b64dec" in secret_yaml, (
-            "secret.yaml must decode the existing cookie from base64"
-        )
+        assert (
+            "lookup" in secret_yaml
+        ), "secret.yaml must use Helm lookup to check for existing secret"
+        assert (
+            "b64dec" in secret_yaml
+        ), "secret.yaml must decode the existing cookie from base64"
 
     def test_secret_yaml_always_renders_cookie_key(self, secret_yaml: str):
         """secret.yaml must always render RABBITMQ_ERLANG_COOKIE (no outer skip)."""
         # Both branches should output the same key name
         lines = secret_yaml.splitlines()
-        cookie_key_lines = [
-            line for line in lines if "RABBITMQ_ERLANG_COOKIE:" in line
-        ]
+        cookie_key_lines = [line for line in lines if "RABBITMQ_ERLANG_COOKIE:" in line]
         # Should appear exactly twice: once for the if branch, once for the else
-        assert len(cookie_key_lines) == 2, (
-            f"Expected 2 RABBITMQ_ERLANG_COOKIE lines (if/else), found {len(cookie_key_lines)}"
-        )
+        assert (
+            len(cookie_key_lines) == 2
+        ), f"Expected 2 RABBITMQ_ERLANG_COOKIE lines (if/else), found {len(cookie_key_lines)}"
 
     def test_statefulset_always_injects_cookie_env(self, statefulset_yaml: str):
         """rabbitmq-statefulset.yaml must unconditionally inject RABBITMQ_ERLANG_COOKIE."""
@@ -292,16 +289,16 @@ class TestHelmTemplateErlangCookie:
                 # Check the line before is not a conditional
                 if i > 0:
                     prev = lines[i - 1].strip()
-                    assert not prev.startswith("{{- if"), (
-                        "RABBITMQ_ERLANG_COOKIE env injection should not be conditional"
-                    )
+                    assert not prev.startswith(
+                        "{{- if"
+                    ), "RABBITMQ_ERLANG_COOKIE env injection should not be conditional"
                 break
         else:
             pytest.fail("RABBITMQ_ERLANG_COOKIE env var not found in statefulset")
 
 
 # ---------------------------------------------------------------------------
-# Helm template: worker readiness probes ( / INFRA-003)
+# Helm template: worker readiness probes (maintenance review / INFRA-003)
 # ---------------------------------------------------------------------------
 
 
@@ -378,20 +375,17 @@ class TestWorkerReadinessProbes:
         """CPU OCR worker must have a livenessProbe."""
         assert "livenessProbe:" in cpu_ocr_worker_yaml
 
-    def test_readiness_probe_uses_celery_inspect(self, gpu_worker_yaml: str):
-        """Readiness probe should use celery inspect ping for meaningful check."""
-        # Find the readinessProbe section and verify it uses celery inspect
+    def test_readiness_probe_targets_exact_local_worker(self, gpu_worker_yaml: str):
+        """Readiness must use the PID-1 nodename, not cluster broadcast ping."""
         lines = gpu_worker_yaml.splitlines()
         in_readiness = False
-        found_celery = False
+        found_local_probe = False
         for line in lines:
             if "readinessProbe:" in line:
                 in_readiness = True
             elif in_readiness and "Probe:" in line:
                 break  # Hit next probe section
-            elif in_readiness and "inspect" in line:
-                found_celery = True
+            elif in_readiness and "worker_healthcheck.py" in line:
+                found_local_probe = True
                 break
-        assert found_celery, (
-            "readinessProbe should use celery inspect ping"
-        )
+        assert found_local_probe

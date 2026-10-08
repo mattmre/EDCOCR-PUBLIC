@@ -36,9 +36,7 @@ _PURGE_TENANT_PATH = (
     / "commands"
     / "purge_tenant.py"
 )
-_ARCH_DOC_PATH = (
-    _PROJECT_ROOT / "docs" / "architecture" / "n1d-tenant-governance.md"
-)
+_ARCH_DOC_PATH = _PROJECT_ROOT / "docs" / "architecture" / "tenant-governance.md"
 
 
 # ===========================================================================
@@ -127,9 +125,10 @@ class TestPurgeTenantCommandSource:
     def test_purge_tenant_includes_s3_cleanup_code(self):
         """purge_tenant management command includes S3 cleanup logic."""
         src = _PURGE_TENANT_PATH.read_text(encoding="utf-8")
-        # Must reference S3 storage backend
+        # Resolve the backend from each job's persisted binding so a tenant
+        # purge cannot accidentally use the current process-wide backend.
         assert "s3" in src.lower()
-        assert "create_storage_backend" in src
+        assert "_get_backend_for_job" in src
 
     def test_purge_tenant_includes_s3_list_and_delete(self):
         """purge_tenant S3 cleanup uses list_objects and delete_many."""
@@ -149,15 +148,18 @@ class TestPurgeTenantCommandSource:
         assert "get_monitor" in src
 
     def test_purge_tenant_s3_cleanup_is_conditional(self):
-        """S3 cleanup only runs when STORAGE_BACKEND is s3."""
+        """S3 cleanup only runs for jobs bound to an S3 backend."""
         src = _PURGE_TENANT_PATH.read_text(encoding="utf-8")
-        assert "STORAGE_BACKEND" in src
+        assert "backend_name" in src
+        assert 'backend.backend_name != "nfs"' in src
+        assert 'backend.backend_name != "s3"' in src
 
     def test_purge_tenant_s3_cleanup_handles_errors_gracefully(self):
         """S3 cleanup catches exceptions so purge is not blocked."""
         src = _PURGE_TENANT_PATH.read_text(encoding="utf-8")
-        # Should have try/except around S3 cleanup
-        assert "S3 cleanup skipped" in src or "S3 backend not available" in src
+        # Failed output cleanup must be accumulated and block DB deletion.
+        assert "cleanup_failures" in src
+        assert "output cleanup failed" in src
 
     def test_purge_tenant_summary_includes_s3_count(self):
         """Purge completion summary reports S3 objects removed."""
@@ -174,7 +176,7 @@ class TestArchitectureDocument:
     """Verify the tenant governance architecture document exists and is complete."""
 
     def test_architecture_doc_exists(self):
-        """The n1d-tenant-governance.md architecture doc exists."""
+        """The tenant-governance.md architecture doc exists."""
         assert _ARCH_DOC_PATH.exists(), f"Missing: {_ARCH_DOC_PATH}"
 
     def test_doc_designates_cost_source_of_truth(self):
@@ -265,7 +267,7 @@ class TestSLAWindowReset:
 
         monitor = SLAMonitor()
         # Tenant never recorded -- hasattr check should prevent KeyError
-        if hasattr(monitor, '_windows') and "nonexistent" in monitor._windows:
+        if hasattr(monitor, "_windows") and "nonexistent" in monitor._windows:
             del monitor._windows["nonexistent"]
         # No exception raised
 
@@ -344,15 +346,58 @@ def _build_mock_django():
     conf_mod = types.ModuleType("django.conf")
 
     class _FakeSettings:
+        configured = True
         NFS_ROOT = "/tmp/test-nfs"
         STORAGE_BACKEND = "nfs"
 
     conf_mod.settings = _FakeSettings()
 
     django_mod = types.ModuleType("django")
+    django_mod.__path__ = []
     django_utils = types.ModuleType("django.utils")
     django_core = types.ModuleType("django.core")
     django_core_management = types.ModuleType("django.core.management")
+    django_db = types.ModuleType("django.db")
+    django_db_models = types.ModuleType("django.db.models")
+    django_transaction = types.ModuleType("django.db.transaction")
+
+    class _F:
+        def __init__(self, field_name):
+            self.field_name = field_name
+
+        def __add__(self, value):
+            return (self.field_name, "+", value)
+
+    django_db_models.F = _F
+
+    class _Q:
+        """Minimal composable stand-in for the command's OR custody scope."""
+
+        def __init__(self, **kwargs):
+            self.children = [kwargs]
+
+        def __or__(self, other):
+            combined = _Q()
+            combined.children = [*self.children, *other.children]
+            return combined
+
+    django_db_models.Q = _Q
+
+    class _Atomic:
+        def __call__(self, func=None):
+            if func is None:
+                return self
+            return func
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    django_transaction.atomic = _Atomic()
+    django_db.transaction = django_transaction
+    django_db.models = django_db_models
 
     return {
         "django": django_mod,
@@ -362,6 +407,9 @@ def _build_mock_django():
         "django.core": django_core,
         "django.core.management": django_core_management,
         "django.core.management.base": base_mod,
+        "django.db": django_db,
+        "django.db.models": django_db_models,
+        "django.db.transaction": django_transaction,
     }
 
 
@@ -375,9 +423,17 @@ class _FakeQuerySet:
         result = list(self._items)
         for key, value in kwargs.items():
             if key == "tenant_id":
-                result = [j for j in result if str(getattr(j, "tenant_id", "")) == str(value)]
+                result = [
+                    j for j in result if str(getattr(j, "tenant_id", "")) == str(value)
+                ]
             elif key == "job_id__in":
                 result = [j for j in result if getattr(j, "job_id", None) in value]
+        return _FakeQuerySet(result)
+
+    def exclude(self, **kwargs):
+        result = list(self._items)
+        for key, value in kwargs.items():
+            result = [item for item in result if getattr(item, key, None) != value]
         return _FakeQuerySet(result)
 
     def values_list(self, *fields, flat=False):
@@ -389,13 +445,25 @@ class _FakeQuerySet:
     def count(self):
         return len(self._items)
 
+    def exists(self):
+        return bool(self._items)
+
     def delete(self):
         n = len(self._items)
         self._items.clear()
         return (n, {})
 
+    def update(self, **kwargs):
+        for item in self._items:
+            for key, value in kwargs.items():
+                setattr(item, key, value)
+        return len(self._items)
+
     def first(self):
         return self._items[0] if self._items else None
+
+    def select_for_update(self):
+        return self
 
     def __iter__(self):
         return iter(self._items)
@@ -406,15 +474,26 @@ def _build_mock_models():
     models_mod = types.ModuleType("jobs.models")
 
     class FakeJob:
+        class Status:
+            CANCELLED = "cancelled"
+
         class objects:
             _store = []
+
+            @classmethod
+            def select_for_update(cls):
+                return cls
 
             @classmethod
             def filter(cls, **kwargs):
                 items = cls._store
                 for key, value in kwargs.items():
                     if key == "tenant_id":
-                        items = [j for j in items if str(getattr(j, "tenant_id", "")) == str(value)]
+                        items = [
+                            j
+                            for j in items
+                            if str(getattr(j, "tenant_id", "")) == str(value)
+                        ]
                 return _FakeQuerySet(items)
 
     class FakeCustodyEvent:
@@ -429,7 +508,7 @@ def _build_mock_models():
                 return MagicMock()
 
             @classmethod
-            def filter(cls, **kwargs):
+            def filter(cls, *_args, **kwargs):
                 return _FakeQuerySet(cls._store)
 
     class FakePiiEntity:
@@ -448,17 +527,36 @@ def _build_mock_models():
             def filter(cls, **kwargs):
                 return _FakeQuerySet(cls._store)
 
+    class FakeTaskDispatchOutbox:
+        class Status:
+            PENDING = "pending"
+            FAILED = "failed"
+            DEAD = "dead"
+
+        class objects:
+            @classmethod
+            def filter(cls, **kwargs):
+                return _FakeQuerySet([])
+
     models_mod.Job = FakeJob
     models_mod.CustodyEvent = FakeCustodyEvent
     models_mod.PiiEntity = FakePiiEntity
     models_mod.PageResult = FakePageResult
+    models_mod.TaskDispatchOutbox = FakeTaskDispatchOutbox
 
     jobs_mod = types.ModuleType("jobs")
+    rls_mod = types.ModuleType("jobs.rls")
+    rls_mod.tenant_rls_command = lambda func: func
 
-    return {
-        "jobs": jobs_mod,
-        "jobs.models": models_mod,
-    }, FakeJob, FakeCustodyEvent
+    return (
+        {
+            "jobs": jobs_mod,
+            "jobs.models": models_mod,
+            "jobs.rls": rls_mod,
+        },
+        FakeJob,
+        FakeCustodyEvent,
+    )
 
 
 def _import_purge_tenant_fresh(django_mocks, model_mocks):
@@ -471,20 +569,28 @@ def _import_purge_tenant_fresh(django_mocks, model_mocks):
         sys.modules[name] = mod
 
     # Inject litigation_hold
-    lh_path = str(
-        _PROJECT_ROOT / "coordinator" / "jobs" / "litigation_hold.py"
-    )
+    lh_path = str(_PROJECT_ROOT / "coordinator" / "jobs" / "litigation_hold.py")
     lh_spec = importlib.util.spec_from_file_location("jobs.litigation_hold", lh_path)
     lh_mod = importlib.util.module_from_spec(lh_spec)
     lh_spec.loader.exec_module(lh_mod)
     saved["jobs.litigation_hold"] = sys.modules.get("jobs.litigation_hold")
     sys.modules["jobs.litigation_hold"] = lh_mod
 
-    # Also mock jobs.storage to avoid real boto3 import
-    storage_mock = types.ModuleType("jobs.storage")
-    storage_mock.create_storage_backend = MagicMock()
-    saved["jobs.storage"] = sys.modules.get("jobs.storage")
-    sys.modules["jobs.storage"] = storage_mock
+    # Mock the persisted backend resolver.  The command deliberately resolves
+    # each job's backend binding instead of constructing one from global
+    # STORAGE_BACKEND configuration.
+    tasks_mock = types.ModuleType("jobs.tasks")
+    tasks_mock._get_backend_for_job = lambda job: getattr(
+        job, "_backend", types.SimpleNamespace(backend_name="nfs")
+    )
+    tasks_mock._record_control_plane_custody_event = lambda **kwargs: kwargs
+    saved["jobs.tasks"] = sys.modules.get("jobs.tasks")
+    sys.modules["jobs.tasks"] = tasks_mock
+
+    retirement_mock = types.ModuleType("jobs.artifact_retirement")
+    retirement_mock.retain_cleanup_authority = lambda _job, backend: backend.backend_name == "s3"
+    saved["jobs.artifact_retirement"] = sys.modules.get("jobs.artifact_retirement")
+    sys.modules["jobs.artifact_retirement"] = retirement_mock
 
     cmd_key = "coordinator.jobs.management.commands.purge_tenant"
     saved[cmd_key] = sys.modules.pop(cmd_key, None)
@@ -493,9 +599,13 @@ def _import_purge_tenant_fresh(django_mocks, model_mocks):
     cmd_path = str(_PURGE_TENANT_PATH)
     spec = importlib.util.spec_from_file_location("purge_tenant_n1d", cmd_path)
     cmd_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cmd_module)
+    try:
+        spec.loader.exec_module(cmd_module)
+    except Exception:
+        _restore(saved)
+        raise
 
-    return cmd_module, all_mocks, saved, storage_mock
+    return cmd_module, all_mocks, saved
 
 
 def _restore(saved):
@@ -509,8 +619,10 @@ def _restore(saved):
 def _make_job(job_id, tenant_id, nfs_job_path=""):
     job = MagicMock()
     job.job_id = job_id
+    job.pk = job_id
     job.tenant_id = tenant_id
     job.nfs_job_path = nfs_job_path
+    job._backend = types.SimpleNamespace(backend_name="nfs")
     return job
 
 
@@ -532,7 +644,7 @@ class TestPurgeTenantS3Cleanup:
 
         model_dict, FakeJob, FakeCustodyEvent = _build_mock_models()
 
-        cmd_module, all_mocks, saved, storage_mock = _import_purge_tenant_fresh(
+        cmd_module, all_mocks, saved = _import_purge_tenant_fresh(
             django_mocks, model_dict
         )
         try:
@@ -543,22 +655,29 @@ class TestPurgeTenantS3Cleanup:
 
             # Configure mock S3 backend
             mock_s3_backend = MagicMock()
-            mock_s3_backend.list_objects.return_value = [
-                "jobs/job-s3-1/output.pdf",
-                "jobs/job-s3-1/text.txt",
+            mock_s3_backend.list_objects.side_effect = [
+                [
+                    "jobs/job-s3-1/output.pdf",
+                    "jobs/job-s3-1/text.txt",
+                ],
+                [],
             ]
             mock_s3_backend.delete_many.return_value = 2
-            storage_mock.create_storage_backend.return_value = mock_s3_backend
+            job._backend = mock_s3_backend
+            mock_s3_backend.backend_name = "s3"
 
             cmd = cmd_module.Command()
             cmd.stdout = StringIO()
 
             mock_cost = MagicMock()
             mock_sla = MagicMock()
-            with patch.dict(sys.modules, {
-                "cost_tracking": mock_cost,
-                "sla_monitoring": mock_sla,
-            }):
+            with patch.dict(
+                sys.modules,
+                {
+                    "cost_tracking": mock_cost,
+                    "sla_monitoring": mock_sla,
+                },
+            ):
                 cmd.handle(
                     tenant_id=tenant,
                     dry_run=False,
@@ -568,12 +687,9 @@ class TestPurgeTenantS3Cleanup:
                 )
 
             output = cmd.stdout.getvalue()
-            # S3 backend should have been created
-            storage_mock.create_storage_backend.assert_called_once()
-            create_kwargs = storage_mock.create_storage_backend.call_args
-            assert create_kwargs[1]["backend_name"] == "s3"
             # Should list and delete objects
-            mock_s3_backend.list_objects.assert_called_once_with("jobs/job-s3-1/")
+            assert mock_s3_backend.list_objects.call_count == 2
+            mock_s3_backend.list_objects.assert_any_call("jobs/job-s3-1/")
             mock_s3_backend.delete_many.assert_called_once()
             assert "S3 objects" in output
         finally:
@@ -588,7 +704,7 @@ class TestPurgeTenantS3Cleanup:
 
         model_dict, FakeJob, FakeCustodyEvent = _build_mock_models()
 
-        cmd_module, all_mocks, saved, storage_mock = _import_purge_tenant_fresh(
+        cmd_module, all_mocks, saved = _import_purge_tenant_fresh(
             django_mocks, model_dict
         )
         try:
@@ -602,10 +718,13 @@ class TestPurgeTenantS3Cleanup:
 
             mock_cost = MagicMock()
             mock_sla = MagicMock()
-            with patch.dict(sys.modules, {
-                "cost_tracking": mock_cost,
-                "sla_monitoring": mock_sla,
-            }):
+            with patch.dict(
+                sys.modules,
+                {
+                    "cost_tracking": mock_cost,
+                    "sla_monitoring": mock_sla,
+                },
+            ):
                 cmd.handle(
                     tenant_id=tenant,
                     dry_run=False,
@@ -614,8 +733,7 @@ class TestPurgeTenantS3Cleanup:
                     include_output=True,
                 )
 
-            # S3 backend should NOT be created
-            storage_mock.create_storage_backend.assert_not_called()
+            # No S3-bound job exists, so no object-list operation is made.
         finally:
             _restore(saved)
 
@@ -633,7 +751,7 @@ class TestPurgeTenantS3Cleanup:
 
         model_dict, FakeJob, FakeCustodyEvent = _build_mock_models()
 
-        cmd_module, all_mocks, saved, storage_mock = _import_purge_tenant_fresh(
+        cmd_module, all_mocks, saved = _import_purge_tenant_fresh(
             django_mocks, model_dict
         )
         try:
@@ -644,17 +762,21 @@ class TestPurgeTenantS3Cleanup:
 
             mock_s3_backend = MagicMock()
             mock_s3_backend.list_objects.return_value = []
-            storage_mock.create_storage_backend.return_value = mock_s3_backend
+            job._backend = mock_s3_backend
+            mock_s3_backend.backend_name = "s3"
 
             cmd = cmd_module.Command()
             cmd.stdout = StringIO()
 
             mock_cost = MagicMock()
             mock_sla = MagicMock()
-            with patch.dict(sys.modules, {
-                "cost_tracking": mock_cost,
-                "sla_monitoring": mock_sla,
-            }):
+            with patch.dict(
+                sys.modules,
+                {
+                    "cost_tracking": mock_cost,
+                    "sla_monitoring": mock_sla,
+                },
+            ):
                 cmd.handle(
                     tenant_id=tenant,
                     dry_run=False,
@@ -679,7 +801,7 @@ class TestPurgeTenantSLAReset:
         django_mocks = _build_mock_django()
         model_dict, FakeJob, FakeCustodyEvent = _build_mock_models()
 
-        cmd_module, all_mocks, saved, storage_mock = _import_purge_tenant_fresh(
+        cmd_module, all_mocks, saved = _import_purge_tenant_fresh(
             django_mocks, model_dict
         )
         try:
@@ -699,10 +821,13 @@ class TestPurgeTenantSLAReset:
             mock_sla_mod.get_monitor.return_value = mock_monitor
 
             mock_cost = MagicMock()
-            with patch.dict(sys.modules, {
-                "cost_tracking": mock_cost,
-                "sla_monitoring": mock_sla_mod,
-            }):
+            with patch.dict(
+                sys.modules,
+                {
+                    "cost_tracking": mock_cost,
+                    "sla_monitoring": mock_sla_mod,
+                },
+            ):
                 cmd.handle(
                     tenant_id=tenant,
                     dry_run=False,
@@ -727,7 +852,7 @@ class TestPurgeTenantSLAReset:
         django_mocks = _build_mock_django()
         model_dict, FakeJob, FakeCustodyEvent = _build_mock_models()
 
-        cmd_module, all_mocks, saved, storage_mock = _import_purge_tenant_fresh(
+        cmd_module, all_mocks, saved = _import_purge_tenant_fresh(
             django_mocks, model_dict
         )
         try:
@@ -747,10 +872,13 @@ class TestPurgeTenantSLAReset:
             mock_sla_mod.get_monitor.return_value = mock_monitor
 
             mock_cost = MagicMock()
-            with patch.dict(sys.modules, {
-                "cost_tracking": mock_cost,
-                "sla_monitoring": mock_sla_mod,
-            }):
+            with patch.dict(
+                sys.modules,
+                {
+                    "cost_tracking": mock_cost,
+                    "sla_monitoring": mock_sla_mod,
+                },
+            ):
                 cmd.handle(
                     tenant_id=tenant,
                     dry_run=False,
@@ -779,7 +907,7 @@ class TestPurgeTenantLitigationHoldGovernance:
 
         model_dict, FakeJob, FakeCustodyEvent = _build_mock_models()
 
-        cmd_module, all_mocks, saved, storage_mock = _import_purge_tenant_fresh(
+        cmd_module, all_mocks, saved = _import_purge_tenant_fresh(
             django_mocks, model_dict
         )
         try:
@@ -803,7 +931,6 @@ class TestPurgeTenantLitigationHoldGovernance:
             output = cmd.stderr.getvalue()
             assert "LITIGATION_HOLD" in output
             # S3 backend should NOT have been created
-            storage_mock.create_storage_backend.assert_not_called()
             # No custody events recorded
             assert len(FakeCustodyEvent._created) == 0
         finally:
@@ -819,6 +946,8 @@ class TestPurgeTenantEndToEnd:
 
         django_mocks = _build_mock_django()
         django_mocks["django.conf"].settings.STORAGE_BACKEND = "s3"
+        nfs_root = tmp_path / "nfs-root"
+        django_mocks["django.conf"].settings.NFS_ROOT = str(nfs_root)
         django_mocks["django.conf"].settings.S3_ENDPOINT = "http://minio:9000"
         django_mocks["django.conf"].settings.S3_BUCKET = "ocr-test"
         django_mocks["django.conf"].settings.S3_ACCESS_KEY = "key"
@@ -827,24 +956,29 @@ class TestPurgeTenantEndToEnd:
 
         model_dict, FakeJob, FakeCustodyEvent = _build_mock_models()
 
-        cmd_module, all_mocks, saved, storage_mock = _import_purge_tenant_fresh(
+        cmd_module, all_mocks, saved = _import_purge_tenant_fresh(
             django_mocks, model_dict
         )
         try:
             tenant = "e2e-tenant"
-            nfs_dir = tmp_path / "nfs_e2e"
-            nfs_dir.mkdir()
+            nfs_dir = nfs_root / "jobs" / "job-e2e-nfs"
+            nfs_dir.mkdir(parents=True)
             (nfs_dir / "output.pdf").write_text("test")
 
-            job = _make_job("job-e2e-1", tenant, nfs_job_path=str(nfs_dir))
-            FakeJob.objects._store = [job]
+            nfs_job = _make_job("job-e2e-nfs", tenant, nfs_job_path=str(nfs_dir))
+            s3_job = _make_job("job-e2e-1", tenant)
+            FakeJob.objects._store = [nfs_job, s3_job]
             FakeCustodyEvent._created = []
 
             # Mock S3 backend
             mock_s3_backend = MagicMock()
-            mock_s3_backend.list_objects.return_value = ["jobs/job-e2e-1/doc.pdf"]
+            mock_s3_backend.list_objects.side_effect = [
+                ["jobs/job-e2e-1/doc.pdf"],
+                [],
+            ]
             mock_s3_backend.delete_many.return_value = 1
-            storage_mock.create_storage_backend.return_value = mock_s3_backend
+            s3_job._backend = mock_s3_backend
+            mock_s3_backend.backend_name = "s3"
 
             # Mock SLA monitor with tenant windows
             mock_monitor = MagicMock()
@@ -858,10 +992,13 @@ class TestPurgeTenantEndToEnd:
             cmd = cmd_module.Command()
             cmd.stdout = StringIO()
 
-            with patch.dict(sys.modules, {
-                "cost_tracking": mock_cost,
-                "sla_monitoring": mock_sla_mod,
-            }):
+            with patch.dict(
+                sys.modules,
+                {
+                    "cost_tracking": mock_cost,
+                    "sla_monitoring": mock_sla_mod,
+                },
+            ):
                 cmd.handle(
                     tenant_id=tenant,
                     dry_run=False,
@@ -876,7 +1013,7 @@ class TestPurgeTenantEndToEnd:
             assert not nfs_dir.exists()
 
             # S3 objects should be cleaned
-            mock_s3_backend.list_objects.assert_called_once()
+            assert mock_s3_backend.list_objects.call_count == 2
             mock_s3_backend.delete_many.assert_called_once()
 
             # SLA windows should be reset

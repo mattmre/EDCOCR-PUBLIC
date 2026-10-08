@@ -1,0 +1,35 @@
+# FastAPI image contract for the Helm/API sidecar.
+#
+# Build the application image first, then wrap it with:
+#   bash scripts/with_runtime_source.sh root-cpu docker build -f Dockerfile -t edcocr/base:4.2.0-rc.1 .
+#   docker build --build-arg BASE_IMAGE=edcocr/base:4.2.0-rc.1 \
+#     -f Dockerfile.api -t edcocr/api:4.2.0-rc.1 .
+#
+# Keeping this as a separate image contract prevents the chart's API image
+# name from being an undocumented tag pointing at an arbitrary coordinator.
+ARG BASE_IMAGE=edcocr/base:4.2.0-rc.1
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+
+# Replace the monolithic OCR heartbeat probe with the API health contract.
+# A later HEALTHCHECK instruction supersedes the inherited base-image probe.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"
+
+# Keep the API image non-root even when BASE_IMAGE is replaced by an operator
+# supplied image.  The conditional creation keeps the contract compatible
+# with the repository's base image, which already defines ``ocr``.
+USER root
+RUN if ! getent group ocr >/dev/null 2>&1; then groupadd -r -g 1000 ocr; fi && \
+    if ! id -u ocr >/dev/null 2>&1; then \
+      useradd -r -u 1000 -g ocr -d /home/ocr -s /sbin/nologin ocr; \
+    fi && \
+    mkdir -p /app/ocr_data && chown -R ocr:ocr /app/ocr_data
+
+USER ocr
+
+# BASE_IMAGE may be the GPU worker image used by SOLO. Clear its CUDA-checking
+# entrypoint, retaining the init parent required by native OCR watchdogs.
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
+CMD ["python3", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -87,7 +87,9 @@ def output_base_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def patched_fasttext(fake_fasttext_model):
     """Patch ``fasttext.load_model`` to return the mock model."""
-    fake_module = SimpleNamespace(load_model=MagicMock(return_value=fake_fasttext_model))
+    fake_module = SimpleNamespace(
+        load_model=MagicMock(return_value=fake_fasttext_model)
+    )
     with patch.dict(sys.modules, {"fasttext": fake_module}):
         yield fake_fasttext_model
 
@@ -127,7 +129,11 @@ class TestRedetectDocumentBasics:
         assert result["output"].endswith(".language.json")
 
     def test_returns_error_on_missing_pdf(
-        self, patched_fasttext, patched_fitz, language_model_file, output_base_dir,
+        self,
+        patched_fasttext,
+        patched_fitz,
+        language_model_file,
+        output_base_dir,
     ):
         from ocr_local.features.language_detection import redetect_document
 
@@ -141,7 +147,10 @@ class TestRedetectDocumentBasics:
         assert "not found" in result["error"].lower()
 
     def test_returns_error_on_empty_pdf_path(
-        self, patched_fasttext, language_model_file, output_base_dir,
+        self,
+        patched_fasttext,
+        language_model_file,
+        output_base_dir,
     ):
         from ocr_local.features.language_detection import redetect_document
 
@@ -153,8 +162,51 @@ class TestRedetectDocumentBasics:
         )
         assert result["status"] == "error"
 
+    def test_opens_stream_when_pdf_bytes_supplied(
+        self,
+        patched_fasttext,
+        patched_fitz,
+        language_model_file,
+        output_base_dir,
+    ):
+        from ocr_local.features.language_detection import redetect_document
+
+        result = redetect_document(
+            pdf_path="vanished.pdf",
+            output_json_path="",
+            output_base_dir=str(output_base_dir),
+            fasttext_model_path=str(language_model_file),
+            pdf_bytes=b"%PDF-jailed",
+        )
+        assert result["status"] == "ok"
+        patched_fitz.open.assert_called_once_with(
+            stream=b"%PDF-jailed",
+            filetype="pdf",
+        )
+
+    def test_returns_error_on_empty_pdf_bytes(
+        self,
+        patched_fasttext,
+        language_model_file,
+        output_base_dir,
+    ):
+        from ocr_local.features.language_detection import redetect_document
+
+        result = redetect_document(
+            pdf_path="vanished.pdf",
+            output_json_path="",
+            output_base_dir=str(output_base_dir),
+            fasttext_model_path=str(language_model_file),
+            pdf_bytes=b"",
+        )
+        assert result["status"] == "error"
+        assert "pdf_bytes" in result["error"]
+
     def test_returns_error_on_none_pdf_path(
-        self, patched_fasttext, language_model_file, output_base_dir,
+        self,
+        patched_fasttext,
+        language_model_file,
+        output_base_dir,
     ):
         from ocr_local.features.language_detection import redetect_document
 
@@ -167,7 +219,10 @@ class TestRedetectDocumentBasics:
         assert result["status"] == "error"
 
     def test_returns_error_when_fasttext_model_missing(
-        self, patched_fitz, fake_pdf_file, output_base_dir,
+        self,
+        patched_fitz,
+        fake_pdf_file,
+        output_base_dir,
     ):
         from ocr_local.features.language_detection import redetect_document
 
@@ -181,11 +236,17 @@ class TestRedetectDocumentBasics:
         assert "fasttext" in result["error"].lower()
 
     def test_returns_error_when_fasttext_load_fails(
-        self, patched_fitz, fake_pdf_file, language_model_file, output_base_dir,
+        self,
+        patched_fitz,
+        fake_pdf_file,
+        language_model_file,
+        output_base_dir,
     ):
         from ocr_local.features.language_detection import redetect_document
 
-        fake_module = SimpleNamespace(load_model=MagicMock(side_effect=RuntimeError("boom")))
+        fake_module = SimpleNamespace(
+            load_model=MagicMock(side_effect=RuntimeError("boom"))
+        )
         with patch.dict(sys.modules, {"fasttext": fake_module}):
             result = redetect_document(
                 pdf_path=str(fake_pdf_file),
@@ -196,11 +257,17 @@ class TestRedetectDocumentBasics:
         assert result["status"] == "error"
 
     def test_returns_error_when_fitz_open_fails(
-        self, patched_fasttext, fake_pdf_file, language_model_file, output_base_dir,
+        self,
+        patched_fasttext,
+        fake_pdf_file,
+        language_model_file,
+        output_base_dir,
     ):
         from ocr_local.features.language_detection import redetect_document
 
-        fake_module = SimpleNamespace(open=MagicMock(side_effect=RuntimeError("cannot open")))
+        fake_module = SimpleNamespace(
+            open=MagicMock(side_effect=RuntimeError("cannot open"))
+        )
         with patch.dict(sys.modules, {"fitz": fake_module}):
             result = redetect_document(
                 pdf_path=str(fake_pdf_file),
@@ -211,7 +278,9 @@ class TestRedetectDocumentBasics:
         assert result["status"] == "error"
 
     def test_returns_dict_not_exception(
-        self, fake_pdf_file, output_base_dir,
+        self,
+        fake_pdf_file,
+        output_base_dir,
     ):
         """Even with everything broken, redetect returns a dict -- never raises."""
         from ocr_local.features.language_detection import redetect_document
@@ -545,9 +614,7 @@ class TestRedetectCustody:
         assert result["status"] == "ok"
         assert mock_chain_class.called
         # append_event was called at least once with LANGUAGE_REDETECTED
-        event_types = [
-            call.args[0] for call in mock_chain.append_event.call_args_list
-        ]
+        event_types = [call.args[0] for call in mock_chain.append_event.call_args_list]
         assert "LANGUAGE_REDETECTED" in event_types
 
     def test_custody_failure_does_not_fail_redetect(
@@ -595,7 +662,8 @@ class TestRedetectCustody:
             )
         assert result["status"] == "ok"
         redetect_calls = [
-            c for c in mock_chain.append_event.call_args_list
+            c
+            for c in mock_chain.append_event.call_args_list
             if c.args[0] == "LANGUAGE_REDETECTED"
         ]
         assert redetect_calls
@@ -635,40 +703,63 @@ class TestRedetectCLI:
     ):
         from ocr_local.features.language_detection import _cli_main
 
-        rc = _cli_main([
-            "--doc", str(fake_pdf_file),
-            "--output-base-dir", str(output_base_dir),
-            "--fasttext-model", str(language_model_file),
-        ])
+        rc = _cli_main(
+            [
+                "--doc",
+                str(fake_pdf_file),
+                "--output-base-dir",
+                str(output_base_dir),
+                "--fasttext-model",
+                str(language_model_file),
+            ]
+        )
         assert rc == 0
         captured = capsys.readouterr()
         printed = json.loads(captured.out)
         assert printed["status"] == "ok"
 
     def test_cli_returns_nonzero_on_missing_pdf(
-        self, patched_fasttext, language_model_file, output_base_dir, capsys,
+        self,
+        patched_fasttext,
+        language_model_file,
+        output_base_dir,
+        capsys,
     ):
         from ocr_local.features.language_detection import _cli_main
 
-        rc = _cli_main([
-            "--doc", "/nope/missing.pdf",
-            "--output-base-dir", str(output_base_dir),
-            "--fasttext-model", str(language_model_file),
-        ])
+        rc = _cli_main(
+            [
+                "--doc",
+                "/nope/missing.pdf",
+                "--output-base-dir",
+                str(output_base_dir),
+                "--fasttext-model",
+                str(language_model_file),
+            ]
+        )
         assert rc == 1
         captured = capsys.readouterr()
         assert json.loads(captured.out)["status"] == "error"
 
     def test_cli_returns_nonzero_when_model_missing(
-        self, patched_fitz, fake_pdf_file, output_base_dir, capsys,
+        self,
+        patched_fitz,
+        fake_pdf_file,
+        output_base_dir,
+        capsys,
     ):
         from ocr_local.features.language_detection import _cli_main
 
-        rc = _cli_main([
-            "--doc", str(fake_pdf_file),
-            "--output-base-dir", str(output_base_dir),
-            "--fasttext-model", "/nope/lid.176.bin",
-        ])
+        rc = _cli_main(
+            [
+                "--doc",
+                str(fake_pdf_file),
+                "--output-base-dir",
+                str(output_base_dir),
+                "--fasttext-model",
+                "/nope/lid.176.bin",
+            ]
+        )
         assert rc == 1
 
     def test_cli_writes_to_explicit_output(
@@ -682,12 +773,18 @@ class TestRedetectCLI:
         from ocr_local.features.language_detection import _cli_main
 
         explicit = tmp_path / "nested" / "out.language.json"
-        rc = _cli_main([
-            "--doc", str(fake_pdf_file),
-            "--output", str(explicit),
-            "--output-base-dir", str(tmp_path),
-            "--fasttext-model", str(language_model_file),
-        ])
+        rc = _cli_main(
+            [
+                "--doc",
+                str(fake_pdf_file),
+                "--output",
+                str(explicit),
+                "--output-base-dir",
+                str(tmp_path),
+                "--fasttext-model",
+                str(language_model_file),
+            ]
+        )
         assert rc == 0
         assert explicit.exists()
 
@@ -702,11 +799,16 @@ class TestRedetectCLI:
     ):
         from ocr_local.features.language_detection import _cli_main
 
-        _cli_main([
-            "--doc", str(fake_pdf_file),
-            "--output-base-dir", str(output_base_dir),
-            "--fasttext-model", str(language_model_file),
-        ])
+        _cli_main(
+            [
+                "--doc",
+                str(fake_pdf_file),
+                "--output-base-dir",
+                str(output_base_dir),
+                "--fasttext-model",
+                str(language_model_file),
+            ]
+        )
         captured = capsys.readouterr()
         # Output should be JSON-parseable
         payload = json.loads(captured.out)
@@ -721,14 +823,17 @@ class TestRedetectCLI:
 class TestPublicSurface:
     def test_redetect_document_in_all(self):
         from ocr_local.features import language_detection as ld
+
         assert "redetect_document" in ld.__all__
 
     def test_redetect_document_is_callable(self):
         from ocr_local.features.language_detection import redetect_document
+
         assert callable(redetect_document)
 
     def test_cli_main_is_callable(self):
         from ocr_local.features.language_detection import _cli_main
+
         assert callable(_cli_main)
 
     def test_redetect_document_signature_accepts_config_kwarg(self):

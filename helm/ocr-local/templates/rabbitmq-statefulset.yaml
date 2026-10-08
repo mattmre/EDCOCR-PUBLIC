@@ -1,4 +1,7 @@
 {{- if .Values.rabbitmq.enabled }}
+{{- if and .Values.image.requireDigest (gt (int .Values.rabbitmq.replicas) 1) }}
+{{- fail "rabbitmq.replicas>1 is not supported by this chart's StatefulSet: peer discovery and broker client failover are not configured; use one broker or an operator-managed RabbitMQ deployment" }}
+{{- end }}
 # =============================================================================
 # RabbitMQ Headless Service
 # =============================================================================
@@ -12,14 +15,29 @@ metadata:
 spec:
   clusterIP: None
   ports:
+    {{- if not .Values.tls.enabled }}
     - name: amqp
       port: 5672
       targetPort: amqp
       protocol: TCP
+    {{- end }}
+    {{- if .Values.tls.enabled }}
+    - name: amqps
+      port: 5671
+      targetPort: amqps
+      protocol: TCP
+    {{- end }}
+    {{- if .Values.tls.enabled }}
+    - name: management-tls
+      port: 15671
+      targetPort: management-tls
+      protocol: TCP
+    {{- else }}
     - name: management
       port: 15672
       targetPort: management
       protocol: TCP
+    {{- end }}
     - name: epmd
       port: 4369
       targetPort: epmd
@@ -69,20 +87,28 @@ spec:
       {{- end }}
       containers:
         - name: rabbitmq
-          image: "{{ .Values.rabbitmq.image.repository }}:{{ .Values.rabbitmq.image.tag }}"
+          image: {{ include "ocr-local.imageRef" (dict "image" .Values.rabbitmq.image "defaultTag" "" "requireDigest" .Values.image.requireDigest "name" "rabbitmq") | quote }}
           imagePullPolicy: IfNotPresent
           ports:
+            {{- if not .Values.tls.enabled }}
             - name: amqp
               containerPort: 5672
               protocol: TCP
+            {{- end }}
             {{- if .Values.tls.enabled }}
             - name: amqps
               containerPort: 5671
               protocol: TCP
             {{- end }}
+            {{- if .Values.tls.enabled }}
+            - name: management-tls
+              containerPort: 15671
+              protocol: TCP
+            {{- else }}
             - name: management
               containerPort: 15672
               protocol: TCP
+            {{- end }}
             - name: epmd
               containerPort: 4369
               protocol: TCP
@@ -102,17 +128,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secret
                   key: RABBITMQ_ERLANG_COOKIE
-            - name: RABBITMQ_VM_MEMORY_HIGH_WATERMARK
-              value: {{ .Values.rabbitmq.memoryHighWatermark | quote }}
-            {{- if .Values.tls.enabled }}
-            - name: RABBITMQ_SSL_CERTFILE
-              value: /etc/tls/tls.crt
-            - name: RABBITMQ_SSL_KEYFILE
-              value: /etc/tls/tls.key
-            - name: RABBITMQ_SSL_CACERTFILE
-              value: /etc/tls/ca.crt
-            {{- end }}
-            {{- /* , item C8 -- federation mTLS amqps listener.
+            {{- /* Plan C Phase 1, item C8 -- federation mTLS amqps listener.
                   When the federation mTLS overlay is on, RabbitMQ runs an
                   additional amqps listener on 5671 (for cross-cluster
                   federation peers) backed by the federation CA. */}}
@@ -136,15 +152,24 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          livenessProbe:
+          startupProbe:
             exec:
               command:
                 - rabbitmq-diagnostics
                 - -q
                 - ping
             periodSeconds: 10
-            initialDelaySeconds: 30
-            failureThreshold: 3
+            timeoutSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command:
+                - rabbitmq-diagnostics
+                - -q
+                - ping
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 5
           readinessProbe:
             exec:
               command:
@@ -152,11 +177,15 @@ spec:
                 - -q
                 - ping
             periodSeconds: 10
-            initialDelaySeconds: 10
-            failureThreshold: 3
+            timeoutSeconds: 10
+            failureThreshold: 5
           volumeMounts:
             - name: rabbitmq-data
               mountPath: /var/lib/rabbitmq
+            - name: rabbitmq-config
+              mountPath: /etc/rabbitmq/rabbitmq.conf
+              subPath: rabbitmq.conf
+              readOnly: true
             {{- if .Values.tls.enabled }}
             - name: tls-certs
               mountPath: /etc/tls
@@ -168,6 +197,12 @@ spec:
               readOnly: true
             {{- end }}
       volumes:
+        - name: rabbitmq-config
+          configMap:
+            name: {{ .Release.Name }}-rabbitmq-config
+            items:
+              - key: rabbitmq.conf
+                path: rabbitmq.conf
         {{- if .Values.tls.enabled }}
         - name: tls-certs
           secret:

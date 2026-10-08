@@ -19,6 +19,7 @@ Django models are mocked at the module boundary (same approach as
 test_pii_purge.py and test_tenant_purge.py).
 """
 
+import hashlib
 import importlib
 import json
 import os
@@ -75,11 +76,28 @@ def _build_mock_django():
 
     class _FakeSettings:
         NFS_ROOT = "/tmp/test-nfs"
+        configured = True
 
     conf_mod.settings = _FakeSettings()
 
+    class _Atomic:
+        def __call__(self, func=None):
+            return self if func is None else func
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    transaction_mod = types.ModuleType("django.db.transaction")
+    transaction_mod.atomic = _Atomic()
+    db_mod = types.ModuleType("django.db")
+    db_mod.transaction = transaction_mod
+
     # django module stubs
     django_mod = types.ModuleType("django")
+    django_mod.__path__ = []
     django_utils = types.ModuleType("django.utils")
     django_core = types.ModuleType("django.core")
     django_core_management = types.ModuleType("django.core.management")
@@ -87,6 +105,8 @@ def _build_mock_django():
     return {
         "django": django_mod,
         "django.conf": conf_mod,
+        "django.db": db_mod,
+        "django.db.transaction": transaction_mod,
         "django.utils": django_utils,
         "django.utils.timezone": tz_mod,
         "django.core": django_core,
@@ -109,9 +129,19 @@ class _FakeQuerySet:
                 if key == "status__in":
                     if getattr(item, "status", "") in value:
                         filtered.append(item)
+                elif key == "status":
+                    if getattr(item, "status", "") == value:
+                        filtered.append(item)
                 elif key == "completed_at__lt":
                     completed = getattr(item, "completed_at", None)
                     if completed is not None and completed < value:
+                        filtered.append(item)
+                elif key == "settings_json__has_key":
+                    settings_json = getattr(item, "settings_json", {})
+                    if isinstance(settings_json, dict) and value in settings_json:
+                        filtered.append(item)
+                elif key == "job_id":
+                    if getattr(item, "job_id", None) == value:
                         filtered.append(item)
                 elif key == "timestamp__lt":
                     ts = getattr(item, "timestamp", None)
@@ -134,7 +164,7 @@ class _FakeQuerySet:
     def values_list(self, *fields, flat=False):
         if flat and len(fields) == 1:
             field = fields[0]
-            return [getattr(item, field, None) for item in self._items]
+            return _FakeQuerySet([getattr(item, field, None) for item in self._items])
         return _FakeQuerySet(self._items)
 
     def count(self):
@@ -145,8 +175,17 @@ class _FakeQuerySet:
         self._items.clear()
         return (n, {})
 
+    def update(self, **kwargs):
+        for item in self._items:
+            for key, value in kwargs.items():
+                setattr(item, key, value)
+        return len(self._items)
+
     def first(self):
         return self._items[0] if self._items else None
+
+    def select_for_update(self):
+        return self
 
     def __getitem__(self, key):
         return self._items[key]
@@ -186,6 +225,10 @@ def _build_mock_job_models():
             def first(cls):
                 return cls._store[0] if cls._store else None
 
+            @classmethod
+            def select_for_update(cls):
+                return _FakeQuerySet(cls._store)
+
     class FakeCustodyEvent:
         _created = []
 
@@ -201,14 +244,79 @@ def _build_mock_job_models():
             def filter(cls, **kwargs):
                 return _FakeQuerySet(cls._store).filter(**kwargs)
 
+    class FakeCustodyArchiveHead:
+        class objects:
+            _store = []
+
+            @classmethod
+            def filter(cls, **kwargs):
+                return _FakeQuerySet(cls._store).filter(**kwargs)
+
+            @classmethod
+            def select_for_update(cls):
+                return _FakeQuerySet(cls._store)
+
+            @classmethod
+            def update_or_create(cls, chain_id, defaults):
+                existing = next(
+                    (item for item in cls._store if item.chain_id == chain_id),
+                    None,
+                )
+                if existing is None:
+                    existing = types.SimpleNamespace(chain_id=chain_id)
+                    cls._store.append(existing)
+                    created = True
+                else:
+                    created = False
+                for key, value in defaults.items():
+                    setattr(existing, key, value)
+                return existing, created
+
     models_mod.Job = FakeJob
     models_mod.CustodyEvent = FakeCustodyEvent
+    models_mod.CustodyArchiveHead = FakeCustodyArchiveHead
+
+    class FakeTaskDispatchOutbox:
+        class Status:
+            PENDING = "pending"
+            FAILED = "failed"
+            DEAD = "dead"
+
+        class objects:
+            @classmethod
+            def filter(cls, **_kwargs):
+                return _FakeQuerySet([])
+
+    class FakePresignedTaskCapability:
+        class objects:
+            @classmethod
+            def filter(cls, **_kwargs):
+                return _FakeQuerySet([])
+
+    models_mod.TaskDispatchOutbox = FakeTaskDispatchOutbox
+    models_mod.PresignedTaskCapability = FakePresignedTaskCapability
 
     jobs_mod = types.ModuleType("jobs")
+    jobs_mod.__path__ = []
+
+    tasks_mod = types.ModuleType("jobs.tasks")
+
+    class _FakeNfsBackend:
+        backend_name = "nfs"
+
+    tasks_mod._get_backend_for_job = lambda _job: _FakeNfsBackend()
+    tasks_mod._record_control_plane_custody_event = lambda **kwargs: (
+        FakeCustodyEvent.objects.create(job=None, **kwargs)
+    )
+
+    rls_mod = types.ModuleType("jobs.rls")
+    rls_mod.control_plane_rls_command = lambda func: func
 
     return {
         "jobs": jobs_mod,
         "jobs.models": models_mod,
+        "jobs.tasks": tasks_mod,
+        "jobs.rls": rls_mod,
     }
 
 
@@ -219,12 +327,24 @@ def _make_job(job_id, status="completed", completed_at=None, nfs_job_path=""):
     job.status = status
     job.completed_at = completed_at
     job.nfs_job_path = nfs_job_path
+    job.tenant_id = "tenant-test"
+    job.dispatch_generation = 0
+    job.celery_task_id = ""
+    job.settings_json = {}
     return job
 
 
-def _make_custody_event(event_id, document_id, event_type, timestamp,
-                        data=None, prev_hash="", event_hash="",
-                        job_id="job-1", worker_hostname=""):
+def _make_custody_event(
+    event_id,
+    document_id,
+    event_type,
+    timestamp,
+    data=None,
+    prev_hash="",
+    event_hash="",
+    job_id="job-1",
+    worker_hostname="",
+):
     """Create a fake CustodyEvent-like object."""
     event = MagicMock()
     event.id = event_id
@@ -233,10 +353,27 @@ def _make_custody_event(event_id, document_id, event_type, timestamp,
     event.timestamp = timestamp
     event.data = data or {}
     event.prev_hash = prev_hash
-    event.event_hash = event_hash
+    hash_payload = {
+        "document_id": document_id,
+        "event_type": event_type,
+        "timestamp": timestamp.isoformat(timespec="milliseconds"),
+        "data": event.data,
+        "prev_hash": prev_hash or None,
+    }
+    event.event_hash = (
+        event_hash
+        or hashlib.sha256(
+            json.dumps(hash_payload, sort_keys=True, default=str).encode("utf-8"),
+        ).hexdigest()
+    )
     event.job_id = job_id
+    event.tenant_id = "tenant-test"
+    event.chain_id = hashlib.sha256(
+        f"job\0{job_id}\0{document_id}".encode("utf-8")
+    ).hexdigest()
+    event.hash_version = 1
     event.worker_hostname = worker_hostname
-    event.chain_finalized = False
+    event.chain_finalized = True
     return event
 
 
@@ -257,7 +394,9 @@ def _import_command(monkeypatch, django_mocks, model_mocks, command_name):
     # Inject the real litigation_hold module so commands can import it
     lh_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "coordinator", "jobs", "litigation_hold.py",
+        "coordinator",
+        "jobs",
+        "litigation_hold.py",
     )
     lh_spec = importlib.util.spec_from_file_location("jobs.litigation_hold", lh_path)
     lh_mod = importlib.util.module_from_spec(lh_spec)
@@ -279,7 +418,11 @@ def _import_command(monkeypatch, django_mocks, model_mocks, command_name):
     )
     spec = importlib.util.spec_from_file_location(command_name, cmd_path)
     cmd_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cmd_module)
+    try:
+        spec.loader.exec_module(cmd_module)
+    except Exception:
+        _restore_modules(saved)
+        raise
 
     return cmd_module, all_mocks, saved
 
@@ -299,9 +442,12 @@ def _restore_modules(saved):
 
 
 @pytest.fixture()
-def cleanup_output_module(monkeypatch):
+def cleanup_output_module(monkeypatch, tmp_path):
     """Import cleanup_output under a mocked Django/jobs environment."""
     django_mocks = _build_mock_django()
+    # The command now enforces the configured NFS root.  Keep the mocked
+    # fixture's synthetic job directories inside that root.
+    django_mocks["django.conf"].settings.NFS_ROOT = str(tmp_path)
     model_mocks = _build_mock_job_models()
 
     cmd_module, all_mocks, saved = _import_command(
@@ -315,6 +461,7 @@ def cleanup_output_module(monkeypatch):
     FakeJob.objects._store = []
     FakeCustodyEvent._created = []
     FakeCustodyEvent.objects._store = []
+    all_mocks["jobs.models"].CustodyArchiveHead.objects._store = []
 
     yield {
         "cmd_module": cmd_module,
@@ -343,6 +490,7 @@ def rotate_audit_module(monkeypatch):
     FakeJob.objects._store = []
     FakeCustodyEvent._created = []
     FakeCustodyEvent.objects._store = []
+    all_mocks["jobs.models"].CustodyArchiveHead.objects._store = []
 
     yield {
         "cmd_module": cmd_module,
@@ -362,7 +510,9 @@ def rotate_audit_module(monkeypatch):
 class TestCleanupOutputRemovesFiles:
     """cleanup_output --confirm should remove output files for old completed jobs."""
 
-    def test_cleanup_removes_old_output_files(self, cleanup_output_module, monkeypatch, tmp_path):
+    def test_cleanup_removes_old_output_files(
+        self, cleanup_output_module, monkeypatch, tmp_path
+    ):
         """Output EXPORT subdirs are removed for old completed jobs."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
 
@@ -380,8 +530,12 @@ class TestCleanupOutputRemovesFiles:
         (text_dir / "doc.txt").write_text("fake text content")
 
         old_date = datetime.now(timezone.utc) - timedelta(days=120)
-        job = _make_job("job-1", status="completed", completed_at=old_date,
-                        nfs_job_path=str(job_dir))
+        job = _make_job(
+            "job-1",
+            status="completed",
+            completed_at=old_date,
+            nfs_job_path=str(job_dir),
+        )
         FakeJob.objects._store = [job]
 
         cmd = mod.Command()
@@ -399,7 +553,9 @@ class TestCleanupOutputRemovesFiles:
         assert not pdf_dir.exists()
         assert not text_dir.exists()
 
-    def test_cleanup_preserves_job_record(self, cleanup_output_module, monkeypatch, tmp_path):
+    def test_cleanup_preserves_job_record(
+        self, cleanup_output_module, monkeypatch, tmp_path
+    ):
         """Job records should remain after output cleanup (only files removed)."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
 
@@ -413,8 +569,12 @@ class TestCleanupOutputRemovesFiles:
         (pdf_dir / "doc.pdf").write_bytes(b"content")
 
         old_date = datetime.now(timezone.utc) - timedelta(days=100)
-        job = _make_job("job-2", status="completed", completed_at=old_date,
-                        nfs_job_path=str(job_dir))
+        job = _make_job(
+            "job-2",
+            status="completed",
+            completed_at=old_date,
+            nfs_job_path=str(job_dir),
+        )
         FakeJob.objects._store = [job]
 
         cmd = mod.Command()
@@ -427,6 +587,41 @@ class TestCleanupOutputRemovesFiles:
 
         # Job should still be in the store (not deleted)
         assert len(FakeJob.objects._store) == 1
+
+    def test_cleanup_removes_generation_and_layoutlm_outputs(
+        self, cleanup_output_module, monkeypatch, tmp_path
+    ):
+        """Retention covers versioned artifacts and LayoutLM sidecars."""
+        monkeypatch.delenv("LITIGATION_HOLD", raising=False)
+
+        mod = cleanup_output_module["cmd_module"]
+        FakeJob = cleanup_output_module["FakeJob"]
+
+        job_dir = tmp_path / "job-generation"
+        output_dir = job_dir / "output"
+        entities_dir = output_dir / "EXPORT" / "ENTITIES"
+        generations_dir = output_dir / "generations" / ("a" * 32) / "EXPORT" / "PDF"
+        entities_dir.mkdir(parents=True)
+        generations_dir.mkdir(parents=True)
+        (entities_dir / "matter_p1.entities.json").write_text("{}")
+        (generations_dir / "matter.pdf").write_bytes(b"pdf")
+
+        old_date = datetime.now(timezone.utc) - timedelta(days=120)
+        FakeJob.objects._store = [
+            _make_job(
+                "job-generation",
+                status="completed",
+                completed_at=old_date,
+                nfs_job_path=str(job_dir),
+            )
+        ]
+
+        cmd = mod.Command()
+        cmd.stdout = StringIO()
+        cmd.handle(retention_days=90, dry_run=False, confirm=True)
+
+        assert not entities_dir.exists()
+        assert not (output_dir / "generations").exists()
 
 
 # ===========================================================================
@@ -452,8 +647,12 @@ class TestCleanupOutputDryRun:
         (pdf_dir / "doc.pdf").write_bytes(b"content")
 
         old_date = datetime.now(timezone.utc) - timedelta(days=100)
-        job = _make_job("job-dry", status="completed", completed_at=old_date,
-                        nfs_job_path=str(job_dir))
+        job = _make_job(
+            "job-dry",
+            status="completed",
+            completed_at=old_date,
+            nfs_job_path=str(job_dir),
+        )
         FakeJob.objects._store = [job]
 
         cmd = mod.Command()
@@ -496,8 +695,12 @@ class TestCleanupOutputCustodyEvent:
         (pdf_dir / "doc.pdf").write_bytes(b"content")
 
         old_date = datetime.now(timezone.utc) - timedelta(days=100)
-        job = _make_job("job-ce", status="completed", completed_at=old_date,
-                        nfs_job_path=str(job_dir))
+        job = _make_job(
+            "job-ce",
+            status="completed",
+            completed_at=old_date,
+            nfs_job_path=str(job_dir),
+        )
         FakeJob.objects._store = [job]
 
         cmd = mod.Command()
@@ -508,8 +711,16 @@ class TestCleanupOutputCustodyEvent:
             confirm=True,
         )
 
-        assert len(FakeCustodyEvent._created) == 1
-        event = FakeCustodyEvent._created[0]
+        assert {item["event_type"] for item in FakeCustodyEvent._created} == {
+            "output_deletion_started",
+            "output_deleted",
+            "output_cleaned",
+        }
+        event = next(
+            item
+            for item in FakeCustodyEvent._created
+            if item["event_type"] == "output_cleaned"
+        )
         assert event["event_type"] == "output_cleaned"
         assert event["data"]["action"] == "cleanup_output"
         assert event["data"]["jobs_cleaned"] == 1
@@ -527,7 +738,9 @@ class TestCleanupOutputCustodyEvent:
 class TestCleanupOutputLitigationHold:
     """LITIGATION_HOLD should block cleanup_output."""
 
-    def test_litigation_hold_blocks_cleanup(self, cleanup_output_module, monkeypatch, tmp_path):
+    def test_litigation_hold_blocks_cleanup(
+        self, cleanup_output_module, monkeypatch, tmp_path
+    ):
         """When LITIGATION_HOLD=true, cleanup should not proceed."""
         monkeypatch.setenv("LITIGATION_HOLD", "true")
 
@@ -542,8 +755,12 @@ class TestCleanupOutputLitigationHold:
         (pdf_dir / "doc.pdf").write_bytes(b"content")
 
         old_date = datetime.now(timezone.utc) - timedelta(days=100)
-        job = _make_job("job-hold", status="completed", completed_at=old_date,
-                        nfs_job_path=str(job_dir))
+        job = _make_job(
+            "job-hold",
+            status="completed",
+            completed_at=old_date,
+            nfs_job_path=str(job_dir),
+        )
         FakeJob.objects._store = [job]
 
         cmd = mod.Command()
@@ -561,7 +778,9 @@ class TestCleanupOutputLitigationHold:
         assert pdf_dir.exists()
         assert len(FakeCustodyEvent._created) == 0
 
-    def test_litigation_hold_accepts_yes_and_one(self, cleanup_output_module, monkeypatch):
+    def test_litigation_hold_accepts_yes_and_one(
+        self, cleanup_output_module, monkeypatch
+    ):
         """LITIGATION_HOLD should accept 'yes', '1', and 'true'."""
         mod = cleanup_output_module["cmd_module"]
 
@@ -587,7 +806,9 @@ class TestCleanupOutputLitigationHold:
 class TestCleanupOutputRetentionDays:
     """cleanup_output --retention-days should control what gets cleaned."""
 
-    def test_recent_jobs_not_cleaned(self, cleanup_output_module, monkeypatch, tmp_path):
+    def test_recent_jobs_not_cleaned(
+        self, cleanup_output_module, monkeypatch, tmp_path
+    ):
         """Jobs newer than retention period should not be cleaned."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
 
@@ -602,8 +823,12 @@ class TestCleanupOutputRetentionDays:
 
         # Job completed only 10 days ago
         recent_date = datetime.now(timezone.utc) - timedelta(days=10)
-        job = _make_job("job-recent", status="completed", completed_at=recent_date,
-                        nfs_job_path=str(job_dir))
+        job = _make_job(
+            "job-recent",
+            status="completed",
+            completed_at=recent_date,
+            nfs_job_path=str(job_dir),
+        )
         FakeJob.objects._store = [job]
 
         cmd = mod.Command()
@@ -628,7 +853,9 @@ class TestCleanupOutputRetentionDays:
 class TestCleanupOutputConfirmGate:
     """cleanup_output without --confirm should not delete."""
 
-    def test_missing_confirm_blocks_deletion(self, cleanup_output_module, monkeypatch, tmp_path):
+    def test_missing_confirm_blocks_deletion(
+        self, cleanup_output_module, monkeypatch, tmp_path
+    ):
         """Without --confirm, no files should be removed."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
 
@@ -643,8 +870,12 @@ class TestCleanupOutputConfirmGate:
         (pdf_dir / "doc.pdf").write_bytes(b"content")
 
         old_date = datetime.now(timezone.utc) - timedelta(days=100)
-        job = _make_job("job-no-confirm", status="completed", completed_at=old_date,
-                        nfs_job_path=str(job_dir))
+        job = _make_job(
+            "job-no-confirm",
+            status="completed",
+            completed_at=old_date,
+            nfs_job_path=str(job_dir),
+        )
         FakeJob.objects._store = [job]
 
         cmd = mod.Command()
@@ -684,12 +915,19 @@ class TestRotateAuditLogsArchives:
 
         old_date = datetime.now(timezone.utc) - timedelta(days=3000)
         event1 = _make_custody_event(
-            1, "doc-1", "ocr_primary", old_date,
-            data={"page": 1}, prev_hash="", event_hash="aaa111",
+            1,
+            "doc-1",
+            "ocr_primary",
+            old_date,
+            data={"page": 1},
         )
         event2 = _make_custody_event(
-            2, "doc-1", "assembly_complete", old_date + timedelta(seconds=30),
-            data={"pages": 5}, prev_hash="aaa111", event_hash="bbb222",
+            2,
+            "doc-1",
+            "assembly_complete",
+            old_date + timedelta(seconds=30),
+            data={"pages": 5},
+            prev_hash=event1.event_hash,
         )
         FakeCustodyEvent.objects._store = [event1, event2]
 
@@ -719,7 +957,7 @@ class TestRotateAuditLogsArchives:
         record = json.loads(lines[0])
         assert record["document_id"] == "doc-1"
         assert record["event_type"] == "ocr_primary"
-        assert record["event_hash"] == "aaa111"
+        assert record["event_hash"] == event1.event_hash
 
 
 # ===========================================================================
@@ -818,7 +1056,9 @@ class TestRotateAuditLogsCustodyEvent:
 class TestRotateAuditLogsVerification:
     """rotate_audit_logs should verify archive integrity before deletion."""
 
-    def test_valid_archive_passes_verification(self, rotate_audit_module, monkeypatch, tmp_path):
+    def test_valid_archive_passes_verification(
+        self, rotate_audit_module, monkeypatch, tmp_path
+    ):
         """A properly written archive should pass verification."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
 
@@ -832,8 +1072,11 @@ class TestRotateAuditLogsVerification:
 
         old_date = datetime.now(timezone.utc) - timedelta(days=3000)
         event = _make_custody_event(
-            1, "doc-1", "ocr_primary", old_date,
-            data={"page": 1}, event_hash="abc123",
+            1,
+            "doc-1",
+            "ocr_primary",
+            old_date,
+            data={"page": 1},
         )
         FakeCustodyEvent.objects._store = [event]
 
@@ -857,11 +1100,18 @@ class TestRotateAuditLogsVerification:
         """The _verify_archive function should validate JSONL format."""
         mod = rotate_audit_module["cmd_module"]
 
-        # Write a valid JSONL file
+        # Write a valid finalized custody chain.
         archive_path = str(tmp_path / "test.jsonl")
-        with open(archive_path, "w") as f:
-            f.write(json.dumps({"id": 1, "event_hash": "abc"}) + "\n")
-            f.write(json.dumps({"id": 2, "event_hash": "def", "prev_hash": "abc"}) + "\n")
+        timestamp = datetime.now(timezone.utc)
+        first = _make_custody_event(1, "doc-1", "ocr_primary", timestamp)
+        second = _make_custody_event(
+            2,
+            "doc-1",
+            "assembly_complete",
+            timestamp + timedelta(seconds=1),
+            prev_hash=first.event_hash,
+        )
+        mod._write_archive([first, second], archive_path)
 
         is_valid, msg = mod._verify_archive(archive_path)
         assert is_valid
@@ -888,7 +1138,9 @@ class TestRotateAuditLogsVerification:
 class TestRotateAuditLogsLitigationHold:
     """LITIGATION_HOLD should block rotate_audit_logs."""
 
-    def test_litigation_hold_blocks_rotation(self, rotate_audit_module, monkeypatch, tmp_path):
+    def test_litigation_hold_blocks_rotation(
+        self, rotate_audit_module, monkeypatch, tmp_path
+    ):
         """When LITIGATION_HOLD=true, rotation should not proceed."""
         monkeypatch.setenv("LITIGATION_HOLD", "true")
 
@@ -915,7 +1167,9 @@ class TestRotateAuditLogsLitigationHold:
         assert len(FakeCustodyEvent.objects._store) == 1
         assert len(FakeCustodyEvent._created) == 0
 
-    def test_litigation_hold_accepts_yes_and_one(self, rotate_audit_module, monkeypatch, tmp_path):
+    def test_litigation_hold_accepts_yes_and_one(
+        self, rotate_audit_module, monkeypatch, tmp_path
+    ):
         """LITIGATION_HOLD should accept 'yes', '1', and 'true'."""
         mod = rotate_audit_module["cmd_module"]
 
@@ -942,7 +1196,9 @@ class TestRotateAuditLogsLitigationHold:
 class TestRotateAuditLogsConfirmGate:
     """rotate_audit_logs without --confirm should not archive or delete."""
 
-    def test_missing_confirm_blocks_rotation(self, rotate_audit_module, monkeypatch, tmp_path):
+    def test_missing_confirm_blocks_rotation(
+        self, rotate_audit_module, monkeypatch, tmp_path
+    ):
         """Without --confirm, no records should be archived or deleted."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
 
@@ -1043,8 +1299,12 @@ class TestCleanupOutputNoFiles:
         FakeJob = cleanup_output_module["FakeJob"]
 
         old_date = datetime.now(timezone.utc) - timedelta(days=100)
-        job = _make_job("job-nofiles", status="completed", completed_at=old_date,
-                        nfs_job_path=str(tmp_path / "nonexistent"))
+        job = _make_job(
+            "job-nofiles",
+            status="completed",
+            completed_at=old_date,
+            nfs_job_path=str(tmp_path / "nonexistent"),
+        )
         FakeJob.objects._store = [job]
 
         cmd = mod.Command()
@@ -1114,7 +1374,9 @@ class TestRotateAuditLogsEnvVar:
 class TestRotateAuditLogsChecksum:
     """rotate_audit_logs should compute and record archive checksum."""
 
-    def test_checksum_in_custody_event(self, rotate_audit_module, monkeypatch, tmp_path):
+    def test_checksum_in_custody_event(
+        self, rotate_audit_module, monkeypatch, tmp_path
+    ):
         """Archive checksum should be present in the custody event data."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
 

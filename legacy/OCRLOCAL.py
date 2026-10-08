@@ -146,9 +146,9 @@ def process_pdfs_in_folder(source_folder, output_folder):
 
 if __name__ == "__main__":
 
-    source_folder = r"C:\\MM_WORK\\EDCOCR\\ocr_source\\"
+    source_folder = r"C:\\MM_WORK\\OCR_LOCAL\\ocr_source\\"
 
-    output_folder = r"C:\\MM_WORK\\EDCOCR\\ocr_output\\"
+    output_folder = r"C:\\MM_WORK\\OCR_LOCAL\\ocr_output\\"
 
     
 

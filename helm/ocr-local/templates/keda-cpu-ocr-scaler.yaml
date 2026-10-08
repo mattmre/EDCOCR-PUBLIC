@@ -10,16 +10,18 @@ spec:
   scaleTargetRef:
     name: {{ .Release.Name }}-cpu-ocr-worker
   minReplicaCount: {{ .Values.cpuOcrWorker.autoscaling.minReplicas }}
-  maxReplicaCount: {{ .Values.cpuOcrWorker.autoscaling.maxReplicas }}
+  maxReplicaCount: {{ min .Values.cpuOcrWorker.autoscaling.maxReplicas (.Values.keda.maxReplicaCount | default 50) }}
   pollingInterval: {{ .Values.cpuOcrWorker.autoscaling.pollingInterval }}
   cooldownPeriod: {{ .Values.cpuOcrWorker.autoscaling.cooldownPeriod }}
   triggers:
     - type: rabbitmq
       metadata:
-        protocol: amqp
+        protocol: http
         queueName: {{ .Values.keda.cpuOcr.queueName | default "ocr_cpu" }}
+        vhostName: "/"
         mode: QueueLength
         value: {{ .Values.cpuOcrWorker.autoscaling.queueTarget | quote }}
+        excludeUnacknowledged: "false"
       authenticationRef:
         name: {{ .Release.Name }}-rabbitmq-auth
 {{- end }}

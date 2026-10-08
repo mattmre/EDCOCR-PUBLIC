@@ -1,12 +1,12 @@
 /**
- * Unit tests for the EDCOCR TypeScript SDK client.
+ * Unit tests for the OCR_LOCAL TypeScript SDK client.
  *
  * These tests use a mock fetch implementation to verify request
  * construction, error handling, and retry behavior without requiring
  * a live API server.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 
 import {
   EDCOCRClient,
@@ -51,9 +51,9 @@ function createMockFetch(responses: MockFetchResponse[]) {
       status: response.status,
       headers,
       ok: response.status >= 200 && response.status < 300,
-      json: async => response.body,
-      text: async => response.text ?? JSON.stringify(response.body),
-      arrayBuffer: async => new ArrayBuffer(0),
+      json: async () => response.body,
+      text: async () => response.text ?? JSON.stringify(response.body),
+      arrayBuffer: async () => new ArrayBuffer(0),
     } as unknown as Response;
   });
 
@@ -75,13 +75,17 @@ function createClient(mockFetch: typeof globalThis.fetch, overrides: Record<stri
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('EDCOCRClient', => {
-  describe('constructor', => {
-    it('throws if baseUrl is empty', => {
+describe('EDCOCRClient', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  describe('constructor', () => {
+    it('throws if baseUrl is empty', () => {
       expect(() => new EDCOCRClient({ baseUrl: '' })).toThrow('baseUrl is required');
     });
 
-    it('strips trailing slashes from baseUrl', => {
+    it('strips trailing slashes from baseUrl', () => {
       const { mockFetch, calls } = createMockFetch([
         { status: 200, body: { status: 'healthy', version: '1.0.0', uptime_seconds: 42 } },
       ]);
@@ -91,8 +95,8 @@ describe('EDCOCRClient', => {
     });
   });
 
-  describe('healthCheck', => {
-    it('returns health info on success', async => {
+  describe('healthCheck', () => {
+    it('returns health info on success', async () => {
       const { mockFetch } = createMockFetch([
         {
           status: 200,
@@ -108,7 +112,7 @@ describe('EDCOCRClient', => {
       expect(health.jobs.queued).toBe(2);
     });
 
-    it('sends X-API-Key header when apiKey is configured', async => {
+    it('sends X-API-Key header when apiKey is configured', async () => {
       const { mockFetch, calls } = createMockFetch([
         { status: 200, body: { status: 'healthy', version: '1.0.0', uptime_seconds: 0 } },
       ]);
@@ -120,7 +124,7 @@ describe('EDCOCRClient', => {
       expect(headers['X-API-Key']).toBe('test-key');
     });
 
-    it('does not send X-API-Key when no apiKey is set', async => {
+    it('does not send X-API-Key when no apiKey is set', async () => {
       const { mockFetch, calls } = createMockFetch([
         { status: 200, body: { status: 'healthy', version: '1.0.0', uptime_seconds: 0 } },
       ]);
@@ -132,8 +136,8 @@ describe('EDCOCRClient', => {
     });
   });
 
-  describe('getStatus', => {
-    it('returns job status on success', async => {
+  describe('getStatus', () => {
+    it('returns job status on success', async () => {
       const { mockFetch } = createMockFetch([
         {
           status: 200,
@@ -159,7 +163,7 @@ describe('EDCOCRClient', => {
       expect(job.progress?.pages_completed).toBe(3);
     });
 
-    it('throws NotFoundError for 404', async => {
+    it('throws NotFoundError for 404', async () => {
       const { mockFetch } = createMockFetch([
         { status: 404, body: { error: 'job_not_found', message: 'Job not found.' } },
       ]);
@@ -169,15 +173,15 @@ describe('EDCOCRClient', => {
     });
   });
 
-  describe('submitJob', => {
-    it('throws if no file provided', async => {
+  describe('submitJob', () => {
+    it('throws if no file provided', async () => {
       const { mockFetch } = createMockFetch([]);
       const client = createClient(mockFetch);
 
       await expect(client.submitJob({})).rejects.toThrow('Either filePath or fileBuffer');
     });
 
-    it('submits with fileBuffer', async => {
+    it('submits with fileBuffer', async () => {
       const { mockFetch, calls } = createMockFetch([
         {
           status: 201,
@@ -203,7 +207,7 @@ describe('EDCOCRClient', => {
       expect(headers['Content-Type']).toBeUndefined();
     });
 
-    it('includes optional fields in form data', async => {
+    it('includes optional fields in form data', async () => {
       const { mockFetch, calls } = createMockFetch([
         {
           status: 201,
@@ -235,8 +239,8 @@ describe('EDCOCRClient', => {
     });
   });
 
-  describe('cancelJob', => {
-    it('returns cancelled status', async => {
+  describe('cancelJob', () => {
+    it('returns cancelled status', async () => {
       const { mockFetch } = createMockFetch([
         {
           status: 200,
@@ -259,8 +263,8 @@ describe('EDCOCRClient', => {
     });
   });
 
-  describe('retryJob', => {
-    it('returns new job on successful retry', async => {
+  describe('retryJob', () => {
+    it('returns new job on successful retry', async () => {
       const { mockFetch } = createMockFetch([
         {
           status: 201,
@@ -281,7 +285,7 @@ describe('EDCOCRClient', => {
       expect(job.job_id).toBe('job_retry1234abc');
     });
 
-    it('throws ConflictError for non-retryable state', async => {
+    it('throws ConflictError for non-retryable state', async () => {
       const { mockFetch } = createMockFetch([
         { status: 409, body: { error: 'invalid_state', message: 'Job is processing.' } },
       ]);
@@ -291,8 +295,8 @@ describe('EDCOCRClient', => {
     });
   });
 
-  describe('listJobs', => {
-    it('returns paginated job list', async => {
+  describe('listJobs', () => {
+    it('returns paginated job list', async () => {
       const { mockFetch } = createMockFetch([
         {
           status: 200,
@@ -322,8 +326,8 @@ describe('EDCOCRClient', => {
     });
   });
 
-  describe('error handling', => {
-    it('throws AuthenticationError for 401', async => {
+  describe('error handling', () => {
+    it('throws AuthenticationError for 401', async () => {
       const { mockFetch } = createMockFetch([
         { status: 401, text: 'Unauthorized' },
       ]);
@@ -332,7 +336,7 @@ describe('EDCOCRClient', => {
       await expect(client.healthCheck()).rejects.toThrow(AuthenticationError);
     });
 
-    it('throws AuthenticationError for 403', async => {
+    it('throws AuthenticationError for 403', async () => {
       const { mockFetch } = createMockFetch([
         { status: 403, text: 'Forbidden' },
       ]);
@@ -341,7 +345,7 @@ describe('EDCOCRClient', => {
       await expect(client.healthCheck()).rejects.toThrow(AuthenticationError);
     });
 
-    it('throws RateLimitError for 429 with Retry-After', async => {
+    it('throws RateLimitError for 429 with Retry-After', async () => {
       const { mockFetch } = createMockFetch([
         { status: 429, headers: { 'retry-after': '30' }, text: 'Too Many Requests' },
       ]);
@@ -356,7 +360,7 @@ describe('EDCOCRClient', => {
       }
     });
 
-    it('throws ServerError for 500', async => {
+    it('throws ServerError for 500', async () => {
       const { mockFetch } = createMockFetch([
         { status: 500, text: 'Internal Server Error' },
       ]);
@@ -365,7 +369,7 @@ describe('EDCOCRClient', => {
       await expect(client.healthCheck()).rejects.toThrow(ServerError);
     });
 
-    it('throws generic OCRLocalError for 400', async => {
+    it('throws generic OCRLocalError for 400', async () => {
       const { mockFetch } = createMockFetch([
         { status: 400, text: 'Bad Request' },
       ]);
@@ -375,8 +379,8 @@ describe('EDCOCRClient', => {
     });
   });
 
-  describe('client lifecycle', => {
-    it('throws ClientClosedError after close()', async => {
+  describe('client lifecycle', () => {
+    it('throws ClientClosedError after close()', async () => {
       const { mockFetch } = createMockFetch([]);
       const client = createClient(mockFetch);
       client.close();
@@ -385,8 +389,71 @@ describe('EDCOCRClient', => {
     });
   });
 
-  describe('waitForCompletion', => {
-    it('returns immediately for already-completed jobs', async => {
+  describe('streamProgress', () => {
+    class MockWebSocket {
+      static instances: MockWebSocket[] = [];
+      readonly url: string;
+      readonly sent: string[] = [];
+      private openListener?: () => void;
+
+      constructor(url: string | URL) {
+        this.url = String(url);
+        MockWebSocket.instances.push(this);
+      }
+
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+        if (type === 'open') {
+          this.openListener =
+            typeof listener === 'function'
+              ? () => listener(new Event('open'))
+              : () => listener.handleEvent(new Event('open'));
+        }
+      }
+
+      send(data: string): void {
+        this.sent.push(data);
+      }
+
+      open(): void {
+        this.openListener?.();
+      }
+    }
+
+    it('keeps the API key out of the WebSocket URL and authenticates in the first frame', () => {
+      MockWebSocket.instances = [];
+      vi.stubGlobal('WebSocket', MockWebSocket);
+      const { mockFetch } = createMockFetch([]);
+      const client = createClient(mockFetch, { apiKey: 'secret-key?with=symbols' });
+
+      client.streamProgress('job_abc123');
+      const socket = MockWebSocket.instances[0];
+
+      expect(socket.url).toBe('ws://localhost:8000/ws/jobs/job_abc123');
+      expect(socket.url).not.toContain('secret-key');
+      expect(socket.sent).toEqual([]);
+
+      socket.open();
+      expect(socket.sent).toEqual([
+        JSON.stringify({ type: 'auth', api_key: 'secret-key?with=symbols' }),
+      ]);
+    });
+
+    it('does not send an auth frame when no API key is configured', () => {
+      MockWebSocket.instances = [];
+      vi.stubGlobal('WebSocket', MockWebSocket);
+      const { mockFetch } = createMockFetch([]);
+      const client = createClient(mockFetch, { apiKey: undefined });
+
+      client.streamProgress('job_abc123');
+      const socket = MockWebSocket.instances[0];
+      socket.open();
+
+      expect(socket.sent).toEqual([]);
+    });
+  });
+
+  describe('waitForCompletion', () => {
+    it('returns immediately for already-completed jobs', async () => {
       const { mockFetch } = createMockFetch([
         {
           status: 200,
@@ -407,7 +474,7 @@ describe('EDCOCRClient', => {
       expect(result.status).toBe('completed');
     });
 
-    it('invokes onProgress callback', async => {
+    it('invokes onProgress callback', async () => {
       const { mockFetch } = createMockFetch([
         {
           status: 200,
@@ -432,8 +499,8 @@ describe('EDCOCRClient', => {
     });
   });
 
-  describe('retry behavior', => {
-    it('retries on server error when maxRetries > 1', async => {
+  describe('retry behavior', () => {
+    it('retries on server error when maxRetries > 1', async () => {
       const { mockFetch, calls } = createMockFetch([
         { status: 500, text: 'Error' },
         { status: 200, body: { status: 'healthy', version: '1.0.0', uptime_seconds: 0 } },
@@ -445,7 +512,7 @@ describe('EDCOCRClient', => {
       expect(calls).toHaveLength(2);
     });
 
-    it('does not retry 401 errors', async => {
+    it('does not retry 401 errors', async () => {
       const { mockFetch, calls } = createMockFetch([
         { status: 401, text: 'Unauthorized' },
         { status: 200, body: { status: 'healthy' } },
@@ -456,7 +523,7 @@ describe('EDCOCRClient', => {
       expect(calls).toHaveLength(1);
     });
 
-    it('does not retry 404 errors', async => {
+    it('does not retry 404 errors', async () => {
       const { mockFetch, calls } = createMockFetch([
         { status: 404, text: 'Not Found' },
         { status: 200, body: {} },
@@ -468,8 +535,8 @@ describe('EDCOCRClient', => {
     });
   });
 
-  describe('enums and constants', => {
-    it('JobStatus enum has expected values', => {
+  describe('enums and constants', () => {
+    it('JobStatus enum has expected values', () => {
       expect(JobStatus.QUEUED).toBe('queued');
       expect(JobStatus.PROCESSING).toBe('processing');
       expect(JobStatus.COMPLETED).toBe('completed');
@@ -477,13 +544,13 @@ describe('EDCOCRClient', => {
       expect(JobStatus.CANCELLED).toBe('cancelled');
     });
 
-    it('SDK_VERSION is a valid semver string', => {
-      expect(SDK_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+    it('SDK_VERSION is a valid semver string', () => {
+      expect(SDK_VERSION).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
     });
   });
 
-  describe('error class hierarchy', => {
-    it('all error classes extend OCRLocalError', => {
+  describe('error class hierarchy', () => {
+    it('all error classes extend OCRLocalError', () => {
       expect(new AuthenticationError('test')).toBeInstanceOf(OCRLocalError);
       expect(new NotFoundError('test')).toBeInstanceOf(OCRLocalError);
       expect(new RateLimitError('test')).toBeInstanceOf(OCRLocalError);
@@ -493,7 +560,7 @@ describe('EDCOCRClient', => {
       expect(new ConflictError('test')).toBeInstanceOf(OCRLocalError);
     });
 
-    it('error classes carry statusCode and responseBody', => {
+    it('error classes carry statusCode and responseBody', () => {
       const err = new ServerError('fail', 502, '{"error":"bad_gateway"}');
       expect(err.statusCode).toBe(502);
       expect(err.responseBody).toBe('{"error":"bad_gateway"}');
@@ -501,7 +568,7 @@ describe('EDCOCRClient', => {
       expect(err.name).toBe('ServerError');
     });
 
-    it('RateLimitError carries retryAfterSeconds', => {
+    it('RateLimitError carries retryAfterSeconds', () => {
       const err = new RateLimitError('limit', 429, '', 60);
       expect(err.retryAfterSeconds).toBe(60);
     });

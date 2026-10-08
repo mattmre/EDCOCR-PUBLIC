@@ -1,4 +1,4 @@
-"""Tests for classify_source_file consolidation.
+"""Tests for maintenance review: classify_source_file consolidation.
 
 Verifies that the canonical ``classify_source_file`` in
 ``ocr_distributed.ocr_utils`` correctly handles both worker and coordinator

@@ -263,7 +263,7 @@ class TestSubprocessExtraction:
         """_extract_chunk_in_subprocess returns list of (page_num, bytes) tuples."""
         img = _make_rgb_image(100, 100)
 
-        with patch("ocr_gpu_async.convert_from_path") as mock_convert, \
+        with patch("ocr_gpu_async.convert_from_path") as mock_convert,\
              patch("ocr_gpu_async._PDF2IMAGE_AVAILABLE", True):
             mock_convert.return_value = [img, img, img]
             result = ocr_gpu_async._extract_chunk_in_subprocess(
@@ -280,7 +280,7 @@ class TestSubprocessExtraction:
         """Returned page numbers match the requested start..end range."""
         img = _make_rgb_image(100, 100)
 
-        with patch("ocr_gpu_async.convert_from_path") as mock_convert, \
+        with patch("ocr_gpu_async.convert_from_path") as mock_convert,\
              patch("ocr_gpu_async._PDF2IMAGE_AVAILABLE", True):
             mock_convert.return_value = [img, img]
             result = ocr_gpu_async._extract_chunk_in_subprocess(

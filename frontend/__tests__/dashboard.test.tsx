@@ -6,9 +6,9 @@ import { setApiKey } from "@/lib/auth";
 
 const pushMock = vi.fn();
 
-vi.mock("next/navigation", => ({
-  useRouter: => ({ push: pushMock }),
-  usePathname: => "/dashboard",
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: pushMock }),
+  usePathname: () => "/dashboard",
 }));
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -20,7 +20,7 @@ function jsonResponse(status: number, body: unknown): Response {
 
 const HEALTH_OK = {
   status: "healthy",
-  version: "4.1.0",
+  version: "1.2.1",
   uptime_seconds: 12345,
   jobs: { submitted: 2, processing: 1, completed: 9, failed: 0 },
   checks: {
@@ -99,7 +99,7 @@ function routeFetch(url: string): Response {
   return jsonResponse(404, { detail: "not found" });
 }
 
-describe("DashboardPage", => {
+describe("DashboardPage", () => {
   beforeEach(() => {
     setApiKey("test-key");
     pushMock.mockClear();
@@ -110,7 +110,7 @@ describe("DashboardPage", => {
     vi.restoreAllMocks();
   });
 
-  it("renders metrics from the API", async => {
+  it("renders metrics from the API", async () => {
     (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       async (input: RequestInfo | URL) => {
         const url = typeof input === "string" ? input : input.toString();
@@ -122,7 +122,7 @@ describe("DashboardPage", => {
 
     // Pipeline status card description appears once the health probe lands.
     await waitFor(() => {
-      expect(screen.getByText(/version 4.1.0/i)).toBeInTheDocument();
+      expect(screen.getByText(/version 1.2.1/i)).toBeInTheDocument();
     });
 
     // Throughput cell.
@@ -131,7 +131,7 @@ describe("DashboardPage", => {
     // Fleet "3 / 4 online".
     expect(screen.getByText(/3 \/ 4 online/i)).toBeInTheDocument();
 
-    expect(screen.getByText("EXTERNAL_TRANSLATION")).toBeInTheDocument();
+    expect(screen.getByText("EDC_TRANSLATION")).toBeInTheDocument();
     expect(screen.getByText(/external translation preference is disabled/i)).toBeInTheDocument();
 
     // Recent jobs table renders rows.
@@ -143,7 +143,7 @@ describe("DashboardPage", => {
     ).toBeInTheDocument();
   });
 
-  it("falls back when /dashboard and /fleet return 404", async => {
+  it("falls back when /dashboard and /fleet return 404", async () => {
     (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       async (input: RequestInfo | URL) => {
         const url = typeof input === "string" ? input : input.toString();
@@ -166,7 +166,67 @@ describe("DashboardPage", => {
     expect(screen.getByText(/2 queued/i)).toBeInTheDocument();
   });
 
-  it("shows an error card when /health/detailed fails", async => {
+  it("renders unknown queue state when both snapshot and health lack counts", async () => {
+    const HEALTH_NO_JOBS = {
+      status: "healthy",
+      version: "1.2.1",
+      uptime_seconds: 12345,
+      checks: {
+        external_translation: {
+          status: "healthy",
+          message: "external translation preference is disabled",
+        },
+      },
+    };
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/v1/dashboard")) return jsonResponse(404, { detail: "disabled" });
+        if (url.includes("/api/v1/fleet")) return jsonResponse(404, { detail: "disabled" });
+        if (url.includes("/api/v1/health/detailed")) return jsonResponse(200, HEALTH_NO_JOBS);
+        if (url.includes("/api/v1/jobs")) return jsonResponse(200, JOBS_OK);
+        return jsonResponse(404, { detail: "not found" });
+      }
+    );
+
+    render(<DashboardPage />);
+
+    // Unknown sources must render "—", never a fabricated "0 queued".
+    await waitFor(() => {
+      expect(screen.getByText(/Queue counts unavailable/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/0 queued/i)).toBeNull();
+  });
+
+  it("redirects to /login and never shows 0 queued on revoked key", async () => {
+    const assignMock = vi.fn();
+    const originalLocation = window.location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      writable: true,
+      value: { assign: assignMock, pathname: "/dashboard" },
+    });
+    try {
+      (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+        async () => jsonResponse(401, { detail: "bad key" })
+      );
+
+      render(<DashboardPage />);
+
+      await waitFor(() => {
+        expect(assignMock).toHaveBeenCalledWith("/login");
+      });
+      expect(screen.queryByText(/0 queued/i)).toBeNull();
+    } finally {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        writable: true,
+        value: originalLocation,
+      });
+    }
+  });
+
+  it("shows an error card when /health/detailed fails", async () => {
     (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       async (input: RequestInfo | URL) => {
         const url = typeof input === "string" ? input : input.toString();
@@ -185,7 +245,7 @@ describe("DashboardPage", => {
     expect(within(errorCard).getByRole("button", { name: /retry/i })).toBeInTheDocument();
   });
 
-  it("navigates to /jobs?selected=... on row click", async => {
+  it("opens /jobs/<id> from the row, the id link, and Enter", async () => {
     (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       async (input: RequestInfo | URL) => {
         const url = typeof input === "string" ? input : input.toString();
@@ -197,10 +257,17 @@ describe("DashboardPage", => {
     render(<DashboardPage />);
 
     const row = await screen.findByTestId("recent-jobs-row-job_aaaaaaaaaaaa");
-    await user.click(row);
+    const link = within(row).getByRole("link", { name: "job_aaaaaaaaaaaa" });
+    expect(link).toHaveAttribute("href", "/jobs/job_aaaaaaaaaaaa");
 
-    expect(pushMock).toHaveBeenCalledWith(
-      "/jobs?selected=job_aaaaaaaaaaaa"
+    row.focus();
+    await user.keyboard("{Enter}");
+    expect(pushMock).toHaveBeenCalledWith("/jobs/job_aaaaaaaaaaaa");
+
+    await user.click(row);
+    expect(pushMock).toHaveBeenCalledWith("/jobs/job_aaaaaaaaaaaa");
+    expect(pushMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("selected=")
     );
   });
 });

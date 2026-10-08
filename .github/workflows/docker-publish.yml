@@ -41,6 +41,10 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
+      - name: Bind runtime source
+        id: source
+        run: echo "sha256=$(python3 scripts/runtime_source_fingerprint.py --profile root-cpu)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -49,10 +53,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # amd64 only. The main OCR pipeline image installs
-          # paddlepaddle==2.6.2 and paddleocr, which do not publish
-          # linux/arm64 manylinux wheels. Production deployment is also
-          # GPU-oriented (NVIDIA CUDA), which is amd64-only in practice.
+          build-args: |
+            SOURCE_REVISION=${{ github.sha }}
+            SOURCE_TREE_SHA256=${{ steps.source.outputs.sha256 }}
+          # Published platform scope; other architectures require separate qualification.
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -92,19 +96,22 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
+      - name: Bind runtime source
+        id: source
+        run: echo "sha256=$(python3 scripts/runtime_source_fingerprint.py --profile coordinator)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
-          context: ./coordinator
+          context: .
           file: ./coordinator/Dockerfile.coordinator
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Multi-architecture build. The coordinator image is
-          # pure-Python (Django + Celery client + coordinator/requirements.txt
-          # only) with no paddlepaddle, torch, or CUDA dependencies, so it
-          # builds cleanly for both linux/amd64 and linux/arm64 (Apple
-          # Silicon, AWS Graviton, Raspberry Pi).
+          build-args: |
+            SOURCE_REVISION=${{ github.sha }}
+            SOURCE_TREE_SHA256=${{ steps.source.outputs.sha256 }}
+          # Build targets; runtime acceptance is recorded separately.
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -137,19 +144,23 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
+      - name: Bind runtime source
+        id: source
+        run: echo "sha256=$(python3 scripts/runtime_source_fingerprint.py --profile worker)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
-          context: ./coordinator
+          context: .
           file: ./coordinator/Dockerfile.worker
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: SKIP_MODEL_PRELOAD=1
-          # amd64 only. The GPU worker image installs the full
-          # root requirements.txt (paddlepaddle==2.6.2, paddleocr) which
-          # only publishes linux/amd64 wheels. Runtime is also targeted
-          # at NVIDIA CUDA GPUs, which are amd64-only in practice.
+          build-args: |
+            SKIP_MODEL_PRELOAD=0
+            SOURCE_REVISION=${{ github.sha }}
+            SOURCE_TREE_SHA256=${{ steps.source.outputs.sha256 }}
+          # Published platform scope; other architectures require separate qualification.
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -182,19 +193,23 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
+      - name: Bind runtime source
+        id: source
+        run: echo "sha256=$(python3 scripts/runtime_source_fingerprint.py --profile worker)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
-          context: ./coordinator
+          context: .
           file: ./coordinator/Dockerfile.worker.ocr
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: SKIP_MODEL_PRELOAD=1
-          # amd64 only. The OCR-only worker image installs
-          # paddlepaddle==2.6.2 and paddleocr from the root requirements.txt.
-          # These do not publish linux/arm64 manylinux wheels, and runtime
-          # targets NVIDIA CUDA GPUs.
+          build-args: |
+            SKIP_MODEL_PRELOAD=0
+            SOURCE_REVISION=${{ github.sha }}
+            SOURCE_TREE_SHA256=${{ steps.source.outputs.sha256 }}
+          # Published platform scope; other architectures require separate qualification.
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -227,18 +242,23 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
+      - name: Bind runtime source
+        id: source
+        run: echo "sha256=$(python3 scripts/runtime_source_fingerprint.py --profile worker)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
-          context: ./coordinator
+          context: .
           file: ./coordinator/Dockerfile.worker.nlp
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: SKIP_MODEL_PRELOAD=1
-          # amd64 only. The NLP worker image installs the full root
-          # requirements.txt (including paddlepaddle==2.6.2 for NLP fallback
-          # paths), which only publishes linux/amd64 wheels.
+          build-args: |
+            SKIP_MODEL_PRELOAD=0
+            SOURCE_REVISION=${{ github.sha }}
+            SOURCE_TREE_SHA256=${{ steps.source.outputs.sha256 }}
+          # Published platform scope; other architectures require separate qualification.
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -271,19 +291,23 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
+      - name: Bind runtime source
+        id: source
+        run: echo "sha256=$(python3 scripts/runtime_source_fingerprint.py --profile worker)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
-          context: ./coordinator
+          context: .
           file: ./coordinator/Dockerfile.worker.layoutlm
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: SKIP_MODEL_PRELOAD=1
-          # amd64 only. The LayoutLM worker also installs the root
-          # requirements.txt (paddlepaddle==2.6.2) alongside torch, and the
-          # default production build targets GPU/CUDA runtime. Keep this
-          # image amd64-only for parity with the other worker images.
+          build-args: |
+            SKIP_MODEL_PRELOAD=0
+            SOURCE_REVISION=${{ github.sha }}
+            SOURCE_TREE_SHA256=${{ steps.source.outputs.sha256 }}
+          # Published platform scope; other architectures require separate qualification.
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max

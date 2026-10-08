@@ -1,3 +1,24 @@
+{{- $staged := .Values.ocrStagedPage.enabled }}
+{{- $inference := .Values.gpuWorker.stagedInference }}
+{{- if $staged }}
+  {{- if or (eq (lower (toString (index .Values.coordinator.env "OCR_PER_GPU_STRICT" | default "false"))) "true") (eq (lower (toString (index .Values.coordinator.env "ENABLE_PER_GPU_QUEUES" | default "false"))) "true") (eq (lower (toString (index .Values.gpuWorker.env "ENABLE_PER_GPU_QUEUES" | default "false"))) "true") }}
+    {{- fail "staged GPU worker consumes shared ocr_gpu only; strict indexed per-GPU queues require an explicitly matched consumer topology" }}
+  {{- end }}
+  {{- if eq $inference.pool "prefork" }}
+    {{- if or (ne (int $inference.concurrency) 1) (ne (int $inference.slotsPerDevice) 1) (ne (int $inference.replicasPerKey) 1) }}
+      {{- fail "staged prefork GPU profile requires one process, one device slot and one model replica" }}
+    {{- end }}
+  {{- else if eq $inference.pool "threads" }}
+    {{- if or (lt (int $inference.concurrency) 2) (gt (int $inference.concurrency) 4) (ne (int $inference.slotsPerDevice) (int $inference.concurrency)) (ne (int $inference.replicasPerKey) (int $inference.concurrency)) }}
+      {{- fail "staged threaded GPU profile requires 2-4 threads with matching device slots and model replicas" }}
+    {{- end }}
+    {{- if or (le (int $inference.deviceMemoryMiB) 0) (le (int $inference.modelReplicaMiB) 0) (le (int $inference.runtimeReserveMiB) 0) (gt (add (mul (int $inference.concurrency) (int $inference.modelReplicaMiB)) (int $inference.runtimeReserveMiB)) (int $inference.deviceMemoryMiB)) }}
+      {{- fail "staged threaded GPU profile requires an explicit positive model-copy and runtime memory budget within device memory" }}
+    {{- end }}
+  {{- else }}
+    {{- fail "staged GPU inference pool must be prefork or threads" }}
+  {{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,7 +45,9 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      {{- include "ocr-local.imagePullSecrets" . | nindent 6 }}
       terminationGracePeriodSeconds: {{ .Values.workerTerminationGracePeriodSeconds | default 360 }}
+      {{- include "ocr-local.haScheduling" (dict "root" . "component" "gpu-worker") | nindent 6 }}
       {{- with .Values.gpuWorker.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -57,41 +80,70 @@ spec:
                   requests:
                     storage: {{ .Values.workerSecurity.stagingVolume.pvc.size }}
           {{- end }}
+        {{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+        - name: nfs-data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-nfs-data
+        {{- end }}
+        {{- include "ocr-local.tlsCaVolume" . | nindent 8 }}
+      initContainers:
+        {{- include "ocr-local.schemaReadinessInit" (dict "root" . "envKind" "worker" "securityContext" .Values.gpuWorker.containerSecurityContext) | nindent 8 }}
       containers:
         - name: gpu-worker
           image: {{ include "ocr-local.workerImage" . }}
           imagePullPolicy: {{ .Values.image.worker.pullPolicy | default "IfNotPresent" }}
-          command:
+          # Preserve Dockerfile.worker.gpu's CUDA/tensor-verifying ENTRYPOINT;
+          # args replaces only the image CMD.
+          args:
             - celery
             - -A
             - coordinator.coordinator
             - worker
             - --loglevel=info
-            - --queues={{ .Values.gpuWorker.queues }}
-            - --concurrency={{ .Values.gpuWorker.concurrency }}
+            - --queues={{ ternary "ocr_gpu" .Values.gpuWorker.queues .Values.ocrStagedPage.enabled }}
+            {{- if $staged }}
+            - --pool={{ $inference.pool }}
+            {{- end }}
+            - --concurrency={{ ternary $inference.concurrency .Values.gpuWorker.concurrency $staged }}
+            {{- if or (not $staged) (eq $inference.pool "prefork") }}
             - --max-tasks-per-child={{ .Values.gpuWorker.maxTasksPerChild }}
+            {{- end }}
             - --hostname=gpu-worker@%h
           volumeMounts:
             - name: dshm
               mountPath: /dev/shm
             - name: staging-volume
               mountPath: {{ .Values.workerSecurity.stagingVolume.mountPath }}
-          envFrom:
-            - configMapRef:
-                name: {{ .Release.Name }}-config
-            - secretRef:
-                name: {{ .Release.Name }}-secret
-            {{- if .Values.federation.enabled }}
-            - configMapRef:
-                name: {{ .Release.Name }}-federation-overlay
+            {{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+            - name: nfs-data
+              mountPath: {{ .Values.storage.nfs.mountPath | default "/shared" }}
             {{- end }}
+            {{- include "ocr-local.tlsCaVolumeMount" . | nindent 12 }}
+          {{- include "ocr-local.workerEnvFrom" . | nindent 10 }}
           env:
+            {{- include "ocr-local.workerSecretEnv" . | nindent 12 }}
             - name: WORKER_QUEUES
-              value: {{ .Values.gpuWorker.queues | quote }}
+              value: {{ ternary "ocr_gpu" .Values.gpuWorker.queues .Values.ocrStagedPage.enabled | quote }}
             - name: WORKER_CONCURRENCY
-              value: {{ .Values.gpuWorker.concurrency | quote }}
+              value: {{ ternary $inference.concurrency .Values.gpuWorker.concurrency $staged | quote }}
             - name: FASTTEXT_MODEL_PATH
               value: /app/models/lid.176.bin
+            {{- range $key, $val := .Values.gpuWorker.env }}
+            {{- if not (and $staged (has $key (list "OCR_INFERENCE_SLOTS_PER_DEVICE" "OCR_ENGINE_REPLICAS_PER_KEY" "OCR_WORKER_CAPABILITY" "OCR_SEPARATE_TESSERACT_LANE"))) }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if $staged }}
+            - name: OCR_INFERENCE_SLOTS_PER_DEVICE
+              value: {{ $inference.slotsPerDevice | quote }}
+            - name: OCR_ENGINE_REPLICAS_PER_KEY
+              value: {{ $inference.replicasPerKey | quote }}
+            - name: OCR_WORKER_CAPABILITY
+              value: "paddle"
+            - name: OCR_SEPARATE_TESSERACT_LANE
+              value: "true"
+            {{- end }}
           startupProbe:
             exec:
               command:
@@ -103,12 +155,8 @@ spec:
           readinessProbe:
             exec:
               command:
-                - celery
-                - -A
-                - coordinator.coordinator
-                - inspect
-                - ping
-                - --timeout=5
+                - python3
+                - /app/coordinator/worker_healthcheck.py
             initialDelaySeconds: 10
             periodSeconds: 15
             failureThreshold: 3
@@ -116,12 +164,8 @@ spec:
           livenessProbe:
             exec:
               command:
-                - celery
-                - -A
-                - coordinator.coordinator
-                - inspect
-                - ping
-                - --timeout=10
+                - python3
+                - /app/coordinator/worker_healthcheck.py
             periodSeconds: 60
           resources:
             {{- toYaml .Values.gpuWorker.resources | nindent 12 }}

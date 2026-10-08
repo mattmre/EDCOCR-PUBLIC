@@ -20,7 +20,6 @@ from ocr_local.translation.engines import ENGINE_REGISTRY
 from ocr_local.translation.engines.local_ct2_madlad import MADLADEngine
 from ocr_local.translation.engines.local_ct2_nllb import NLLBEngine
 from ocr_local.translation.engines.local_ct2_opus import OpusMTEngine
-from ocr_local.translation.models import SpanTranslation
 
 _HAS_CT2 = importlib.util.find_spec("ctranslate2") is not None
 
@@ -94,6 +93,19 @@ def test_opus_init_raises_without_ct2():
             OpusMTEngine(model_dir="models/opus")
 
 
+def test_opus_init_reports_missing_sentencepiece(monkeypatch, tmp_path):
+    model_dir = tmp_path / "opus"
+    model_dir.mkdir()
+    (model_dir / "source.spm").write_text("fixture", encoding="utf-8")
+    (model_dir / "target.spm").write_text("fixture", encoding="utf-8")
+
+    monkeypatch.setitem(sys.modules, "ctranslate2", mock.MagicMock())
+    monkeypatch.setitem(sys.modules, "sentencepiece", None)
+
+    with pytest.raises(RuntimeError, match="sentencepiece"):
+        OpusMTEngine(model_dir=str(model_dir))
+
+
 def test_nllb_init_raises_without_ct2():
     with mock.patch.dict(sys.modules, {"ctranslate2": None}):
         with pytest.raises(RuntimeError, match="ctranslate2"):
@@ -138,38 +150,36 @@ def test_all_ct2_engines_retention_local_only():
 
 
 # ---------------------------------------------------------------------------
-# Stub translation path (runs without ctranslate2 or model weights)
+# Fail-closed translation path (no synthetic translations)
 # ---------------------------------------------------------------------------
 
 
-def test_opus_stub_translate_returns_spans():
+def test_opus_without_model_fails_closed():
     engine = OpusMTEngine()
     spans = [{"text": "hello", "span_id": "s0", "bbox": [0, 0, 10, 10]}]
-    out = engine.translate_spans(spans, "en", "fr")
-    assert isinstance(out, list)
-    assert all(isinstance(o, SpanTranslation) for o in out)
-    assert out[0].target_text == "[OPUS-MT stub] hello"
+    with pytest.raises(RuntimeError, match="model_dir is required"):
+        engine.translate_spans(spans, "en", "fr")
 
 
-def test_nllb_stub_translate_returns_spans():
+def test_nllb_adapter_fails_closed():
     engine = NLLBEngine()
     spans = [{"text": "world", "span_id": "s0"}]
-    out = engine.translate_spans(spans, "en", "fr")
-    assert out[0].target_text == "[NLLB-200 stub] world"
+    with pytest.raises(RuntimeError, match="model_dir is required"):
+        engine.translate_spans(spans, "en", "fr")
 
 
-def test_madlad_stub_translate_returns_spans():
+def test_madlad_adapter_fails_closed():
     engine = MADLADEngine()
     spans = [{"text": "foo", "span_id": "s0"}]
-    out = engine.translate_spans(spans, "en", "fr")
-    assert out[0].target_text == "[MADLAD-400 stub] foo"
+    with pytest.raises(RuntimeError, match="model_dir is required"):
+        engine.translate_spans(spans, "en", "fr")
 
 
-def test_opus_stub_span_count_matches():
-    engine = OpusMTEngine()
-    spans = [{"text": f"line {i}", "span_id": f"s{i}"} for i in range(5)]
-    out = engine.translate_spans(spans, "en", "fr")
-    assert len(out) == len(spans)
+def test_ct2_adapters_are_production_ready_fail_closed_without_model():
+    """PG-17: real CT2 path implemented; still fail-closed without model_dir."""
+    assert NLLBEngine.production_ready is True
+    assert MADLADEngine.production_ready is True
+    assert OpusMTEngine.production_ready is True
 
 
 def test_model_provenance_has_required_keys():
@@ -205,12 +215,18 @@ def test_opus_model_provenance_loads_provenance_json(tmp_path):
     assert engine.model_provenance() == payload
 
 
-def test_stub_deterministic():
-    engine = OpusMTEngine()
-    spans = [{"text": "hello world", "span_id": "s0"}]
-    out1 = engine.translate_spans(spans, "en", "fr", seed=42)
-    out2 = engine.translate_spans(spans, "en", "fr", seed=42)
-    assert out1[0].target_text == out2[0].target_text
+def test_router_excludes_unimplemented_adapters():
+    from ocr_local.translation.models import TranslationRequest
+    from ocr_local.translation.policy import TenantPolicy
+    from ocr_local.translation.router import _rank_candidates
+
+    ranked = _rank_candidates(
+        TranslationRequest(src_lang="en", tgt_lang="fr", tenant_id="tenant-a"),
+        TenantPolicy(tenant_id="tenant-a", allow_nllb_commercial=True),
+    )
+    ids = {engine.capability.id for engine in ranked}
+    assert "local_ct2_nllb" not in ids
+    assert "local_ct2_madlad" not in ids
 
 
 def test_handles_handwriting_natively_false():

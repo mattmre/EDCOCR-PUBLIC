@@ -1,4 +1,4 @@
-"""Tests for doc_registry thread safety.
+"""Tests for doc_registry thread safety (maintenance review).
 
 Verifies that concurrent access to doc_registry from multiple threads
 does not raise RuntimeError due to dictionary mutation during iteration.

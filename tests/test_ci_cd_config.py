@@ -1,7 +1,9 @@
 """Tests for CI/CD configuration files.
 
-Validates that Dependabot, security audit, SBOM generation,
-and auto-merge workflows are properly configured.
+Validates that the security audit and SBOM generation workflows are properly
+configured, and that the deliberately-disabled Dependabot posture (no version
+updates, no auto-merge workflow) stays disabled — see
+docs/release-candidate.md R4.
 """
 
 from pathlib import Path
@@ -23,82 +25,6 @@ def _load_yaml(path: Path) -> dict:
     """Load and parse a YAML file."""
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
-
-
-# ---------------------------------------------------------------------------
-# Dependabot configuration
-# ---------------------------------------------------------------------------
-
-class TestDependabotConfig:
-    """Validate .github/dependabot.yml structure and ecosystems."""
-
-    @pytest.fixture(autouse=True)
-    def _load(self):
-        self.path = GITHUB_DIR / "dependabot.yml"
-        assert self.path.exists(), f"dependabot.yml not found at {self.path}"
-        self.cfg = _load_yaml(self.path)
-
-    def test_version_is_2(self):
-        assert self.cfg["version"] == 2
-
-    def test_has_updates_list(self):
-        assert "updates" in self.cfg
-        assert isinstance(self.cfg["updates"], list)
-        assert len(self.cfg["updates"]) >= 4  # pip root, pip coordinator, npm, docker
-
-    def _find_ecosystem(self, ecosystem: str, directory: str = "/"):
-        """Return the update entry matching ecosystem + directory."""
-        for entry in self.cfg["updates"]:
-            if entry["package-ecosystem"] == ecosystem and entry["directory"] == directory:
-                return entry
-        pytest.fail(f"No {ecosystem} entry for directory {directory}")
-
-    def test_pip_root_ecosystem(self):
-        entry = self._find_ecosystem("pip", "/")
-        assert entry["schedule"]["interval"] == "weekly"
-        assert "dependencies" in entry["labels"]
-        assert "python" in entry["labels"]
-
-    def test_pip_coordinator_ecosystem(self):
-        entry = self._find_ecosystem("pip", "/coordinator")
-        assert entry["schedule"]["interval"] == "weekly"
-        assert "coordinator" in entry["labels"]
-
-    def test_npm_typescript_sdk_ecosystem(self):
-        entry = self._find_ecosystem("npm", "/sdk/typescript")
-        assert entry["schedule"]["interval"] == "weekly"
-        assert "typescript" in entry["labels"]
-
-    def test_docker_root_ecosystem(self):
-        entry = self._find_ecosystem("docker", "/")
-        assert entry["schedule"]["interval"] in ("weekly", "monthly")
-        assert "docker" in entry["labels"]
-
-    def test_terraform_ecosystem(self):
-        entry = self._find_ecosystem("terraform", "/terraform")
-        assert entry["schedule"]["interval"] == "monthly"
-        assert "terraform" in entry["labels"]
-
-    def test_github_actions_ecosystem(self):
-        entry = self._find_ecosystem("github-actions", "/")
-        assert entry["schedule"]["interval"] in ("weekly", "monthly")
-        assert "github-actions" in entry["labels"]
-
-    def test_minor_patch_grouping(self):
-        """At least the pip-root entry should group minor+patch updates."""
-        entry = self._find_ecosystem("pip", "/")
-        groups = entry.get("groups", {})
-        assert "minor-and-patch" in groups
-        update_types = groups["minor-and-patch"]["update-types"]
-        assert "minor" in update_types
-        assert "patch" in update_types
-
-    def test_all_entries_have_labels(self):
-        for entry in self.cfg["updates"]:
-            assert "labels" in entry, (
-                f"{entry['package-ecosystem']} ({entry['directory']}) is missing labels"
-            )
-            assert "dependencies" in entry["labels"]
 
 
 # ---------------------------------------------------------------------------
@@ -194,57 +120,32 @@ class TestCISBOMGeneration:
 
 
 # ---------------------------------------------------------------------------
-# Dependabot auto-merge workflow
+# Dependabot disabled posture (version updates + auto-merge removed 2026-07-16)
 # ---------------------------------------------------------------------------
 
-class TestDependabotAutoMerge:
-    """Validate .github/workflows/dependabot-auto-merge.yml."""
+class TestDependabotDisabled:
+    """Lock in the disabled Dependabot posture.
 
-    @pytest.fixture(autouse=True)
-    def _load(self):
-        self.path = WORKFLOWS_DIR / "dependabot-auto-merge.yml"
-        assert self.path.exists(), f"dependabot-auto-merge.yml not found at {self.path}"
-        self.cfg = _load_yaml(self.path)
+    Dependabot version updates and the auto-merge workflow were deliberately
+    removed; see docs/release-candidate.md R4. These
+    negative assertions guard against either surface silently returning.
+    """
 
-    def test_triggers_on_pull_request(self):
-        # PyYAML parses bare `on:` key as boolean True; use True as fallback
-        triggers = self.cfg.get("on") or self.cfg.get(True, {})
-        assert "pull_request" in triggers
+    def test_dependabot_config_absent(self):
+        # Version updates deliberately disabled; see
+        # docs/release-candidate.md R4.
+        path = GITHUB_DIR / "dependabot.yml"
+        assert not path.exists(), (
+            "dependabot.yml should not exist — Dependabot version updates are "
+            "deliberately disabled (research R4)"
+        )
 
-    def test_has_auto_merge_job(self):
-        assert "auto-merge" in self.cfg["jobs"]
-
-    def test_only_runs_for_dependabot(self):
-        job = self.cfg["jobs"]["auto-merge"]
-        condition = job.get("if", "")
-        assert "dependabot[bot]" in condition
-
-    def test_does_not_auto_merge_major(self):
-        """Major version bumps must NOT be auto-approved."""
-        job = self.cfg["jobs"]["auto-merge"]
-        steps = job["steps"]
-        approve_steps = [
-            s for s in steps
-            if "approve" in s.get("name", "").lower()
-        ]
-        assert len(approve_steps) >= 1
-        approve_step = approve_steps[0]
-        # The condition should exclude major updates
-        condition = approve_step.get("if", "")
-        assert "semver-major" in condition
-
-    def test_has_permissions(self):
-        perms = self.cfg.get("permissions", {})
-        assert "pull-requests" in perms
-        assert "contents" in perms
-
-    def test_uses_fetch_metadata(self):
-        job = self.cfg["jobs"]["auto-merge"]
-        metadata_steps = [
-            s for s in job["steps"]
-            if "fetch-metadata" in s.get("uses", "")
-        ]
-        assert len(metadata_steps) >= 1
+    def test_dependabot_auto_merge_workflow_absent(self):
+        # Orphaned auto-merge workflow removed 2026-07-16.
+        path = WORKFLOWS_DIR / "dependabot-auto-merge.yml"
+        assert not path.exists(), (
+            "dependabot-auto-merge.yml should not exist — orphan removed 2026-07-16"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +158,6 @@ class TestWorkflowFilesExist:
     EXPECTED_WORKFLOWS = [
         "ci.yml",
         "container-scan.yml",
-        "dependabot-auto-merge.yml",
         "helm-deploy.yml",
         "playwright-pr.yml",
         "sdk-publish.yml",
@@ -267,7 +167,3 @@ class TestWorkflowFilesExist:
     def test_workflow_exists(self, filename):
         path = WORKFLOWS_DIR / filename
         assert path.exists(), f"Workflow file {filename} not found"
-
-    def test_dependabot_config_exists(self):
-        path = GITHUB_DIR / "dependabot.yml"
-        assert path.exists(), "dependabot.yml not found in .github/"

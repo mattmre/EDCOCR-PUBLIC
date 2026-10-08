@@ -1,16 +1,17 @@
-"""Tests for pipeline resilience fixes (, , ).
+"""Tests for pipeline resilience fixes (maintenance review, maintenance review, maintenance review).
 
 These tests verify:
-- DPI escalation re-queue skips task_done() to avoid
+- maintenance review/RES-032: DPI escalation re-queue skips task_done() to avoid
   premature image_queue.join() unblocking.
-- Assembly failure writes an 'assembly_failed' custody event
+- maintenance review/RES-004: Assembly failure writes an 'assembly_failed' custody event
   and rescues the saved output PDF into the compression queue.
-- Worker critical failure creates an image-only fallback
+- maintenance review/RES-005: Worker critical failure creates an image-only fallback
   page before sending CRITICAL_FAILED to the assembler.
 
 Run with: python -m pytest tests/test_pipeline_resilience.py -v
 """
 
+import ast
 import inspect
 import io
 import os
@@ -27,13 +28,20 @@ from PIL import Image
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_test_image(width=200, height=100):
     """Create a small PIL image for testing."""
     return Image.new("RGB", (width, height), color=(128, 128, 128))
 
 
-def _make_task(doc_id="doc1", page_num=1, doc_path="/tmp/test.pdf",
-               retries=0, lang_hint="en", image=None):
+def _make_task(
+    doc_id="doc1",
+    page_num=1,
+    doc_path="/tmp/test.pdf",
+    retries=0,
+    lang_hint="en",
+    image=None,
+):
     """Create a minimal task namespace matching the pipeline's expectations."""
     task = types.SimpleNamespace()
     task.doc_id = doc_id
@@ -72,7 +80,7 @@ class _FakeCustody:
 
 
 # ---------------------------------------------------------------------------
-# DPI escalation task_done overcall
+# maintenance review/RES-032: DPI escalation task_done overcall
 # ---------------------------------------------------------------------------
 
 
@@ -86,19 +94,30 @@ class TestDPIEscalationTaskDone:
         import ocr_gpu_async
 
         source = inspect.getsource(ocr_gpu_async.worker_thread)
+        tree = ast.parse(source)
 
         # The flag must be initialized before the inner try
-        assert "_dpi_requeued = False" in source, (
-            "_dpi_requeued flag must be initialized before the inner try block"
+        initialized = any(
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "_dpi_requeued"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Constant)
+            and node.value.value is False
+            for node in ast.walk(tree)
         )
+        assert (
+            initialized
+        ), "_dpi_requeued flag must be initialized before the inner try block"
         # The flag must be set when re-queuing
-        assert "_dpi_requeued = True" in source, (
-            "_dpi_requeued flag must be set to True when re-queuing for DPI escalation"
-        )
+        assert (
+            "_dpi_requeued = True" in source
+        ), "_dpi_requeued flag must be set to True when re-queuing for DPI escalation"
         # The finally block must check the flag
-        assert "if not _dpi_requeued:" in source, (
-            "finally block must check _dpi_requeued before calling task_done()"
-        )
+        assert (
+            "if not _dpi_requeued:" in source
+        ), "finally block must check _dpi_requeued before calling task_done()"
 
     def test_cached_path_no_explicit_task_done(self):
         """CACHED early-return path must not call task_done() explicitly
@@ -106,34 +125,28 @@ class TestDPIEscalationTaskDone:
         import ocr_gpu_async
 
         source = inspect.getsource(ocr_gpu_async.worker_thread)
-        # Find the CACHED section -- between PageStatus.CACHED and the next continue
-        # It should NOT have an explicit image_queue.task_done() call
-        # Support both raw string and PageStatus enum references
-        cached_idx = source.find("PageStatus.CACHED")
-        if cached_idx < 0:
-            cached_idx = source.find('"CACHED"')
+        # Cache hits preserve the checkpoint's real terminal status and expose
+        # a separate cache_hit marker; they are no longer mislabeled CACHED.
+        cached_idx = source.find('"cache_hit": True')
         assert cached_idx > 0
 
-        # Find the continue after CACHED
+        # Find the continue after the cache-hit message.
         continue_after_cached = source.find("continue", cached_idx)
         assert continue_after_cached > 0
 
-        # The section between CACHED and continue should NOT have task_done()
+        # The section between the cache marker and continue should NOT have task_done().
         cached_section = source[cached_idx:continue_after_cached]
         assert "task_done()" not in cached_section, (
             "CACHED path should not have explicit task_done() -- "
             "the finally block handles it"
         )
 
-    def test_skipped_path_no_explicit_task_done(self):
-        """SKIPPED early-return path must not call task_done() explicitly."""
+    def test_image_only_path_no_explicit_task_done(self):
+        """IMAGE_ONLY routing path must not call task_done() explicitly."""
         import ocr_gpu_async
 
         source = inspect.getsource(ocr_gpu_async.worker_thread)
-        # Support both raw string and PageStatus enum references
-        skipped_idx = source.find("PageStatus.SKIPPED")
-        if skipped_idx < 0:
-            skipped_idx = source.find('"SKIPPED"')
+        skipped_idx = source.find("PageStatus.IMAGE_ONLY")
         assert skipped_idx > 0
 
         continue_after_skipped = source.find("continue", skipped_idx)
@@ -141,7 +154,7 @@ class TestDPIEscalationTaskDone:
 
         skipped_section = source[skipped_idx:continue_after_skipped]
         assert "task_done()" not in skipped_section, (
-            "SKIPPED path should not have explicit task_done() -- "
+            "IMAGE_ONLY path should not have explicit task_done() -- "
             "the finally block handles it"
         )
 
@@ -220,7 +233,7 @@ class TestExtractorImageOwnership:
 
 
 # ---------------------------------------------------------------------------
-# Assembly failure custody event
+# maintenance review/RES-004: Assembly failure custody event
 # ---------------------------------------------------------------------------
 
 
@@ -233,9 +246,9 @@ class TestAssemblyFailureCustody:
 
         # Finalization logic (including failure handling) now lives in _finalize_doc
         source = inspect.getsource(ocr_gpu_async._finalize_doc)
-        assert '"assembly_failed"' in source, (
-            "Assembly failure handler must emit an 'assembly_failed' custody event"
-        )
+        assert (
+            '"assembly_failed"' in source
+        ), "Assembly failure handler must emit an 'assembly_failed' custody event"
 
     def test_assembly_failure_rescues_saved_pdf(self):
         """If output PDF exists on disk when assembly fails, it should be
@@ -245,12 +258,12 @@ class TestAssemblyFailureCustody:
         # Finalization logic (including failure handling) now lives in _finalize_doc
         source = inspect.getsource(ocr_gpu_async._finalize_doc)
         # Check that the rescue logic exists
-        assert "os.path.isfile(doc.output_pdf)" in source, (
-            "Assembly failure handler must check if output PDF exists on disk"
-        )
-        assert "compression_queue.put" in source, (
-            "Assembly failure handler must queue rescued PDF for compression"
-        )
+        assert (
+            "os.path.isfile(doc.output_pdf)" in source
+        ), "Assembly failure handler must check if output PDF exists on disk"
+        assert (
+            "compression_queue.put" in source
+        ), "Assembly failure handler must queue rescued PDF for compression"
 
     def test_custody_event_structure(self):
         """Custody event must include error, total_pages, processed_pages."""
@@ -259,11 +272,14 @@ class TestAssemblyFailureCustody:
 
         # Simulate what the except block does
         try:
-            custody.append_event("assembly_failed", {
-                "error": error_msg,
-                "total_pages": 5,
-                "processed_pages": 3,
-            })
+            custody.append_event(
+                "assembly_failed",
+                {
+                    "error": error_msg,
+                    "total_pages": 5,
+                    "processed_pages": 3,
+                },
+            )
         except Exception:
             pass
 
@@ -276,6 +292,7 @@ class TestAssemblyFailureCustody:
 
     def test_custody_write_failure_does_not_propagate(self):
         """If custody append_event raises, it must not crash the failure handler."""
+
         class _FailingCustody:
             def append_event(self, *args, **kwargs):
                 raise RuntimeError("custody write failed")
@@ -292,7 +309,7 @@ class TestAssemblyFailureCustody:
 
 
 # ---------------------------------------------------------------------------
-# Worker critical failure image-only fallback
+# maintenance review/RES-005: Worker critical failure image-only fallback
 # ---------------------------------------------------------------------------
 
 
@@ -315,7 +332,7 @@ class TestWorkerCriticalFailureFallback:
                 _fb_doc = fitz.open()
                 _fb_page = _fb_doc.new_page(width=_fb_w, height=_fb_h)
                 img_byte_arr = io.BytesIO()
-                task.image.save(img_byte_arr, format='JPEG', quality=85)
+                task.image.save(img_byte_arr, format="JPEG", quality=85)
                 _fb_page.insert_image(
                     fitz.Rect(0, 0, _fb_w, _fb_h),
                     stream=img_byte_arr.getvalue(),
@@ -339,12 +356,12 @@ class TestWorkerCriticalFailureFallback:
 
         source = inspect.getsource(ocr_gpu_async.worker_thread)
         # Check for the fallback pattern
-        assert "_fallback_chunk" in source, (
-            "Worker critical failure handler must create _fallback_chunk"
-        )
-        assert "Image-only fallback saved" in source, (
-            "Worker critical failure handler must log when fallback is saved"
-        )
+        assert (
+            "_fallback_chunk" in source
+        ), "Worker critical failure handler must create _fallback_chunk"
+        assert (
+            "Image-only fallback saved" in source
+        ), "Worker critical failure handler must log when fallback is saved"
 
     def test_critical_failure_sends_chunk_path(self):
         """CRITICAL_FAILED assembly message must include chunk_path when
@@ -353,9 +370,9 @@ class TestWorkerCriticalFailureFallback:
 
         source = inspect.getsource(ocr_gpu_async.worker_thread)
         # The assembly_queue.put for CRITICAL_FAILED must reference _fallback_chunk
-        assert '"chunk_path": _fallback_chunk' in source, (
-            "CRITICAL_FAILED assembly message must pass _fallback_chunk as chunk_path"
-        )
+        assert (
+            '"chunk_path": _fallback_chunk' in source
+        ), "CRITICAL_FAILED assembly message must pass _fallback_chunk as chunk_path"
 
     def test_fallback_failure_does_not_propagate(self):
         """If image-only fallback fails, _fallback_chunk must be None and

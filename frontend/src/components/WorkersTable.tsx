@@ -325,7 +325,7 @@ export function WorkersTable({
 
 interface ThProps {
   children: React.ReactNode;
-  onClick?: => void;
+  onClick?: () => void;
   active?: boolean;
   desc?: boolean;
 }

@@ -7,6 +7,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from api.config import MAX_PROCESSING_TIMEOUT_MINUTES
+
 # ---------------------------------------------------------------------------
 # Request
 # ---------------------------------------------------------------------------
@@ -25,6 +27,7 @@ class BatchSubmitRequest(BaseModel):
     processing_timeout_minutes: Optional[int] = Field(
         None,
         ge=1,
+        le=MAX_PROCESSING_TIMEOUT_MINUTES,
         description="Optional per-job processing timeout override in minutes.",
     )
     webhook_url: Optional[str] = Field(
@@ -84,6 +87,9 @@ class BatchSubmitResponse(BaseModel):
     total_jobs: int
     priority: str
     jobs: list[BatchJobSummary]
+    # Inputs rejected before child-job creation are returned explicitly so a
+    # partial batch cannot look like a complete submission.
+    rejected_inputs: list[str] = Field(default_factory=list)
     links: BatchLinks
 
 
@@ -98,6 +104,7 @@ class BatchStatusResponse(BaseModel):
     total_jobs: int
     progress: BatchProgressInfo
     jobs: list[BatchJobSummary]
+    rejected_inputs: list[str] = Field(default_factory=list)
     settings: dict[str, Any] = {}
     webhook_status: Optional[str] = None
 

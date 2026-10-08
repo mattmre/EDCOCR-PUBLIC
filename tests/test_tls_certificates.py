@@ -23,17 +23,28 @@ import yaml
 # ---------------------------------------------------------------------------
 # Helm chart path and common flags
 # ---------------------------------------------------------------------------
-_PROJECT_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), os.pardir)
-)
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 CHART_PATH = os.path.join(_PROJECT_ROOT, "helm", "ocr-local")
 
 _REQUIRED_SETS = [
-    "--set", "secrets.djangoSecretKey=test",
-    "--set", "secrets.postgresPassword=test",
-    "--set", "secrets.rabbitmqPassword=test",
-    "--set", "secrets.redisPassword=test",
-    "--set", "secrets.flowerPassword=test-flower-password",
+    "--set",
+    "secrets.djangoSecretKey=test",
+    "--set",
+    "secrets.apiKey=test-api-key",
+    "--set",
+    "secrets.postgresPassword=test",
+    "--set",
+    "secrets.rabbitmqPassword=test",
+    "--set",
+    "secrets.redisPassword=test",
+    "--set",
+    "secrets.flowerPassword=test-flower-password",
+    "--set",
+    "secrets.webhookSecretKey=test-webhook-key",
+    "--set",
+    "secrets.piiEncryptionKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "--set",
+    "secrets.celeryTaskSigningKey=test-signing-key",
 ]
 
 HELM_AVAILABLE = shutil.which("helm") is not None
@@ -41,9 +52,16 @@ HELM_AVAILABLE = shutil.which("helm") is not None
 
 def _helm_template(*extra_sets):
     """Run helm template and return parsed YAML documents as a list of dicts."""
-    cmd = [
-        "helm", "template", "tls-test", CHART_PATH,
-    ] + list(_REQUIRED_SETS) + list(extra_sets)
+    cmd = (
+        [
+            "helm",
+            "template",
+            "tls-test",
+            CHART_PATH,
+        ]
+        + list(_REQUIRED_SETS)
+        + list(extra_sets)
+    )
     result = subprocess.run(
         cmd,
         capture_output=True,
@@ -89,16 +107,18 @@ class TestTLSDisabledByDefault(unittest.TestCase):
         """No Certificate resources should be rendered when tls.enabled=false."""
         certs = _find_resources(self.docs, "Certificate")
         self.assertEqual(
-            len(certs), 0,
-            "No Certificate resources should be rendered with default values"
+            len(certs),
+            0,
+            "No Certificate resources should be rendered with default values",
         )
 
     def test_no_issuer_resources(self):
         """No Issuer resources should be rendered when tls.enabled=false."""
         issuers = _find_resources(self.docs, "Issuer")
         self.assertEqual(
-            len(issuers), 0,
-            "No Issuer resources should be rendered with default values"
+            len(issuers),
+            0,
+            "No Issuer resources should be rendered with default values",
         )
 
     def test_default_secret_omits_metrics_api_key(self):
@@ -107,18 +127,21 @@ class TestTLSDisabledByDefault(unittest.TestCase):
         self.assertEqual(len(secrets), 1)
         self.assertNotIn("METRICS_API_KEY", secrets[0].get("data", {}))
 
-    def test_default_probes_omit_metrics_header(self):
-        """Coordinator probes should not send auth headers when no API key is set."""
+    def test_default_probes_omit_metrics_auth_header(self):
+        """Coordinator probes may set Host but not a metrics/auth header by default."""
         deployments = _find_resources(self.docs, "Deployment", "tls-test-coordinator")
         self.assertEqual(len(deployments), 1)
         container = deployments[0]["spec"]["template"]["spec"]["containers"][0]
         for probe_name in ("livenessProbe", "readinessProbe", "startupProbe"):
-            probe = container[probe_name]["httpGet"]
-            self.assertNotIn(
-                "httpHeaders",
-                probe,
-                f"{probe_name} should omit auth headers when metricsApiKey is unset",
-            )
+            probe = container[probe_name].get("httpGet", {})
+            headers = probe.get("httpHeaders", [])
+            auth_headers = [
+                header
+                for header in headers
+                if header["name"].lower()
+                in {"authorization", "x-api-key", "x-metrics-api-key"}
+            ]
+            self.assertEqual(auth_headers, [], probe_name)
 
     def test_no_tls_volume_mounts_in_postgres(self):
         """PostgreSQL StatefulSet should have no TLS volume mounts by default."""
@@ -129,8 +152,9 @@ class TestTLSDisabledByDefault(unittest.TestCase):
             mounts = container.get("volumeMounts", [])
             tls_mounts = [m for m in mounts if m["name"] == "tls-certs"]
             self.assertEqual(
-                len(tls_mounts), 0,
-                "No tls-certs volumeMount should appear in PostgreSQL by default"
+                len(tls_mounts),
+                0,
+                "No tls-certs volumeMount should appear in PostgreSQL by default",
             )
 
     def test_no_tls_volume_mounts_in_rabbitmq(self):
@@ -142,26 +166,25 @@ class TestTLSDisabledByDefault(unittest.TestCase):
             mounts = container.get("volumeMounts", [])
             tls_mounts = [m for m in mounts if m["name"] == "tls-certs"]
             self.assertEqual(
-                len(tls_mounts), 0,
-                "No tls-certs volumeMount should appear in RabbitMQ by default"
+                len(tls_mounts),
+                0,
+                "No tls-certs volumeMount should appear in RabbitMQ by default",
             )
 
     def test_no_tls_volume_mounts_in_redis(self):
         """Redis StatefulSet should have no TLS volume mounts by default."""
         sts_list = _find_resources(self.docs, "StatefulSet", "redis")
         # Filter out sentinel/replica StatefulSets
-        redis_sts = [
-            s for s in sts_list
-            if s["metadata"]["name"] == "tls-test-redis"
-        ]
+        redis_sts = [s for s in sts_list if s["metadata"]["name"] == "tls-test-redis"]
         self.assertEqual(len(redis_sts), 1)
         containers = redis_sts[0]["spec"]["template"]["spec"]["containers"]
         for container in containers:
             mounts = container.get("volumeMounts", [])
             tls_mounts = [m for m in mounts if m["name"] == "tls-certs"]
             self.assertEqual(
-                len(tls_mounts), 0,
-                "No tls-certs volumeMount should appear in Redis by default"
+                len(tls_mounts),
+                0,
+                "No tls-certs volumeMount should appear in Redis by default",
             )
 
     def test_no_tls_env_vars_in_configmap(self):
@@ -170,16 +193,17 @@ class TestTLSDisabledByDefault(unittest.TestCase):
         self.assertGreaterEqual(len(configmaps), 1)
         data = configmaps[0].get("data", {})
         self.assertNotIn(
-            "DATABASE_SSLMODE", data,
-            "DATABASE_SSLMODE should not appear in ConfigMap by default"
+            "DATABASE_SSLMODE",
+            data,
+            "DATABASE_SSLMODE should not appear in ConfigMap by default",
         )
         self.assertNotIn(
-            "CELERY_BROKER_USE_SSL", data,
-            "CELERY_BROKER_USE_SSL should not appear in ConfigMap by default"
+            "CELERY_BROKER_USE_SSL",
+            data,
+            "CELERY_BROKER_USE_SSL should not appear in ConfigMap by default",
         )
         self.assertNotIn(
-            "REDIS_SSL", data,
-            "REDIS_SSL should not appear in ConfigMap by default"
+            "REDIS_SSL", data, "REDIS_SSL should not appear in ConfigMap by default"
         )
 
 
@@ -202,29 +226,23 @@ class TestTLSEnabled(unittest.TestCase):
         """A self-signed root Issuer should be created."""
         issuers = _find_resources(self.docs, "Issuer", "selfsigned-root")
         self.assertEqual(
-            len(issuers), 1,
-            "Exactly one selfsigned-root Issuer should be rendered"
+            len(issuers), 1, "Exactly one selfsigned-root Issuer should be rendered"
         )
         self.assertIn(
-            "selfSigned", issuers[0]["spec"],
-            "Root Issuer must have selfSigned spec"
+            "selfSigned", issuers[0]["spec"], "Root Issuer must have selfSigned spec"
         )
 
     def test_ca_issuer_created(self):
         """A CA Issuer backed by the CA certificate should be created."""
         issuers = _find_resources(self.docs, "Issuer", "ca-issuer")
         self.assertEqual(
-            len(issuers), 1,
-            "Exactly one ca-issuer Issuer should be rendered"
+            len(issuers), 1, "Exactly one ca-issuer Issuer should be rendered"
         )
-        self.assertIn(
-            "ca", issuers[0]["spec"],
-            "CA Issuer must have ca spec"
-        )
+        self.assertIn("ca", issuers[0]["spec"], "CA Issuer must have ca spec")
         self.assertEqual(
             issuers[0]["spec"]["ca"]["secretName"],
             "tls-test-ocr-local-ca-secret",
-            "CA Issuer must reference the CA certificate secret"
+            "CA Issuer must reference the CA certificate secret",
         )
 
     # ------------------------------------------------------------------
@@ -233,14 +251,8 @@ class TestTLSEnabled(unittest.TestCase):
     def test_ca_certificate_created(self):
         """A CA Certificate should be created with isCA=true."""
         certs = _find_resources(self.docs, "Certificate", "ca-cert")
-        self.assertEqual(
-            len(certs), 1,
-            "Exactly one CA Certificate should be rendered"
-        )
-        self.assertTrue(
-            certs[0]["spec"]["isCA"],
-            "CA Certificate must have isCA=true"
-        )
+        self.assertEqual(len(certs), 1, "Exactly one CA Certificate should be rendered")
+        self.assertTrue(certs[0]["spec"]["isCA"], "CA Certificate must have isCA=true")
         self.assertEqual(
             certs[0]["spec"]["secretName"],
             "tls-test-ocr-local-ca-secret",
@@ -311,22 +323,25 @@ class TestTLSEnabled(unittest.TestCase):
         for cert in certs:
             pk = cert["spec"].get("privateKey", {})
             self.assertEqual(
-                pk.get("algorithm"), "ECDSA",
-                f"Certificate {cert['metadata']['name']} should use ECDSA"
+                pk.get("algorithm"),
+                "ECDSA",
+                f"Certificate {cert['metadata']['name']} should use ECDSA",
             )
 
     def test_all_service_certificates_reference_ca_issuer(self):
         """All service Certificates should reference the CA issuer."""
         service_certs = [
-            c for c in _find_resources(self.docs, "Certificate")
+            c
+            for c in _find_resources(self.docs, "Certificate")
             if not c["spec"].get("isCA", False)
         ]
         self.assertEqual(len(service_certs), 3)
         for cert in service_certs:
             issuer_ref = cert["spec"]["issuerRef"]
             self.assertIn(
-                "ca-issuer", issuer_ref["name"],
-                f"Certificate {cert['metadata']['name']} should reference the CA issuer"
+                "ca-issuer",
+                issuer_ref["name"],
+                f"Certificate {cert['metadata']['name']} should reference the CA issuer",
             )
 
     # ------------------------------------------------------------------
@@ -336,17 +351,19 @@ class TestTLSEnabled(unittest.TestCase):
         """Should have exactly 4 Certificate resources (1 CA + 3 services)."""
         certs = _find_resources(self.docs, "Certificate")
         self.assertEqual(
-            len(certs), 4,
+            len(certs),
+            4,
             f"Expected 4 Certificates (CA + postgresql + rabbitmq + redis), "
-            f"got {len(certs)}"
+            f"got {len(certs)}",
         )
 
     def test_total_issuer_count(self):
         """Should have exactly 2 Issuer resources (root + CA)."""
         issuers = _find_resources(self.docs, "Issuer")
         self.assertEqual(
-            len(issuers), 2,
-            f"Expected 2 Issuers (selfsigned-root + ca-issuer), got {len(issuers)}"
+            len(issuers),
+            2,
+            f"Expected 2 Issuers (selfsigned-root + ca-issuer), got {len(issuers)}",
         )
 
 
@@ -366,13 +383,15 @@ class TestTLSVolumeMounts(unittest.TestCase):
         """Get a single StatefulSet by name substring, excluding sentinel/replica."""
         sts_list = _find_resources(self.docs, "StatefulSet", name_contains)
         main_sts = [
-            s for s in sts_list
+            s
+            for s in sts_list
             if "sentinel" not in s["metadata"]["name"]
             and "replica" not in s["metadata"]["name"]
         ]
         self.assertEqual(
-            len(main_sts), 1,
-            f"Expected exactly 1 {name_contains} StatefulSet, got {len(main_sts)}"
+            len(main_sts),
+            1,
+            f"Expected exactly 1 {name_contains} StatefulSet, got {len(main_sts)}",
         )
         return main_sts[0]
 
@@ -393,8 +412,7 @@ class TestTLSVolumeMounts(unittest.TestCase):
         tls_volumes = [v for v in volumes if v["name"] == "tls-certs"]
         self.assertEqual(len(tls_volumes), 1)
         self.assertEqual(
-            tls_volumes[0]["secret"]["secretName"],
-            "tls-test-ocr-local-postgresql-tls"
+            tls_volumes[0]["secret"]["secretName"], "tls-test-ocr-local-postgresql-tls"
         )
 
     def test_rabbitmq_has_tls_volume_mount(self):
@@ -414,8 +432,7 @@ class TestTLSVolumeMounts(unittest.TestCase):
         tls_volumes = [v for v in volumes if v["name"] == "tls-certs"]
         self.assertEqual(len(tls_volumes), 1)
         self.assertEqual(
-            tls_volumes[0]["secret"]["secretName"],
-            "tls-test-ocr-local-rabbitmq-tls"
+            tls_volumes[0]["secret"]["secretName"], "tls-test-ocr-local-rabbitmq-tls"
         )
 
     def test_redis_has_tls_volume_mount(self):
@@ -435,8 +452,7 @@ class TestTLSVolumeMounts(unittest.TestCase):
         tls_volumes = [v for v in volumes if v["name"] == "tls-certs"]
         self.assertEqual(len(tls_volumes), 1)
         self.assertEqual(
-            tls_volumes[0]["secret"]["secretName"],
-            "tls-test-ocr-local-redis-tls"
+            tls_volumes[0]["secret"]["secretName"], "tls-test-ocr-local-redis-tls"
         )
 
 
@@ -463,15 +479,17 @@ class TestTLSServiceConfiguration(unittest.TestCase):
         self.assertIn("ssl_key_file=/etc/tls/tls.key", args_str)
         self.assertIn("ssl_ca_file=/etc/tls/ca.crt", args_str)
 
-    def test_rabbitmq_ssl_env_vars(self):
-        """RabbitMQ container should have SSL env vars when TLS is enabled."""
-        sts_list = _find_resources(self.docs, "StatefulSet", "rabbitmq")
-        self.assertGreaterEqual(len(sts_list), 1)
-        env_list = sts_list[0]["spec"]["template"]["spec"]["containers"][0]["env"]
-        env_dict = {e["name"]: e.get("value", "") for e in env_list}
-        self.assertEqual(env_dict.get("RABBITMQ_SSL_CERTFILE"), "/etc/tls/tls.crt")
-        self.assertEqual(env_dict.get("RABBITMQ_SSL_KEYFILE"), "/etc/tls/tls.key")
-        self.assertEqual(env_dict.get("RABBITMQ_SSL_CACERTFILE"), "/etc/tls/ca.crt")
+    def test_rabbitmq_tls_certificate_paths_are_in_native_config(self):
+        """RabbitMQ TLS is configured through its mounted native config file."""
+        configmaps = _find_resources(self.docs, "ConfigMap", "tls-test-rabbitmq-config")
+        self.assertEqual(len(configmaps), 1)
+        config = configmaps[0]["data"]["rabbitmq.conf"]
+        self.assertIn("ssl_options.certfile = /etc/tls/tls.crt", config)
+        self.assertIn("ssl_options.keyfile = /etc/tls/tls.key", config)
+        self.assertIn("ssl_options.cacertfile = /etc/tls/ca.crt", config)
+        self.assertIn("management.tcp.port = none", config)
+        self.assertIn("management.ssl.port = 15671", config)
+        self.assertIn("management.ssl.cacertfile = /etc/tls/ca.crt", config)
 
     def test_rabbitmq_amqps_port(self):
         """RabbitMQ container should expose AMQPS port 5671 when TLS is enabled."""
@@ -483,13 +501,41 @@ class TestTLSServiceConfiguration(unittest.TestCase):
         amqps_port = [p for p in ports if p["name"] == "amqps"][0]
         self.assertEqual(amqps_port["containerPort"], 5671)
 
+    def test_rabbitmq_tls_config_is_native_and_plaintext_is_disabled(self):
+        """TLS mode must configure the official image and remove AMQP downgrade."""
+        configmaps = _find_resources(self.docs, "ConfigMap", "tls-test-rabbitmq-config")
+        self.assertEqual(len(configmaps), 1)
+        config = configmaps[0]["data"]["rabbitmq.conf"]
+        self.assertIn("listeners.tcp = none", config)
+        self.assertIn("listeners.ssl.default = 5671", config)
+        self.assertIn("ssl_options.cacertfile = /etc/tls/ca.crt", config)
+
+        services = _find_resources(self.docs, "Service", "tls-test-rabbitmq")
+        self.assertEqual(len(services), 1)
+        self.assertEqual(
+            [
+                port["port"]
+                for port in services[0]["spec"]["ports"]
+                if port["port"] in (5671, 5672)
+            ],
+            [5671],
+        )
+        management_ports = {port["port"] for port in services[0]["spec"]["ports"]}
+        self.assertIn(15671, management_ports)
+        self.assertNotIn(15672, management_ports)
+        sts = _find_resources(self.docs, "StatefulSet", "tls-test-rabbitmq")[0]
+        container_ports = [
+            port["containerPort"]
+            for port in sts["spec"]["template"]["spec"]["containers"][0]["ports"]
+        ]
+        self.assertNotIn(5672, container_ports)
+        self.assertIn(15671, container_ports)
+        self.assertNotIn(15672, container_ports)
+
     def test_redis_tls_args(self):
         """Redis command should include --tls-* arguments when TLS is enabled."""
         sts_list = _find_resources(self.docs, "StatefulSet", "redis")
-        redis_sts = [
-            s for s in sts_list
-            if s["metadata"]["name"] == "tls-test-redis"
-        ]
+        redis_sts = [s for s in sts_list if s["metadata"]["name"] == "tls-test-redis"]
         self.assertEqual(len(redis_sts), 1)
         command = redis_sts[0]["spec"]["template"]["spec"]["containers"][0]["command"]
         command_str = " ".join(str(c) for c in command)
@@ -501,14 +547,25 @@ class TestTLSServiceConfiguration(unittest.TestCase):
     def test_redis_tls_port_exposed(self):
         """Redis container should expose TLS port 6380 when TLS is enabled."""
         sts_list = _find_resources(self.docs, "StatefulSet", "redis")
-        redis_sts = [
-            s for s in sts_list
-            if s["metadata"]["name"] == "tls-test-redis"
-        ]
+        redis_sts = [s for s in sts_list if s["metadata"]["name"] == "tls-test-redis"]
         self.assertEqual(len(redis_sts), 1)
         ports = redis_sts[0]["spec"]["template"]["spec"]["containers"][0]["ports"]
         port_numbers = [p["containerPort"] for p in ports]
         self.assertIn(6380, port_numbers)
+        self.assertNotIn(6379, port_numbers)
+
+    def test_redis_tls_disables_plaintext_and_uses_tls_probe(self):
+        """TLS mode must not leave Redis listening or probing on 6379."""
+        sts_list = _find_resources(self.docs, "StatefulSet", "redis")
+        redis_sts = [s for s in sts_list if s["metadata"]["name"] == "tls-test-redis"]
+        self.assertEqual(len(redis_sts), 1)
+        container = redis_sts[0]["spec"]["template"]["spec"]["containers"][0]
+        command = " ".join(str(value) for value in container["command"])
+        self.assertIn("--port 0", command)
+        for probe_name in ("livenessProbe", "readinessProbe"):
+            probe = container[probe_name]["exec"]["command"][-1]
+            self.assertIn("--tls", probe)
+            self.assertIn("6380", probe)
 
     def test_configmap_has_tls_env_vars(self):
         """ConfigMap should include TLS-related env vars when TLS is enabled."""
@@ -532,8 +589,10 @@ class TestTLSNetworkPolicy(unittest.TestCase):
     def setUpClass(cls):
         super().setUpClass()
         cls.docs = _helm_template(
-            "--set", "tls.enabled=true",
-            "--set", "networkPolicy.enabled=true",
+            "--set",
+            "tls.enabled=true",
+            "--set",
+            "networkPolicy.enabled=true",
         )
 
     def _get_netpol_egress_ports(self, netpol_name_contains, target_component):
@@ -580,28 +639,28 @@ class TestTLSWithClusterIssuer(unittest.TestCase):
     def setUpClass(cls):
         super().setUpClass()
         cls.docs = _helm_template(
-            "--set", "tls.enabled=true",
-            "--set", "tls.certManager.issuerKind=ClusterIssuer",
+            "--set",
+            "tls.enabled=true",
+            "--set",
+            "tls.certManager.issuerKind=ClusterIssuer",
         )
 
     def test_root_is_cluster_issuer(self):
         """Root issuer should be a ClusterIssuer when configured."""
-        cluster_issuers = _find_resources(
-            self.docs, "ClusterIssuer", "selfsigned-root"
-        )
+        cluster_issuers = _find_resources(self.docs, "ClusterIssuer", "selfsigned-root")
         self.assertEqual(
-            len(cluster_issuers), 1,
-            "Exactly one selfsigned-root ClusterIssuer should be rendered"
+            len(cluster_issuers),
+            1,
+            "Exactly one selfsigned-root ClusterIssuer should be rendered",
         )
 
     def test_ca_is_cluster_issuer(self):
         """CA issuer should be a ClusterIssuer when configured."""
-        cluster_issuers = _find_resources(
-            self.docs, "ClusterIssuer", "ca-issuer"
-        )
+        cluster_issuers = _find_resources(self.docs, "ClusterIssuer", "ca-issuer")
         self.assertEqual(
-            len(cluster_issuers), 1,
-            "Exactly one ca-issuer ClusterIssuer should be rendered"
+            len(cluster_issuers),
+            1,
+            "Exactly one ca-issuer ClusterIssuer should be rendered",
         )
 
     def test_certificates_reference_cluster_issuer(self):
@@ -611,16 +670,18 @@ class TestTLSWithClusterIssuer(unittest.TestCase):
         for cert in certs:
             issuer_ref = cert["spec"]["issuerRef"]
             self.assertEqual(
-                issuer_ref["kind"], "ClusterIssuer",
-                f"Certificate {cert['metadata']['name']} should reference ClusterIssuer"
+                issuer_ref["kind"],
+                "ClusterIssuer",
+                f"Certificate {cert['metadata']['name']} should reference ClusterIssuer",
             )
 
     def test_no_namespace_scoped_issuers(self):
         """No namespace-scoped Issuer resources when using ClusterIssuer."""
         issuers = _find_resources(self.docs, "Issuer")
         self.assertEqual(
-            len(issuers), 0,
-            "No namespace-scoped Issuer should exist when using ClusterIssuer"
+            len(issuers),
+            0,
+            "No namespace-scoped Issuer should exist when using ClusterIssuer",
         )
 
 
@@ -640,7 +701,8 @@ class TestTLSVolumeDefaultMode(unittest.TestCase):
         """Extract defaultMode from the tls-certs volume in a StatefulSet."""
         sts_list = _find_resources(self.docs, "StatefulSet", sts_name_contains)
         main_sts = [
-            s for s in sts_list
+            s
+            for s in sts_list
             if "sentinel" not in s["metadata"]["name"]
             and "replica" not in s["metadata"]["name"]
         ]

@@ -1,4 +1,4 @@
-"""Consolidated language registry for EDCOCR.
+"""Consolidated language registry for OCR_LOCAL.
 
 Single source of truth for all per-language metadata.
 Replaces duplicated LANG_MAPPING definitions across multiple files.
@@ -23,16 +23,16 @@ OCR_LANGUAGE_TIERS = os.environ.get("OCR_LANGUAGE_TIERS", "core").lower().split(
 class LanguageEntry:
     """Configuration for a single supported language."""
 
-    paddle_code: str          # PaddleOCR model name (e.g., "ch", "en", "ar")
-    name: str                 # Human-readable name
-    fasttext_codes: tuple     # FastText lid.176.bin codes that map to this language
-    script: str               # Script family: "latin", "cyrillic", "cjk", "arabic", etc.
-    tier: str                 # "core" or "extended"
+    paddle_code: str  # PaddleOCR model name (e.g., "ch", "en", "ar")
+    name: str  # Human-readable name
+    fasttext_codes: tuple  # FastText lid.176.bin codes that map to this language
+    script: str  # Script family: "latin", "cyrillic", "cjk", "arabic", etc.
+    tier: str  # "core" or "extended"
     tesseract_code: str = ""  # Tesseract language code (e.g., "eng", "fra", "ara")
-    easyocr_code: str = ""    # EasyOCR language code
+    easyocr_code: str = ""  # EasyOCR language code
     font: str = "NotoSans-Regular.ttf"  # Default font file
-    rtl: bool = False         # Right-to-left script
-    bcp47: str = ""           # BCP-47 language tag (e.g., "en", "zh-Hans", "sr-Latn")
+    rtl: bool = False  # Right-to-left script
+    bcp47: str = ""  # BCP-47 language tag (e.g., "en", "zh-Hans", "sr-Latn")
 
 
 # --- THE REGISTRY ---------------------------------------------------------------
@@ -47,26 +47,70 @@ def _reg(entry: LanguageEntry):
 # -- Core tier (34 languages: current production baseline) -----------------------
 
 # CJK
-_reg(LanguageEntry("ch", "Chinese Simplified", ("zh",), "cjk", "core",
-                   "chi_sim", "ch_sim", "NotoSansCJKsc-Regular.otf",
-                   bcp47="zh-Hans"))
-_reg(LanguageEntry("chinese_cht", "Chinese Traditional", ("zh-tw",), "cjk", "core",
-                   "chi_tra", "ch_tra", "NotoSansCJKtc-Regular.otf",
-                   bcp47="zh-Hant"))
-_reg(LanguageEntry("japan", "Japanese", ("ja",), "cjk", "core",
-                   "jpn", "ja", "NotoSansCJKjp-Regular.otf",
-                   bcp47="ja"))
-_reg(LanguageEntry("korean", "Korean", ("ko",), "cjk", "core",
-                   "kor", "ko", "NotoSansCJKkr-Regular.otf",
-                   bcp47="ko"))
+_reg(
+    LanguageEntry(
+        "ch",
+        "Chinese Simplified",
+        ("zh",),
+        "cjk",
+        "core",
+        "chi_sim",
+        "ch_sim",
+        "NotoSansCJKsc-Regular.otf",
+        bcp47="zh-Hans",
+    )
+)
+_reg(
+    LanguageEntry(
+        "chinese_cht",
+        "Chinese Traditional",
+        ("zh-tw",),
+        "cjk",
+        "core",
+        "chi_tra",
+        "ch_tra",
+        "NotoSansCJKtc-Regular.otf",
+        bcp47="zh-Hant",
+    )
+)
+_reg(
+    LanguageEntry(
+        "japan",
+        "Japanese",
+        ("ja",),
+        "cjk",
+        "core",
+        "jpn",
+        "ja",
+        "NotoSansCJKjp-Regular.otf",
+        bcp47="ja",
+    )
+)
+_reg(
+    LanguageEntry(
+        "korean",
+        "Korean",
+        ("ko",),
+        "cjk",
+        "core",
+        "kor",
+        "ko",
+        "NotoSansCJKkr-Regular.otf",
+        bcp47="ko",
+    )
+)
 
 # Latin scripts
 _reg(LanguageEntry("en", "English", ("en",), "latin", "core", "eng", "en", bcp47="en"))
 _reg(LanguageEntry("fr", "French", ("fr",), "latin", "core", "fra", "fr", bcp47="fr"))
-_reg(LanguageEntry("german", "German", ("de",), "latin", "core", "deu", "de", bcp47="de"))
+_reg(
+    LanguageEntry("german", "German", ("de",), "latin", "core", "deu", "de", bcp47="de")
+)
 _reg(LanguageEntry("es", "Spanish", ("es",), "latin", "core", "spa", "es", bcp47="es"))
 _reg(LanguageEntry("it", "Italian", ("it",), "latin", "core", "ita", "it", bcp47="it"))
-_reg(LanguageEntry("pt", "Portuguese", ("pt",), "latin", "core", "por", "pt", bcp47="pt"))
+_reg(
+    LanguageEntry("pt", "Portuguese", ("pt",), "latin", "core", "por", "pt", bcp47="pt")
+)
 _reg(LanguageEntry("nl", "Dutch", ("nl",), "latin", "core", "nld", "nl", bcp47="nl"))
 _reg(LanguageEntry("sv", "Swedish", ("sv",), "latin", "core", "swe", "sv", bcp47="sv"))
 _reg(LanguageEntry("da", "Danish", ("da",), "latin", "core", "dan", "da", bcp47="da"))
@@ -74,62 +118,260 @@ _reg(LanguageEntry("fi", "Finnish", ("fi",), "latin", "core", "fin", "fi", bcp47
 _reg(LanguageEntry("ro", "Romanian", ("ro",), "latin", "core", "ron", "ro", bcp47="ro"))
 _reg(LanguageEntry("pl", "Polish", ("pl",), "latin", "core", "pol", "pl", bcp47="pl"))
 _reg(LanguageEntry("cs", "Czech", ("cs",), "latin", "core", "ces", "cs", bcp47="cs"))
-_reg(LanguageEntry("hu", "Hungarian", ("hu",), "latin", "core", "hun", "hu", bcp47="hu"))
+_reg(
+    LanguageEntry("hu", "Hungarian", ("hu",), "latin", "core", "hun", "hu", bcp47="hu")
+)
 _reg(LanguageEntry("tr", "Turkish", ("tr",), "latin", "core", "tur", "tr", bcp47="tr"))
-_reg(LanguageEntry("vi", "Vietnamese", ("vi",), "latin", "core", "vie", "vi", bcp47="vi"))
+_reg(
+    LanguageEntry("vi", "Vietnamese", ("vi",), "latin", "core", "vie", "vi", bcp47="vi")
+)
 
 # Cyrillic
-_reg(LanguageEntry("ru", "Russian", ("ru",), "cyrillic", "core", "rus", "ru", bcp47="ru"))
-_reg(LanguageEntry("uk", "Ukrainian", ("uk",), "cyrillic", "core", "ukr", "uk", bcp47="uk"))
-_reg(LanguageEntry("be", "Belarusian", ("be",), "cyrillic", "core", "bel", "be", bcp47="be"))
-_reg(LanguageEntry("bg", "Bulgarian", ("bg",), "cyrillic", "core", "bul", "bg", bcp47="bg"))
+_reg(
+    LanguageEntry("ru", "Russian", ("ru",), "cyrillic", "core", "rus", "ru", bcp47="ru")
+)
+_reg(
+    LanguageEntry(
+        "uk", "Ukrainian", ("uk",), "cyrillic", "core", "ukr", "uk", bcp47="uk"
+    )
+)
+_reg(
+    LanguageEntry(
+        "be", "Belarusian", ("be",), "cyrillic", "core", "bel", "be", bcp47="be"
+    )
+)
+_reg(
+    LanguageEntry(
+        "bg", "Bulgarian", ("bg",), "cyrillic", "core", "bul", "bg", bcp47="bg"
+    )
+)
 
 # Arabic / RTL
-_reg(LanguageEntry("ar", "Arabic", ("ar",), "arabic", "core",
-                   "ara", "ar", "NotoSansArabic-Regular.ttf", True, bcp47="ar"))
-_reg(LanguageEntry("fa", "Persian", ("fa",), "arabic", "core",
-                   "fas", "fa", "NotoSansArabic-Regular.ttf", True, bcp47="fa"))
-_reg(LanguageEntry("ur", "Urdu", ("ur",), "arabic", "core",
-                   "urd", "ur", "NotoSansArabic-Regular.ttf", True, bcp47="ur"))
-_reg(LanguageEntry("ug", "Uyghur", ("ug",), "arabic", "core",
-                   "uig", "ug", "NotoSansArabic-Regular.ttf", True, bcp47="ug"))
+_reg(
+    LanguageEntry(
+        "ar",
+        "Arabic",
+        ("ar",),
+        "arabic",
+        "core",
+        "ara",
+        "ar",
+        "NotoSansArabic-Regular.ttf",
+        True,
+        bcp47="ar",
+    )
+)
+_reg(
+    LanguageEntry(
+        "fa",
+        "Persian",
+        ("fa",),
+        "arabic",
+        "core",
+        "fas",
+        "fa",
+        "NotoSansArabic-Regular.ttf",
+        True,
+        bcp47="fa",
+    )
+)
+_reg(
+    LanguageEntry(
+        "ur",
+        "Urdu",
+        ("ur",),
+        "arabic",
+        "core",
+        "urd",
+        "ur",
+        "NotoSansArabic-Regular.ttf",
+        True,
+        bcp47="ur",
+    )
+)
+_reg(
+    LanguageEntry(
+        "ug",
+        "Uyghur",
+        ("ug",),
+        "arabic",
+        "core",
+        "uig",
+        "ug",
+        "NotoSansArabic-Regular.ttf",
+        True,
+        bcp47="ug",
+    )
+)
 
 # Indic / Devanagari
-_reg(LanguageEntry("hi", "Hindi", ("hi",), "devanagari", "core",
-                   "hin", "hi", "NotoSansDevanagari-Regular.ttf", bcp47="hi"))
-_reg(LanguageEntry("ta", "Tamil", ("ta",), "tamil", "core",
-                   "tam", "ta", "NotoSansTamil-Regular.ttf", bcp47="ta"))
-_reg(LanguageEntry("te", "Telugu", ("te",), "telugu", "core",
-                   "tel", "te", "NotoSansTelugu-Regular.ttf", bcp47="te"))
-_reg(LanguageEntry("kn", "Kannada", ("kn",), "kannada", "core",
-                   "kan", "kn", "NotoSansKannada-Regular.ttf", bcp47="kn"))
-_reg(LanguageEntry("ka", "Georgian", ("ka",), "georgian", "core",
-                   "kat", "ka", "NotoSansGeorgian-Regular.ttf", bcp47="ka"))
+_reg(
+    LanguageEntry(
+        "hi",
+        "Hindi",
+        ("hi",),
+        "devanagari",
+        "core",
+        "hin",
+        "hi",
+        "NotoSansDevanagari-Regular.ttf",
+        bcp47="hi",
+    )
+)
+_reg(
+    LanguageEntry(
+        "ta",
+        "Tamil",
+        ("ta",),
+        "tamil",
+        "core",
+        "tam",
+        "ta",
+        "NotoSansTamil-Regular.ttf",
+        bcp47="ta",
+    )
+)
+_reg(
+    LanguageEntry(
+        "te",
+        "Telugu",
+        ("te",),
+        "telugu",
+        "core",
+        "tel",
+        "te",
+        "NotoSansTelugu-Regular.ttf",
+        bcp47="te",
+    )
+)
+_reg(
+    LanguageEntry(
+        "kn",
+        "Kannada",
+        ("kn",),
+        "kannada",
+        "core",
+        "kan",
+        "kn",
+        "NotoSansKannada-Regular.ttf",
+        bcp47="kn",
+    )
+)
+_reg(
+    LanguageEntry(
+        "ka",
+        "Georgian",
+        ("ka",),
+        "georgian",
+        "core",
+        "kat",
+        "ka",
+        "NotoSansGeorgian-Regular.ttf",
+        bcp47="ka",
+    )
+)
 
 # Greek
 _reg(LanguageEntry("el", "Greek", ("el",), "greek", "core", "ell", "el", bcp47="el"))
 
 # -- Extended tier (+11 languages) ------------------------------------------------
 
-_reg(LanguageEntry("th", "Thai", ("th",), "thai", "extended",
-                   "tha", "th", "NotoSansThai-Regular.ttf", bcp47="th"))
-_reg(LanguageEntry("bn", "Bengali", ("bn",), "bengali", "extended",
-                   "ben", "bn", "NotoSansBengali-Regular.ttf", bcp47="bn"))
-_reg(LanguageEntry("mr", "Marathi", ("mr",), "devanagari", "extended",
-                   "mar", "mr", "NotoSansDevanagari-Regular.ttf", bcp47="mr"))
-_reg(LanguageEntry("ne", "Nepali", ("ne",), "devanagari", "extended",
-                   "nep", "ne", "NotoSansDevanagari-Regular.ttf", bcp47="ne"))
-_reg(LanguageEntry("hr", "Croatian", ("hr",), "latin", "extended", "hrv", "hr", bcp47="hr"))
-_reg(LanguageEntry("sk", "Slovak", ("sk",), "latin", "extended", "slk", "sk", bcp47="sk"))
-_reg(LanguageEntry("no", "Norwegian", ("no",), "latin", "extended", "nor", "no", bcp47="no"))
-_reg(LanguageEntry("lt", "Lithuanian", ("lt",), "latin", "extended", "lit", "lt", bcp47="lt"))
-_reg(LanguageEntry("lv", "Latvian", ("lv",), "latin", "extended", "lav", "lv", bcp47="lv"))
-_reg(LanguageEntry("et", "Estonian", ("et",), "latin", "extended", "est", "et", bcp47="et"))
-_reg(LanguageEntry("rs_latin", "Serbian Latin", ("sr",), "latin", "extended",
-                   "srp_latn", "rs_latin", bcp47="sr-Latn"))
+_reg(
+    LanguageEntry(
+        "th",
+        "Thai",
+        ("th",),
+        "thai",
+        "extended",
+        "tha",
+        "th",
+        "NotoSansThai-Regular.ttf",
+        bcp47="th",
+    )
+)
+_reg(
+    LanguageEntry(
+        "bn",
+        "Bengali",
+        ("bn",),
+        "bengali",
+        "extended",
+        "ben",
+        "bn",
+        "NotoSansBengali-Regular.ttf",
+        bcp47="bn",
+    )
+)
+_reg(
+    LanguageEntry(
+        "mr",
+        "Marathi",
+        ("mr",),
+        "devanagari",
+        "extended",
+        "mar",
+        "mr",
+        "NotoSansDevanagari-Regular.ttf",
+        bcp47="mr",
+    )
+)
+_reg(
+    LanguageEntry(
+        "ne",
+        "Nepali",
+        ("ne",),
+        "devanagari",
+        "extended",
+        "nep",
+        "ne",
+        "NotoSansDevanagari-Regular.ttf",
+        bcp47="ne",
+    )
+)
+_reg(
+    LanguageEntry(
+        "hr", "Croatian", ("hr",), "latin", "extended", "hrv", "hr", bcp47="hr"
+    )
+)
+_reg(
+    LanguageEntry("sk", "Slovak", ("sk",), "latin", "extended", "slk", "sk", bcp47="sk")
+)
+_reg(
+    LanguageEntry(
+        "no", "Norwegian", ("no",), "latin", "extended", "nor", "no", bcp47="no"
+    )
+)
+_reg(
+    LanguageEntry(
+        "lt", "Lithuanian", ("lt",), "latin", "extended", "lit", "lt", bcp47="lt"
+    )
+)
+_reg(
+    LanguageEntry(
+        "lv", "Latvian", ("lv",), "latin", "extended", "lav", "lv", bcp47="lv"
+    )
+)
+_reg(
+    LanguageEntry(
+        "et", "Estonian", ("et",), "latin", "extended", "est", "et", bcp47="et"
+    )
+)
+_reg(
+    LanguageEntry(
+        "rs_latin",
+        "Serbian Latin",
+        ("sr",),
+        "latin",
+        "extended",
+        "srp_latn",
+        "rs_latin",
+        bcp47="sr-Latn",
+    )
+)
 
 
 # --- Derived maps (backward compatible) -----------------------------------------
+
 
 def get_enabled_languages() -> dict[str, LanguageEntry]:
     """Return language entries for all enabled tiers."""
@@ -164,14 +406,18 @@ def build_font_map() -> dict[str, str]:
 
 def build_tesseract_map() -> dict[str, str]:
     """Build PaddleOCR-code -> Tesseract-code mapping from registry."""
-    return {k: v.tesseract_code for k, v in get_enabled_languages().items()
-            if v.tesseract_code}
+    return {
+        k: v.tesseract_code
+        for k, v in get_enabled_languages().items()
+        if v.tesseract_code
+    }
 
 
 def build_easyocr_map() -> dict[str, str]:
     """Build PaddleOCR-code -> EasyOCR-code mapping from registry."""
-    return {k: v.easyocr_code for k, v in get_enabled_languages().items()
-            if v.easyocr_code}
+    return {
+        k: v.easyocr_code for k, v in get_enabled_languages().items() if v.easyocr_code
+    }
 
 
 def build_rtl_languages() -> set[str]:
@@ -188,8 +434,23 @@ TESSERACT_MAP = build_tesseract_map()
 EASYOCR_MAP = build_easyocr_map()
 RTL_LANGUAGES = build_rtl_languages()
 
+# PaddleOCR 2.9.1 accepts language families rather than every language code in
+# this registry.  Finnish is covered by its Latin recognition model; these four
+# scripts have no compatible Paddle model and must use the trained Tesseract
+# fallback in the qualified v1 runtime.
+PADDLE_UNSUPPORTED_LANGUAGES = frozenset({"bn", "el", "kn", "th"})
+PADDLE_MODEL_FAMILY_BY_SCRIPT = {
+    "arabic": "arabic",
+    "cyrillic": "cyrillic",
+    "devanagari": "devanagari",
+    "georgian": "ka",
+    "tamil": "ta",
+    "telugu": "te",
+}
+
 
 # --- Convenience helpers --------------------------------------------------------
+
 
 def get_paddle_code(fasttext_code: str) -> str:
     """Map a FastText language code to PaddleOCR model code.
@@ -210,6 +471,42 @@ def get_paddle_code(fasttext_code: str) -> str:
 def get_tesseract_code(paddle_code: str) -> str:
     """Map a PaddleOCR code to Tesseract language code.  Falls back to ``'eng'``."""
     return TESSERACT_MAP.get(paddle_code, "eng")
+
+
+def get_paddle_runtime_code(language_code: str) -> str:
+    """Return the PaddleOCR 2.9.1 model-family code for a registry code."""
+    family = get_paddle_model_family(language_code)
+    return family or language_code
+
+
+def get_paddle_model_family(language_code: str) -> str | None:
+    """Return the baked Paddle recognition family, or ``None`` for fallback."""
+    if language_code in PADDLE_UNSUPPORTED_LANGUAGES:
+        return None
+    entry = LANGUAGE_REGISTRY.get(language_code)
+    if entry is None:
+        return language_code
+    if entry.script == "latin":
+        return "en" if language_code == "en" else "latin"
+    if entry.script == "cjk":
+        return language_code
+    return PADDLE_MODEL_FAMILY_BY_SCRIPT.get(entry.script, language_code)
+
+
+def is_paddle_language_supported(language_code: str) -> bool:
+    """Return whether a known registry language has a qualified Paddle model.
+
+    Unknown detector outputs such as ``und`` must route to the explicit
+    fallback engine instead of reaching PaddleOCR with an invalid ``lang``.
+    """
+    code = str(language_code or "").strip().lower()
+    if not code or code in PADDLE_UNSUPPORTED_LANGUAGES:
+        return False
+    registry_code = LANG_MAPPING.get(code, code)
+    return (
+        registry_code in LANGUAGE_REGISTRY
+        and registry_code not in PADDLE_UNSUPPORTED_LANGUAGES
+    )
 
 
 def get_font(paddle_code: str) -> str:

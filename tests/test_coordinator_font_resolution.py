@@ -1,13 +1,4 @@
-"""Tests for coordinator tasks.py font resolution integration.
-
-Verifies that:
-- coordinator/jobs/tasks.py passes lang_code to insert_text_line
-- coordinator/jobs/tasks.py uses _resolve_text_font for Tesseract fallback
-- _resolve_text_font is importable from ocr_distributed.ocr_utils
-- Font resolution falls back to helv when font_selector is unavailable
-
-Run with: python -m pytest tests/test_coordinator_font_resolution.py -v
-"""
+"""Coordinator OCR lines use the shared grounded searchable-text adapter."""
 
 import os
 import unittest
@@ -36,16 +27,16 @@ class TestCoordinatorCallSites(unittest.TestCase):
         with open(tasks_path, "r", encoding="utf-8") as f:
             cls.source = f.read()
 
-    def test_insert_text_line_passes_lang_code(self):
-        """insert_text_line call should pass lang_code keyword argument."""
-        self.assertIn(
-            "insert_text_line(pdf_page, txt, box, lang_code=lang_code)",
-            self.source,
-        )
+    def test_insert_text_line_passes_language_and_source_rotation(self):
+        """The page overlay carries font and Paddle reading direction."""
+        self.assertIn("insert_text_line(", self.source)
+        self.assertIn("lang_code=lang_code", self.source)
+        self.assertIn("geometry.source_rotation", self.source)
 
-    def test_tesseract_fallback_uses_resolve_text_font(self):
-        """Tesseract fallback path should call _resolve_text_font."""
-        self.assertIn("_resolve_text_font(lang_code)", self.source)
+    def test_tesseract_fallback_uses_grounded_word_boxes(self):
+        """Tesseract words are mapped to page geometry before shared insert."""
+        self.assertIn("tesseract_data_to_lines_with_review(", self.source)
+        self.assertIn("transform=transform", self.source)
 
     def test_no_hardcoded_helv_in_insert_text(self):
         """There should be no hardcoded fontname='helv' in page.insert_text calls."""
@@ -53,17 +44,12 @@ class TestCoordinatorCallSites(unittest.TestCase):
         # _resolve_text_font rather than hardcoding fontname="helv"
         self.assertNotIn('fontname="helv"', self.source)
 
-    def test_resolve_text_font_imported(self):
-        """_resolve_text_font should be imported from ocr_distributed."""
-        self.assertIn("_resolve_text_font", self.source)
+    def test_font_resolution_is_owned_by_shared_adapter(self):
+        """The coordinator does not bypass geometry and glyph validation."""
+        self.assertNotIn("_resolve_text_font", self.source)
 
-    def test_import_block_includes_resolve_text_font(self):
-        """The import block should explicitly import _resolve_text_font."""
-        # Verify it appears in the from ocr_distributed.ocr_utils import block
-        self.assertIn(
-            "_resolve_text_font,",
-            self.source,
-        )
+    def test_import_block_includes_shared_adapter(self):
+        self.assertIn("insert_text_line,", self.source)
 
 
 # ---------------------------------------------------------------------------
@@ -151,21 +137,15 @@ class TestInsertTextLineWithLangCode(unittest.TestCase):
         doc.close()
 
     def test_tesseract_fallback_pattern(self):
-        """Simulate the Tesseract fallback path from coordinator tasks.py."""
+        """Tesseract text stays searchable inside its measured word box."""
         doc = fitz.open()
         page = doc.new_page(width=612, height=792)
 
         lang_code = "en"
         page_text = "Sample tesseract output"
 
-        fontname, fontfile = _resolve_text_font(lang_code)
-        font_kwargs = {"fontname": fontname}
-        if fontfile:
-            font_kwargs["fontfile"] = fontfile
-
-        page.insert_text(
-            (72, 72), page_text, fontsize=1,
-            render_mode=3, **font_kwargs,
+        assert insert_text_line(
+            page, page_text, [72, 72, 300, 96], lang_code=lang_code
         )
 
         text = page.get_text()
@@ -173,22 +153,18 @@ class TestInsertTextLineWithLangCode(unittest.TestCase):
         doc.close()
 
     def test_tesseract_fallback_cjk_pattern(self):
-        """Simulate Tesseract fallback with CJK language code."""
+        """CJK insertion preserves glyphs or fails closed if font absent."""
         doc = fitz.open()
         page = doc.new_page(width=612, height=792)
 
         lang_code = "japan"
-        fontname, fontfile = _resolve_text_font(lang_code)
-        font_kwargs = {"fontname": fontname}
-        if fontfile:
-            font_kwargs["fontfile"] = fontfile
-
-        # Should not raise even with CJK lang_code
-        # (falls back to helv if fonts not installed)
-        page.insert_text(
-            (72, 72), "test", fontsize=1,
-            render_mode=3, **font_kwargs,
+        inserted = insert_text_line(
+            page, "日本語", [72, 72, 300, 96], lang_code=lang_code
         )
+        if inserted:
+            self.assertIn("日本語", page.get_text())
+        else:
+            self.assertNotIn("日本語", page.get_text())
         doc.close()
 
     def test_multiple_languages_same_page(self):
@@ -210,6 +186,9 @@ class TestInsertTextLineWithLangCode(unittest.TestCase):
         text = page.get_text()
         self.assertIn("English", text)
         self.assertIn("Arabic", text)
+        hits = page.search_for("Arabic")
+        self.assertEqual(len(hits), 1)
+        self.assertTrue(fitz.Rect(100, 150, 300, 170).contains(hits[0]))
         doc.close()
 
 

@@ -6,7 +6,7 @@ import { TenantConfigForm } from "@/components/TenantConfigForm";
 import { setApiKey } from "@/lib/auth";
 import type { TenantConfig } from "@/lib/types";
 
-vi.mock("next/link", => ({
+vi.mock("next/link", () => ({
   __esModule: true,
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
     <a href={href} {...rest}>
@@ -16,10 +16,10 @@ vi.mock("next/link", => ({
 }));
 
 const useParamsMock = vi.fn();
-vi.mock("next/navigation", => ({
-  useParams: => useParamsMock(),
-  useRouter: => ({ push: vi.fn() }),
-  usePathname: => "/admin/tenants/acme",
+vi.mock("next/navigation", () => ({
+  useParams: () => useParamsMock(),
+  useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => "/admin/tenants/acme",
 }));
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -42,8 +42,8 @@ function makeConfig(): TenantConfig {
   };
 }
 
-describe("<TenantConfigForm />", => {
-  it("requires NC opt-in before NLLB-200 can be selected", => {
+describe("<TenantConfigForm />", () => {
+  it("requires NC opt-in before NLLB-200 can be selected", () => {
     const onSubmit = vi.fn();
     render(
       <TenantConfigForm
@@ -65,7 +65,7 @@ describe("<TenantConfigForm />", => {
     ).toBe(false);
   });
 
-  it("rejects an invalid BCP-47 tag and accepts a valid one", => {
+  it("rejects an invalid BCP-47 tag and accepts a valid one", () => {
     const onSubmit = vi.fn();
     render(
       <TenantConfigForm
@@ -89,7 +89,7 @@ describe("<TenantConfigForm />", => {
     expect(chips).toHaveTextContent("zh-Hans");
   });
 
-  it("calls onSubmit with the dirty payload on save", async => {
+  it("calls onSubmit with the dirty payload on save", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
       <TenantConfigForm
@@ -109,7 +109,7 @@ describe("<TenantConfigForm />", => {
     expect(payload.preferred_engines).toEqual(["opus_mt"]);
   });
 
-  it("disables Save when the form is pristine and re-enables it on edit", => {
+  it("disables Save when the form is pristine and re-enables it on edit", () => {
     render(
       <TenantConfigForm
         tenantId="acme"
@@ -129,7 +129,7 @@ describe("<TenantConfigForm />", => {
   });
 });
 
-describe("<TenantDetailPage />", => {
+describe("<TenantDetailPage />", () => {
   beforeEach(() => {
     setApiKey("test-key");
     useParamsMock.mockReturnValue({ tenantId: "acme" });
@@ -139,7 +139,7 @@ describe("<TenantDetailPage />", => {
     vi.restoreAllMocks();
   });
 
-  it("loads the tenant config and renders the Config tab by default", async => {
+  it("loads the tenant config and renders the Config tab by default", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input);
       if (url.includes("/translation/tenants/acme/config")) {
@@ -161,7 +161,7 @@ describe("<TenantDetailPage />", => {
     expect(screen.getByTestId("tenant-detail-id")).toHaveTextContent("acme");
   });
 
-  it("PUTs the config when Save is clicked", async => {
+  it("PUTs the config when Save is clicked", async () => {
     let putBody: unknown = null;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input);

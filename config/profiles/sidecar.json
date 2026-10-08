@@ -1,0 +1,15 @@
+{
+  "name": "sidecar",
+  "num_extractors": 2,
+  "num_workers": 2,
+  "num_compressors": 1,
+  "image_queue_size": 16,
+  "chunk_queue_size": 8,
+  "dpi": 300,
+  "description": "Lean peer-app SIDECAR (EDCOMMANDER-class) defaults",
+  "topology_class": "sidecar",
+  "honest_limits": [
+    "Assumes shared-host or small peer footprint; not farm routing."
+  ],
+  "extra": {}
+}

@@ -4,12 +4,12 @@ import SettingsPage from "@/app/settings/page";
 import { setApiKey } from "@/lib/auth";
 import { SETTINGS_STORAGE_KEY } from "@/lib/settings-store";
 
-vi.mock("next/navigation", => ({
-  useRouter: => ({ push: vi.fn() }),
-  usePathname: => "/settings",
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => "/settings",
 }));
 
-describe("<SettingsPage />", => {
+describe("<SettingsPage />", () => {
   beforeEach(() => {
     window.localStorage.clear();
     setApiKey("test-key-1234abcdEFGH");
@@ -20,7 +20,7 @@ describe("<SettingsPage />", => {
     vi.restoreAllMocks();
   });
 
-  it("renders the General tab by default", async => {
+  it("renders the General tab by default", async () => {
     render(<SettingsPage />);
     await screen.findByTestId("settings-form-general");
     expect(screen.getByTestId("settings-tab-general")).toHaveAttribute(
@@ -29,20 +29,20 @@ describe("<SettingsPage />", => {
     );
   });
 
-  it("switches to the Display tab when clicked", async => {
+  it("switches to the Display tab when clicked", async () => {
     render(<SettingsPage />);
     fireEvent.click(screen.getByTestId("settings-tab-display"));
     expect(await screen.findByTestId("settings-form-display")).toBeInTheDocument();
     expect(screen.queryByTestId("settings-form-general")).toBeNull();
   });
 
-  it("toggles the theme to dark and applies it to documentElement", async => {
+  it("toggles the theme to dark and applies it to documentElement", async () => {
     render(<SettingsPage />);
     fireEvent.click(await screen.findByTestId("settings-theme-dark"));
     expect(document.documentElement.dataset.theme).toBe("dark");
   });
 
-  it("rejects an invalid API base URL on save", async => {
+  it("rejects an invalid API base URL on save", async () => {
     render(<SettingsPage />);
     fireEvent.click(screen.getByTestId("settings-tab-api"));
     const input = await screen.findByTestId("settings-base-url");
@@ -51,7 +51,7 @@ describe("<SettingsPage />", => {
     expect(await screen.findByTestId("settings-base-url-error")).toBeInTheDocument();
   });
 
-  it("accepts a valid API base URL on save", async => {
+  it("accepts a valid API base URL on save", async () => {
     render(<SettingsPage />);
     fireEvent.click(screen.getByTestId("settings-tab-api"));
     const input = await screen.findByTestId("settings-base-url");
@@ -66,7 +66,7 @@ describe("<SettingsPage />", => {
     expect(stored.api.baseUrl).toBe("https://ocr.example.com");
   });
 
-  it("rejects out-of-range timeoutMs on save", async => {
+  it("rejects out-of-range timeoutMs on save", async () => {
     render(<SettingsPage />);
     fireEvent.click(screen.getByTestId("settings-tab-api"));
     const input = await screen.findByTestId("settings-timeout-ms");
@@ -75,7 +75,7 @@ describe("<SettingsPage />", => {
     expect(await screen.findByTestId("settings-timeout-error")).toBeInTheDocument();
   });
 
-  it("auto-refresh slider drives the displayed seconds value", async => {
+  it("auto-refresh slider drives the displayed seconds value", async () => {
     render(<SettingsPage />);
     fireEvent.click(screen.getByTestId("settings-tab-display"));
     const slider = await screen.findByTestId("settings-auto-refresh");
@@ -84,7 +84,7 @@ describe("<SettingsPage />", => {
     expect(screen.getByText(/120/)).toBeInTheDocument();
   });
 
-  it("saves a new pageSize and shows the 'Last saved' label", async => {
+  it("saves a new pageSize and shows the 'Last saved' label", async () => {
     render(<SettingsPage />);
     fireEvent.click(screen.getByTestId("settings-tab-display"));
     const select = await screen.findByTestId("settings-page-size");
@@ -97,7 +97,7 @@ describe("<SettingsPage />", => {
     expect(stored.display.pageSize).toBe(100);
   });
 
-  it("Reset to defaults requires two clicks", async => {
+  it("Reset to defaults requires two clicks", async () => {
     render(<SettingsPage />);
     fireEvent.click(screen.getByTestId("settings-tab-display"));
     const select = await screen.findByTestId("settings-page-size");
@@ -115,7 +115,7 @@ describe("<SettingsPage />", => {
     expect(screen.getByTestId("settings-reset-button")).toHaveTextContent(/Reset to defaults/);
   });
 
-  it("Cancel button aborts a pending reset", async => {
+  it("Cancel button aborts a pending reset", async () => {
     render(<SettingsPage />);
     const resetBtn = screen.getByTestId("settings-reset-button");
     fireEvent.click(resetBtn);
@@ -124,7 +124,7 @@ describe("<SettingsPage />", => {
     expect(screen.getByTestId("settings-reset-button")).toHaveTextContent(/Reset to defaults/);
   });
 
-  it("surfaces a save error when localStorage write throws", async => {
+  it("surfaces a save error when localStorage write throws", async () => {
     render(<SettingsPage />);
     fireEvent.click(screen.getByTestId("settings-tab-display"));
     await screen.findByTestId("settings-form-display");
@@ -136,7 +136,7 @@ describe("<SettingsPage />", => {
     spy.mockRestore();
   });
 
-  it("syncs the redacted API key preview from the auth layer", async => {
+  it("syncs the redacted API key preview from the auth layer", async () => {
     render(<SettingsPage />);
     fireEvent.click(screen.getByTestId("settings-tab-api"));
     const sync = await screen.findByTestId("settings-api-key-sync");
@@ -146,7 +146,7 @@ describe("<SettingsPage />", => {
     expect(preview.textContent).toContain("EFGH");
   });
 
-  it("disables sub-toggles when desktop notifications are off", async => {
+  it("disables sub-toggles when desktop notifications are off", async () => {
     render(<SettingsPage />);
     fireEvent.click(screen.getByTestId("settings-tab-notifications"));
     const sub = await screen.findByTestId("settings-notif-sound");
@@ -154,7 +154,7 @@ describe("<SettingsPage />", => {
     expect(sub).toBeDisabled();
   });
 
-  it("enables sub-toggles after desktop notifications are turned on", async => {
+  it("enables sub-toggles after desktop notifications are turned on", async () => {
     const NotificationStub = vi.fn() as unknown as typeof Notification;
     Object.defineProperty(NotificationStub, "permission", {
       value: "granted",
@@ -175,7 +175,7 @@ describe("<SettingsPage />", => {
     });
   });
 
-  it("does not show the request-permission button after grant", async => {
+  it("does not show the request-permission button after grant", async () => {
     const NotificationStub = vi.fn() as unknown as typeof Notification;
     Object.defineProperty(NotificationStub, "permission", {
       value: "granted",

@@ -45,6 +45,7 @@ class LatencyPoint:
 @dataclass
 class PipelineStageMetrics:
     """Metrics for a single pipeline stage."""
+
     stage: str
     active_workers: int = 0
     completed: int = 0
@@ -56,6 +57,7 @@ class PipelineStageMetrics:
 @dataclass
 class DashboardSnapshot:
     """Point-in-time dashboard state."""
+
     timestamp: float = 0.0
     # Throughput
     pages_per_minute: float = 0.0
@@ -129,8 +131,13 @@ class MetricsCollector:
         self._stage_metrics: dict = {}
         self._tenant_stage_metrics: dict = {}  # tenant_id -> {stage -> metrics}
 
-    def record_throughput(self, pages: int = 0, documents: int = 0,
-                         bytes_processed: int = 0, tenant_id: str = ""):
+    def record_throughput(
+        self,
+        pages: int = 0,
+        documents: int = 0,
+        bytes_processed: int = 0,
+        tenant_id: str = "",
+    ):
         """Record a throughput data point."""
         point = ThroughputPoint(
             timestamp=time.time(),
@@ -143,9 +150,15 @@ class MetricsCollector:
             self._throughput.append(point)
             self._prune_old(self._throughput)
 
-    def record_latency(self, job_id: str = "", total_ms: float = 0.0,
-                       ocr_ms: float = 0.0, compression_ms: float = 0.0,
-                       queue_wait_ms: float = 0.0, tenant_id: str = ""):
+    def record_latency(
+        self,
+        job_id: str = "",
+        total_ms: float = 0.0,
+        ocr_ms: float = 0.0,
+        compression_ms: float = 0.0,
+        queue_wait_ms: float = 0.0,
+        tenant_id: str = "",
+    ):
         """Record a latency data point."""
         point = LatencyPoint(
             timestamp=time.time(),
@@ -160,9 +173,15 @@ class MetricsCollector:
             self._latency.append(point)
             self._prune_old(self._latency)
 
-    def update_job_counts(self, total: int = 0, active: int = 0,
-                          completed: int = 0, failed: int = 0, queued: int = 0,
-                          tenant_id: str = ""):
+    def update_job_counts(
+        self,
+        total: int = 0,
+        active: int = 0,
+        completed: int = 0,
+        failed: int = 0,
+        queued: int = 0,
+        tenant_id: str = "",
+    ):
         """Update current job counts.
 
         When *tenant_id* is provided the counts are stored in a per-tenant
@@ -186,10 +205,16 @@ class MetricsCollector:
                 self._job_counts["failed"] = failed
                 self._job_counts["queued"] = queued
 
-    def update_stage(self, stage: str, active_workers: int = 0,
-                     completed: int = 0, failed: int = 0,
-                     avg_latency_ms: float = 0.0, queue_depth: int = 0,
-                     tenant_id: str = ""):
+    def update_stage(
+        self,
+        stage: str,
+        active_workers: int = 0,
+        completed: int = 0,
+        failed: int = 0,
+        avg_latency_ms: float = 0.0,
+        queue_depth: int = 0,
+        tenant_id: str = "",
+    ):
         """Update metrics for a pipeline stage.
 
         When *tenant_id* is provided the stage metrics are stored in a
@@ -212,8 +237,9 @@ class MetricsCollector:
             else:
                 self._stage_metrics[stage] = metrics
 
-    def get_snapshot(self, window: MetricWindow = MetricWindow.MINUTE_5,
-                     tenant_id: str = "") -> DashboardSnapshot:
+    def get_snapshot(
+        self, window: MetricWindow = MetricWindow.MINUTE_5, tenant_id: str = ""
+    ) -> DashboardSnapshot:
         """Get current dashboard snapshot for the given time window.
 
         When *tenant_id* is provided, only data points recorded for that
@@ -227,15 +253,19 @@ class MetricsCollector:
             # Filter to window (and optionally by tenant)
             if tenant_id:
                 throughput_window = [
-                    p for p in self._throughput
+                    p
+                    for p in self._throughput
                     if p.timestamp >= cutoff and p.tenant_id == tenant_id
                 ]
                 latency_window = [
-                    p for p in self._latency
+                    p
+                    for p in self._latency
                     if p.timestamp >= cutoff and p.tenant_id == tenant_id
                 ]
             else:
-                throughput_window = [p for p in self._throughput if p.timestamp >= cutoff]
+                throughput_window = [
+                    p for p in self._throughput if p.timestamp >= cutoff
+                ]
                 latency_window = [p for p in self._latency if p.timestamp >= cutoff]
 
             snapshot = DashboardSnapshot(timestamp=now)
@@ -284,9 +314,12 @@ class MetricsCollector:
 
             return snapshot
 
-    def get_throughput_series(self, window: MetricWindow = MetricWindow.HOUR_1,
-                              bucket_seconds: int = 60,
-                              tenant_id: str = "") -> list:
+    def get_throughput_series(
+        self,
+        window: MetricWindow = MetricWindow.HOUR_1,
+        bucket_seconds: int = 60,
+        tenant_id: str = "",
+    ) -> list:
         """Get time-series throughput data bucketed by interval.
 
         When *tenant_id* is provided, only data points for that tenant
@@ -298,7 +331,8 @@ class MetricsCollector:
         with self._lock:
             if tenant_id:
                 points = [
-                    p for p in self._throughput
+                    p
+                    for p in self._throughput
                     if p.timestamp >= cutoff and p.tenant_id == tenant_id
                 ]
             else:
@@ -312,16 +346,24 @@ class MetricsCollector:
         for p in points:
             bucket_key = int(p.timestamp / bucket_seconds) * bucket_seconds
             if bucket_key not in buckets:
-                buckets[bucket_key] = {"timestamp": bucket_key, "pages": 0, "documents": 0, "bytes": 0}
+                buckets[bucket_key] = {
+                    "timestamp": bucket_key,
+                    "pages": 0,
+                    "documents": 0,
+                    "bytes": 0,
+                }
             buckets[bucket_key]["pages"] += p.pages
             buckets[bucket_key]["documents"] += p.documents
             buckets[bucket_key]["bytes"] += p.bytes_processed
 
         return sorted(buckets.values(), key=lambda b: b["timestamp"])
 
-    def get_latency_series(self, window: MetricWindow = MetricWindow.HOUR_1,
-                            bucket_seconds: int = 60,
-                            tenant_id: str = "") -> list:
+    def get_latency_series(
+        self,
+        window: MetricWindow = MetricWindow.HOUR_1,
+        bucket_seconds: int = 60,
+        tenant_id: str = "",
+    ) -> list:
         """Get time-series latency data bucketed by interval.
 
         When *tenant_id* is provided, only data points for that tenant
@@ -333,7 +375,8 @@ class MetricsCollector:
         with self._lock:
             if tenant_id:
                 points = [
-                    p for p in self._latency
+                    p
+                    for p in self._latency
                     if p.timestamp >= cutoff and p.tenant_id == tenant_id
                 ]
             else:
@@ -352,13 +395,15 @@ class MetricsCollector:
         result = []
         for bk in sorted(buckets.keys()):
             lats = buckets[bk]["latencies"]
-            result.append({
-                "timestamp": bk,
-                "avg_ms": sum(lats) / len(lats),
-                "p50_ms": _percentile(sorted(lats), 50),
-                "p95_ms": _percentile(sorted(lats), 95),
-                "count": len(lats),
-            })
+            result.append(
+                {
+                    "timestamp": bk,
+                    "avg_ms": sum(lats) / len(lats),
+                    "p50_ms": _percentile(sorted(lats), 50),
+                    "p95_ms": _percentile(sorted(lats), 95),
+                    "count": len(lats),
+                }
+            )
 
         return result
 
@@ -371,6 +416,27 @@ class MetricsCollector:
             self._tenant_job_counts.clear()
             self._stage_metrics.clear()
             self._tenant_stage_metrics.clear()
+
+    def purge_tenant(self, tenant_id: str) -> int:
+        """Remove all in-memory metrics and counters owned by a tenant."""
+        if not isinstance(tenant_id, str) or not tenant_id:
+            return 0
+        with self._lock:
+            before = (
+                sum(1 for point in self._throughput if point.tenant_id == tenant_id)
+                + sum(1 for point in self._latency if point.tenant_id == tenant_id)
+                + (1 if tenant_id in self._tenant_job_counts else 0)
+                + len(self._tenant_stage_metrics.get(tenant_id, {}))
+            )
+            self._throughput = deque(
+                point for point in self._throughput if point.tenant_id != tenant_id
+            )
+            self._latency = deque(
+                point for point in self._latency if point.tenant_id != tenant_id
+            )
+            self._tenant_job_counts.pop(tenant_id, None)
+            self._tenant_stage_metrics.pop(tenant_id, None)
+            return before
 
     def _prune_old(self, dq: deque):
         """Remove data points older than max_window."""

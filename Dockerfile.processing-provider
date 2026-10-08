@@ -1,0 +1,68 @@
+# Syntax: docker/dockerfile:1.7
+
+# Build a source-pinned provider successor on top of an already qualified OCR
+# runtime/model layer. BASE_IMAGE must itself be immutable in production.
+# `scratch` is a parse-valid fail-closed sentinel. A real build cannot execute
+# this image's RUN instructions unless the orchestrator supplies a qualified
+# parent reference and matching digest.
+ARG BASE_IMAGE=scratch
+FROM ${BASE_IMAGE} AS provider-source
+
+ARG BASE_IMAGE
+ARG BASE_IMAGE_DIGEST
+ARG SOURCE_REVISION
+ARG SOURCE_URL=https://github.com/mattmre/OCR_Local.git
+ARG RELEASE_VERSION
+
+USER root
+WORKDIR /app
+
+# The root .dockerignore excludes tests, local data, secrets, documentation,
+# and model caches. The qualified base owns runtime dependencies and model
+# layers; this successor owns the exact application source revision.
+# Remove the complete inherited application tree first. Overlay-only COPY
+# leaves deleted migration/modules from the base image behind and can create a
+# runtime graph that never existed at SOURCE_REVISION.
+RUN find /app -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+COPY --chown=1000:1000 . /app/
+
+ENV PYTHONPATH=/app:/app/coordinator \
+    DJANGO_SETTINGS_MODULE=coordinator.settings \
+    PYTHONUNBUFFERED=1
+
+RUN python -m pip install --no-cache-dir --upgrade "pip==26.2.1"
+RUN python -m pip install --no-cache-dir \
+      attrs==26.1.0 \
+      jsonschema==4.25.1 \
+      jsonschema-specifications==2025.9.1 \
+      referencing==0.37.0 \
+      rfc3339-validator==0.1.4 \
+      rpds-py==2026.6.3 \
+      six==1.17.0 \
+    && test -n "$BASE_IMAGE_DIGEST" \
+    && case "$BASE_IMAGE" in *@"$BASE_IMAGE_DIGEST") ;; *) exit 64 ;; esac \
+    && test -n "$SOURCE_REVISION" \
+    && test -n "$RELEASE_VERSION" \
+    && python -m compileall -q /app/coordinator /app/ocr_local /app/ocr_distributed
+
+LABEL org.opencontainers.image.source="$SOURCE_URL" \
+      org.opencontainers.image.revision="$SOURCE_REVISION" \
+      org.opencontainers.image.version="$RELEASE_VERSION" \
+      org.opencontainers.image.base.name="$BASE_IMAGE" \
+      org.opencontainers.image.base.digest="$BASE_IMAGE_DIGEST"
+
+USER 1000:1000
+WORKDIR /app/coordinator
+
+FROM provider-source AS test
+
+USER root
+RUN python -m pip install --no-cache-dir \
+      pytest==9.0.2 \
+      pytest-django==4.14.0 \
+      pytest-cov==7.0.0
+USER 1000:1000
+
+FROM provider-source AS runtime
+
+CMD ["gunicorn", "coordinator.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120"]

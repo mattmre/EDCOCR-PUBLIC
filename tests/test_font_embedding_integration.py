@@ -8,7 +8,9 @@ Tests verify that:
 - The distributed copy in ocr_distributed/ocr_utils.py is also updated
 """
 
+import ast
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -26,6 +28,7 @@ class TestResolveTextFont(unittest.TestCase):
         # Import from ocr_distributed since it has the same function
         # without needing all ocr_gpu_async dependencies
         from ocr_distributed.ocr_utils import _resolve_text_font
+
         return _resolve_text_font
 
     def test_none_lang_returns_helv(self):
@@ -79,7 +82,8 @@ class TestInsertTextLineLangCode(unittest.TestCase):
 
         # Should not raise — lang_code is optional and defaults to None
         result = insert_text_line(
-            page, "Hello World",
+            page,
+            "Hello World",
             [[100, 100], [300, 100], [300, 120], [100, 120]],
             lang_code=None,
         )
@@ -94,7 +98,8 @@ class TestInsertTextLineLangCode(unittest.TestCase):
         page = doc.new_page(width=612, height=792)
 
         result = insert_text_line(
-            page, "English text",
+            page,
+            "English text",
             [[100, 100], [300, 100], [300, 120], [100, 120]],
             lang_code="en",
         )
@@ -110,7 +115,8 @@ class TestInsertTextLineLangCode(unittest.TestCase):
 
         # Call without lang_code — backward compatible
         result = insert_text_line(
-            page, "No lang code",
+            page,
+            "No lang code",
             [[100, 100], [300, 100], [300, 120], [100, 120]],
         )
         self.assertTrue(result)
@@ -125,13 +131,68 @@ class TestInsertTextLineLangCode(unittest.TestCase):
 
         # Provide a single point (anchor path)
         insert_text_line(
-            page, "Anchor text",
+            page,
+            "Anchor text",
             [100, 200],
             lang_code="en",
         )
         # The anchor path may or may not work depending on box_to_rect_and_anchor
         # behavior with [100, 200], but it should not crash
         doc.close()
+
+    def test_distributed_custom_font_measures_and_embeds_searchable_text(self):
+        """Custom font metrics must not be passed to fitz.get_text_length."""
+        from ocr_distributed import ocr_utils
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            font_path = Path(temp_dir) / "TestFont.cff"
+            font_path.write_bytes(fitz.Font("helv").buffer)
+            doc = fitz.open()
+            page = doc.new_page(width=612, height=792)
+            with patch.object(
+                ocr_utils,
+                "_resolve_text_font",
+                return_value=("TestFont", str(font_path)),
+            ):
+                inserted = ocr_utils.insert_text_line(
+                    page,
+                    "Custom font searchable text",
+                    [[50, 50], [350, 50], [350, 80], [50, 80]],
+                    lang_code="en",
+                )
+
+            self.assertTrue(inserted)
+            reopened = fitz.open(stream=doc.write(), filetype="pdf")
+            self.assertIn("Custom font searchable text", reopened[0].get_text())
+            reopened.close()
+            doc.close()
+
+    def test_root_custom_font_measures_and_embeds_searchable_text(self):
+        """The monolithic production worker must use the same safe metric path."""
+        import ocr_gpu_async
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            font_path = Path(temp_dir) / "TestRootFont.cff"
+            font_path.write_bytes(fitz.Font("helv").buffer)
+            doc = fitz.open()
+            page = doc.new_page(width=612, height=792)
+            with patch.object(
+                ocr_gpu_async,
+                "_resolve_text_font",
+                return_value=("TestRootFont", str(font_path)),
+            ):
+                inserted = ocr_gpu_async.insert_text_line(
+                    page,
+                    "Root custom font searchable text",
+                    [[50, 50], [350, 50], [350, 80], [50, 80]],
+                    lang_code="en",
+                )
+
+            self.assertTrue(inserted)
+            reopened = fitz.open(stream=doc.write(), filetype="pdf")
+            self.assertIn("Root custom font searchable text", reopened[0].get_text())
+            reopened.close()
+            doc.close()
 
 
 class TestFontSelectorMapping(unittest.TestCase):
@@ -194,20 +255,39 @@ class TestCallSitesPassLangCode(unittest.TestCase):
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
 
+    def _has_insert_call(self, page_name, lang_expression):
+        tree = ast.parse(self._read_source("ocr_gpu_async.py"))
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "insert_text_line"
+                and node.args
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id == page_name
+            ):
+                continue
+            lang_keyword = next(
+                (keyword for keyword in node.keywords if keyword.arg == "lang_code"),
+                None,
+            )
+            if lang_keyword and ast.unparse(lang_keyword.value) == lang_expression:
+                return True
+        return False
+
     def test_paddle_primary_pass_lang_code(self):
-        """PaddleOCR primary pass should pass lang_code=task.lang_hint."""
-        source = self._read_source("ocr_gpu_async.py")
-        self.assertIn("insert_text_line(page, normalized_txt, box, lang_code=task.lang_hint)", source)
+        """Primary insertion uses the selected actual model language."""
+        self.assertTrue(self._has_insert_call("page", "requested_language"))
 
     def test_paddle_rerun_pass_lang_code(self):
         """PaddleOCR two-pass rerun should pass lang_code=detected_code."""
-        source = self._read_source("ocr_gpu_async.py")
-        self.assertIn("insert_text_line(rerun_page, normalized_txt, box, lang_code=detected_code)", source)
+        self.assertTrue(self._has_insert_call("rerun_page", "detected_code"))
 
     def test_tesseract_fallback_uses_font(self):
-        """Tesseract fallback should use _resolve_text_font."""
-        source = self._read_source("ocr_gpu_async.py")
-        self.assertIn("_resolve_text_font(task.lang_hint)", source)
+        """Fallback passes the selected language into the font resolver path."""
+        self.assertTrue(self._has_insert_call("page", "requested_language"))
+        source = self._read_source("ocr_distributed/ocr_utils.py")
+        self.assertIn("_resolve_text_font(lang_code)", source)
 
     def test_font_selector_imported(self):
         """ocr_gpu_async should import from font_selector."""
@@ -217,9 +297,13 @@ class TestCallSitesPassLangCode(unittest.TestCase):
 
     def test_distributed_copy_updated(self):
         """ocr_distributed/ocr_utils.py should also have lang_code parameter."""
-        source = self._read_source("ocr_distributed/ocr_utils.py")
-        self.assertIn("def insert_text_line(page, txt, box, lang_code=None)", source)
-        self.assertIn("_resolve_text_font", source)
+        tree = ast.parse(self._read_source("ocr_distributed/ocr_utils.py"))
+        wrapper = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "insert_text_line"
+        )
+        self.assertIn("lang_code", [argument.arg for argument in wrapper.args.args])
+        self.assertIn("_resolve_text_font", ast.unparse(wrapper))
 
 
 class TestHelvFallbackBehavior(unittest.TestCase):
@@ -233,7 +317,8 @@ class TestHelvFallbackBehavior(unittest.TestCase):
         page = doc.new_page(width=612, height=792)
 
         insert_text_line(
-            page, "Latin text with helv",
+            page,
+            "Latin text with helv",
             [[50, 50], [300, 50], [300, 70], [50, 70]],
         )
 
@@ -254,7 +339,8 @@ class TestHelvFallbackBehavior(unittest.TestCase):
         page = doc.new_page(width=612, height=792)
 
         insert_text_line(
-            page, "Invisible text",
+            page,
+            "Invisible text",
             [[50, 50], [300, 50], [300, 70], [50, 70]],
         )
 

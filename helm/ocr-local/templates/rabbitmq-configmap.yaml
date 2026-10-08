@@ -1,0 +1,32 @@
+{{- if .Values.rabbitmq.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-rabbitmq-config
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rabbitmq
+data:
+  rabbitmq.conf: |
+    vm_memory_high_watermark.relative = {{ .Values.rabbitmq.memoryHighWatermark }}
+    default_queue_type = {{ if .Values.rabbitmq.quorumQueues }}quorum{{ else }}classic{{ end }}
+    {{- if .Values.tls.enabled }}
+    listeners.tcp = none
+    listeners.ssl.default = 5671
+    ssl_options.cacertfile = /etc/tls/ca.crt
+    ssl_options.certfile = /etc/tls/tls.crt
+    ssl_options.keyfile = /etc/tls/tls.key
+    # Client certificates are a separate federation-mTLS contract.  The
+    # application TLS switch provides encrypted broker transport while the
+    # existing password authentication remains the client identity check.
+    ssl_options.verify = verify_none
+    ssl_options.fail_if_no_peer_cert = false
+    management.tcp.port = none
+    management.ssl.port = 15671
+    management.ssl.cacertfile = /etc/tls/ca.crt
+    management.ssl.certfile = /etc/tls/tls.crt
+    management.ssl.keyfile = /etc/tls/tls.key
+    management.ssl.verify = verify_none
+    management.ssl.fail_if_no_peer_cert = false
+    {{- end }}
+{{- end }}

@@ -1,4 +1,4 @@
-"""Tests for RequestSizeLimitMiddleware.
+"""Tests for RequestSizeLimitMiddleware (maintenance review).
 
 Verifies that the DoS-hardening middleware:
 
@@ -126,6 +126,10 @@ class TestRequestSizeLimitWired:
         source.mkdir()
         output.mkdir()
 
+        # Import before changing config so the cached app-factory constant
+        # retains the normal default after this test's scoped override.
+        import api.main as api_main
+
         with (
             patch("api.config.SOURCE_FOLDER", str(source)),
             patch("api.config.OUTPUT_FOLDER", str(output)),
@@ -142,29 +146,32 @@ class TestRequestSizeLimitWired:
             mock_config.PIPELINE_POLL_INTERVAL = 1
             mock_config.MAX_CONCURRENT_JOBS = 64
 
-            # Re-import so MAX_REQUEST_BODY_SIZE patch is picked up at
-            # app-factory time.
-            import importlib
+            # Patch the value consumed by app creation without reloading the
+            # module; reloading left the temporary 64-byte limit in global
+            # state and polluted later authorization tests.
+            with patch.object(api_main, "MAX_REQUEST_BODY_SIZE", 64):
+                app = api_main.create_app()
+                limiter_enabled = app.state.limiter.enabled
+                app.state.limiter.enabled = False
+                app.state.limiter.reset()
+                try:
+                    client = TestClient(app)
 
-            import api.main as api_main
-            importlib.reload(api_main)
-            app = api_main.create_app()
-            app.state.limiter.enabled = False
-            app.state.limiter.reset()
-            client = TestClient(app)
+                    # A small health request works.
+                    r = client.get("/api/v1/health")
+                    assert r.status_code in (200, 503)
 
-            # A small health request works.
-            r = client.get("/api/v1/health")
-            assert r.status_code in (200, 503)
-
-            # An oversized JSON body is rejected with 413 before routing.
-            big_body = b'{"x":"' + b"y" * 256 + b'"}'
-            r = client.post(
-                "/api/v1/jobs/does-not-exist/retry",
-                content=big_body,
-                headers={"Content-Type": "application/json"},
-            )
-            assert r.status_code == 413, r.text
+                    # An oversized JSON body is rejected with 413 before routing.
+                    big_body = b'{"x":"' + b"y" * 256 + b'"}'
+                    r = client.post(
+                        "/api/v1/jobs/does-not-exist/retry",
+                        content=big_body,
+                        headers={"Content-Type": "application/json"},
+                    )
+                    assert r.status_code == 413, r.text
+                finally:
+                    app.state.limiter.reset()
+                    app.state.limiter.enabled = limiter_enabled
 
 
 def test_middleware_class_default_max_size():

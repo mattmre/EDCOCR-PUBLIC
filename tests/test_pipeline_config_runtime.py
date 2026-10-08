@@ -1,4 +1,4 @@
-"""Runtime wiring tests for  Phase 3."""
+"""Runtime wiring tests for maintenance review Phase 3."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from pipeline_config import create_pipeline_config
 
 def _make_args(**overrides):
     base = {
+        "source": None,
+        "output": None,
         "enable_docintel": False,
         "docintel_mode": "full",
         "export_tables": False,

@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JobsTable } from "@/components/JobsTable";
 import { setApiKey } from "@/lib/auth";
+import { getDefaultSettings, saveSettings, SETTINGS_STORAGE_KEY } from "@/lib/settings-store";
 import type { Job, JobListResponse } from "@/lib/types";
 
-vi.mock("next/link", => ({
+vi.mock("next/link", () => ({
   __esModule: true,
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
     // eslint-disable-next-line jsx-a11y/anchor-has-content
@@ -41,16 +42,40 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-describe("<JobsTable />", => {
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe("<JobsTable />", () => {
   beforeEach(() => {
     setApiKey("test-key");
   });
 
   afterEach(() => {
+    localStorage.removeItem(SETTINGS_STORAGE_KEY);
     vi.restoreAllMocks();
   });
 
-  it("renders jobs returned from the API", async => {
+  it("uses saved pagination, polling and display preferences", async () => {
+    const settings = getDefaultSettings();
+    settings.display = { pageSize: 10, autoRefreshSeconds: 45, compactMode: true, showAdvancedColumns: true };
+    saveSettings(settings);
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      jsonResponse({ jobs: [jobFixture()], total: 1, limit: 10, offset: 0 })
+    );
+    const interval = vi.spyOn(globalThis, "setInterval");
+    render(<JobsTable />);
+    await waitFor(() => expect(screen.getByTestId("job-link-job_abcdef012345")).toBeInTheDocument());
+    expect(fetch.mock.calls.some(([url]) => String(url).includes("limit=10"))).toBe(true);
+    expect(interval).toHaveBeenCalledWith(expect.any(Function), 45_000);
+    expect(screen.getByRole("columnheader", { name: "Priority" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Webhook" })).toBeInTheDocument();
+    expect(screen.getByTestId("jobs-table")).toHaveClass("[&_td]:py-1");
+  });
+
+  it("renders jobs returned from the API", async () => {
     const payload: JobListResponse = {
       jobs: [jobFixture(), jobFixture({ job_id: "job_111122223333", source_file: "two.pdf" })],
       total: 2,
@@ -73,7 +98,7 @@ describe("<JobsTable />", => {
     expect(screen.getByTestId("pagination-summary")).toHaveTextContent("Showing 1-2 of 2");
   });
 
-  it("shows the empty state when the API returns no jobs", async => {
+  it("shows the empty state when the API returns no jobs", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ jobs: [], total: 0, limit: 25, offset: 0 } satisfies JobListResponse)
     );
@@ -83,7 +108,7 @@ describe("<JobsTable />", => {
     });
   });
 
-  it("forwards the status filter as a query parameter", async => {
+  it("forwards the status filter as a query parameter", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(
@@ -100,7 +125,7 @@ describe("<JobsTable />", => {
     });
   });
 
-  it("forwards the free-text search as a server-side q param", async => {
+  it("forwards the free-text search as a server-side q param", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(
@@ -114,7 +139,8 @@ describe("<JobsTable />", => {
     });
 
     // The bar debounces 300 ms by default; allow waitFor to retry.
-    await waitFor( => {
+    await waitFor(
+      () => {
         const lastCallUrl = fetchMock.mock.calls.at(-1)?.[0] as string;
         expect(lastCallUrl).toMatch(/q=beta/);
       },
@@ -122,7 +148,7 @@ describe("<JobsTable />", => {
     );
   });
 
-  it("paginates by sending offset on next-page click", async => {
+  it("paginates by sending offset on next-page click", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({
         jobs: Array.from({ length: 25 }, (_, i) =>
@@ -142,5 +168,76 @@ describe("<JobsTable />", => {
       const lastCallUrl = fetchMock.mock.calls.at(-1)?.[0] as string;
       expect(lastCallUrl).toMatch(/offset=25/);
     });
+  });
+
+  it("ignores a stale filter response that arrives after the new query", async () => {
+    const oldRequest = deferred<Response>();
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() => oldRequest.promise)
+      .mockResolvedValue(jsonResponse({
+        jobs: [jobFixture({ job_id: "job_111122223333" })], total: 1, limit: 25, offset: 0,
+      } satisfies JobListResponse));
+    render(<JobsTable refresh={false} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTestId("status-chip-failed"));
+    await waitFor(() => expect(screen.getByTestId("job-link-job_111122223333")).toBeInTheDocument());
+    oldRequest.resolve(jsonResponse({
+      jobs: [jobFixture({ job_id: "job_abcdef012345" })], total: 1, limit: 25, offset: 0,
+    } satisfies JobListResponse));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByTestId("job-link-job_abcdef012345")).toBeNull();
+  });
+
+  it.each([0, 1])("recovers a polled page when the total shrinks to %s", async (total) => {
+    let poll!: () => void;
+    const originalSetInterval = globalThis.setInterval;
+    vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+      if (delay === getDefaultSettings().display.autoRefreshSeconds * 1000) poll = callback as () => void;
+      return originalSetInterval(callback, delay, ...args);
+    });
+    const remaining = jobFixture({ job_id: "job_111122223333" });
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ jobs: [jobFixture()], total: 3 }))
+      .mockResolvedValueOnce(jsonResponse({ jobs: [jobFixture()], total: 3 }))
+      .mockResolvedValueOnce(jsonResponse({ jobs: [], total }))
+      .mockImplementation(async () => jsonResponse({ jobs: total ? [remaining] : [], total }));
+    render(<JobsTable pageSize={2} />);
+    await waitFor(() => expect(screen.queryByTestId("jobs-loading")).toBeNull());
+    fireEvent.click(screen.getByTestId("pagination-next"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByTestId("jobs-loading")).toBeNull());
+    await act(async () => { poll(); });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    expect(String(fetchMock.mock.calls[2][0])).toContain("offset=2");
+    expect(String(fetchMock.mock.calls[3][0])).toContain("offset=0");
+    if (total) {
+      expect(screen.getByTestId("job-link-job_111122223333")).toBeInTheDocument();
+      expect(screen.getByTestId("pagination-summary")).toHaveTextContent("Showing 1-1 of 1");
+    } else {
+      expect(screen.getByTestId("jobs-empty")).toBeInTheDocument();
+    }
+    await act(async () => { poll(); });
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(String(fetchMock.mock.calls[4][0])).toContain("offset=0");
+  });
+
+  it("does not use a stale shrinking response to change the current page", async () => {
+    const oldRequest = deferred<Response>();
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ jobs: [jobFixture()], total: 6 }))
+      .mockImplementationOnce(() => oldRequest.promise)
+      .mockImplementation(async () => jsonResponse({ jobs: [jobFixture()], total: 6 }));
+    render(<JobsTable pageSize={2} refresh={false} />);
+    await waitFor(() => expect(screen.queryByTestId("jobs-loading")).toBeNull());
+    fireEvent.click(screen.getByTestId("pagination-next"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByTestId("status-chip-failed"));
+    await waitFor(() => expect(screen.queryByTestId("jobs-loading")).toBeNull());
+    fireEvent.click(screen.getByTestId("pagination-next"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(screen.queryByTestId("jobs-loading")).toBeNull());
+    await act(async () => { oldRequest.resolve(jsonResponse({ jobs: [], total: 0 })); });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(screen.getByTestId("pagination-summary")).toHaveTextContent("Showing 3-4 of 6");
   });
 });

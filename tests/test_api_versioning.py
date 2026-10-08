@@ -43,7 +43,14 @@ class TestEndpointRecord(unittest.TestCase):
             ep.method = "POST"
 
     def test_deprecated_endpoint(self):
-        ep = EndpointRecord("GET", "/old", "old", StabilityTier.STABLE, deprecated=True, deprecated_in="1.1.0")
+        ep = EndpointRecord(
+            "GET",
+            "/old",
+            "old",
+            StabilityTier.STABLE,
+            deprecated=True,
+            deprecated_in="1.1.0",
+        )
         assert ep.deprecated is True
         assert ep.deprecated_in == "1.1.0"
 
@@ -61,20 +68,28 @@ class TestAPISurface(unittest.TestCase):
 
     def test_stable_endpoint_count(self):
         stable = get_stable_endpoints()
-        assert len(stable) == 17  # 7 jobs + 5 batch + 5 health/readiness
+        assert len(stable) == 21  # jobs + batch + session + health/readiness
+
+    def test_session_probe_is_authenticated_but_not_capability_gated(self):
+        probes = [e for e in API_SURFACE if e.name == "probe_session"]
+        assert len(probes) == 1
+        assert probes[0].path == "/api/v1/auth/session/probe"
+        assert probes[0].auth_required is True
 
     def test_beta_endpoint_count(self):
         beta = get_beta_endpoints()
-        assert len(beta) == 30  # output contracts plus queue threshold endpoints
+        assert len(beta) == 35  # output, optional, observability, and review endpoints
 
     def test_experimental_endpoint_count(self):
         exp = get_experimental_endpoints()
-        assert len(exp) == 10  # 10 admin endpoints
+        assert len(exp) == 16  # mounted admin tenant mutation/read surfaces
 
     def test_health_no_auth(self):
         health = [
-            e for e in API_SURFACE
-            if e.name in {
+            e
+            for e in API_SURFACE
+            if e.name
+            in {
                 "health_check",
                 "detailed_health_check",
                 "ready_check",
@@ -89,6 +104,18 @@ class TestAPISurface(unittest.TestCase):
         vlm = [e for e in API_SURFACE if e.name == "vlm_health"]
         assert len(vlm) == 1
         assert vlm[0].auth_required is False
+
+    def test_feature_and_engine_metadata_require_auth(self):
+        protected = {
+            endpoint.name: endpoint
+            for endpoint in API_SURFACE
+            if endpoint.name in {"pipeline_features", "list_engines"}
+        }
+        assert set(protected) == {"pipeline_features", "list_engines"}
+        assert protected["pipeline_features"].path == "/api/v1/features"
+        assert protected["list_engines"].path == "/api/v1/engines"
+        assert protected["pipeline_features"].auth_required is True
+        assert protected["list_engines"].auth_required is True
 
     def test_all_paths_start_with_api_v1(self):
         for ep in API_SURFACE:
@@ -114,7 +141,7 @@ class TestGetAPIVersion(unittest.TestCase):
 
     def test_semver_format(self):
         v = get_api_version()
-        parts = v.split(".")
+        parts = v.split("-", 1)[0].split(".")
         assert len(parts) == 3
         for p in parts:
             assert p.isdigit()
@@ -174,10 +201,16 @@ class TestCheckBackwardCompatibility(unittest.TestCase):
         modified = []
         for e in API_SURFACE:
             if e.name == "health_check":
-                modified.append(EndpointRecord(
-                    e.method, e.path, e.name, e.tier, auth_required=True,
-                    since_version=e.since_version,
-                ))
+                modified.append(
+                    EndpointRecord(
+                        e.method,
+                        e.path,
+                        e.name,
+                        e.tier,
+                        auth_required=True,
+                        since_version=e.since_version,
+                    )
+                )
             else:
                 modified.append(e)
         report = check_backward_compatibility(API_SURFACE, tuple(modified))
@@ -192,9 +225,16 @@ class TestCheckBackwardCompatibility(unittest.TestCase):
         modified = []
         for e in API_SURFACE:
             if e.name == "submit_job":
-                modified.append(EndpointRecord(
-                    "PUT", e.path, e.name, e.tier, e.auth_required, e.since_version,
-                ))
+                modified.append(
+                    EndpointRecord(
+                        "PUT",
+                        e.path,
+                        e.name,
+                        e.tier,
+                        e.auth_required,
+                        e.since_version,
+                    )
+                )
             else:
                 modified.append(e)
         report = check_backward_compatibility(API_SURFACE, tuple(modified))
@@ -215,7 +255,11 @@ class TestFilterFunctions(unittest.TestCase):
             assert ep.tier == StabilityTier.EXPERIMENTAL
 
     def test_total_equals_surface(self):
-        total = len(get_stable_endpoints()) + len(get_beta_endpoints()) + len(get_experimental_endpoints())
+        total = (
+            len(get_stable_endpoints())
+            + len(get_beta_endpoints())
+            + len(get_experimental_endpoints())
+        )
         assert total == len(API_SURFACE)
 
 

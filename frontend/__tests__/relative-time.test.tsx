@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { RelativeTime, formatRelative } from "@/components/RelativeTime";
 
-describe("formatRelative", => {
-  it("returns em-dash for unset timestamps", => {
+describe("formatRelative", () => {
+  it("returns em-dash for unset timestamps", () => {
     expect(formatRelative(0, Date.now())).toBe("—");
     expect(formatRelative(-1, Date.now())).toBe("—");
   });
 
-  it("ladders through s/m/h/d", => {
+  it("ladders through s/m/h/d", () => {
     const now = 1_700_000_000_000; // ms
     expect(formatRelative(now / 1000 - 2, now)).toBe("just now");
     expect(formatRelative(now / 1000 - 30, now)).toBe("30s ago");
@@ -18,7 +18,7 @@ describe("formatRelative", => {
   });
 });
 
-describe("<RelativeTime />", => {
+describe("<RelativeTime />", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-26T12:00:00Z"));
@@ -27,7 +27,7 @@ describe("<RelativeTime />", => {
     vi.useRealTimers();
   });
 
-  it("updates after the configured interval", => {
+  it("updates after the configured interval", () => {
     const epoch = Math.floor(new Date("2026-04-26T12:00:00Z").getTime() / 1000) - 30;
     render(<RelativeTime epochSeconds={epoch} intervalMs={1000} />);
     expect(screen.getByText("30s ago")).toBeInTheDocument();

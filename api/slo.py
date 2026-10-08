@@ -9,6 +9,16 @@ from typing import Optional
 import api.config as config
 from api.database import Job, get_session_factory
 
+# The config default is already capped at 30 days.  Apply the same bound to
+# request overrides and direct helper callers so a tenant administrator cannot
+# turn a rolling SLO query into an unbounded historical table scan.
+MAX_SLO_WINDOW_HOURS = 24 * 30
+MAX_SLO_JOBS = 100_000
+
+
+class SloScopeTooLargeError(RuntimeError):
+    """The requested SLO window exceeds the bounded in-memory calculation."""
+
 
 def get_slo_targets() -> dict[str, float | int]:
     """Return the configured tenant SLO target values."""
@@ -38,12 +48,19 @@ def build_tenant_slo_snapshot(
     now: Optional[datetime] = None,
 ) -> dict[str, object]:
     """Build a rolling SLO snapshot for one tenant."""
+    targets = get_slo_targets()
+    effective_window_hours = int(
+        targets["window_hours"] if window_hours is None else window_hours
+    )
+    if not 1 <= effective_window_hours <= MAX_SLO_WINDOW_HOURS:
+        raise ValueError(
+            "window_hours must be between 1 and "  f"{MAX_SLO_WINDOW_HOURS}"
+        )
+
     own_session = session is None
     if own_session:
         session = get_session_factory()()
     try:
-        targets = get_slo_targets()
-        effective_window_hours = int(window_hours or targets["window_hours"])
         if now is None:
             now = datetime.now(timezone.utc).replace(tzinfo=None)
         window_start = now - timedelta(hours=effective_window_hours)
@@ -54,15 +71,18 @@ def build_tenant_slo_snapshot(
                 Job.tenant_id == tenant_id,
                 Job.created_at >= window_start,
             )
+            .limit(MAX_SLO_JOBS + 1)
             .all()
         )
+        if len(jobs) > MAX_SLO_JOBS:
+            raise SloScopeTooLargeError(
+                "Tenant SLO window exceeds the configured row safety limit"
+            )
 
         completed_jobs = [job for job in jobs if job.status == "completed"]
         failed_jobs = [job for job in jobs if job.status == "failed"]
         cancelled_jobs = [job for job in jobs if job.status == "cancelled"]
-        active_jobs = [
-            job for job in jobs if job.status in {"submitted", "processing"}
-        ]
+        active_jobs = [job for job in jobs if job.status in {"submitted", "processing"}]
         terminal_jobs = completed_jobs + failed_jobs + cancelled_jobs
 
         processing_times = [
@@ -76,14 +96,10 @@ def build_tenant_slo_snapshot(
         completed_count = len(completed_jobs)
         failed_count = len(failed_jobs)
 
-        success_rate = (
-            completed_count / terminal_count if terminal_count > 0 else 1.0
-        )
+        success_rate = completed_count / terminal_count if terminal_count > 0 else 1.0
         failure_rate = failed_count / terminal_count if terminal_count > 0 else 0.0
         avg_processing = (
-            sum(processing_times) / len(processing_times)
-            if processing_times
-            else None
+            sum(processing_times) / len(processing_times) if processing_times else None
         )
         p95_processing = _percentile(processing_times, 0.95)
 

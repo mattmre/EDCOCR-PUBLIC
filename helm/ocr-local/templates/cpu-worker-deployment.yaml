@@ -24,7 +24,17 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      {{- include "ocr-local.imagePullSecrets" . | nindent 6 }}
       terminationGracePeriodSeconds: {{ .Values.workerTerminationGracePeriodSeconds | default 360 }}
+      {{- include "ocr-local.haScheduling" (dict "root" . "component" "cpu-worker") | nindent 6 }}
+      {{- with .Values.cpuWorker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.cpuWorker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.cpuWorker.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -45,11 +55,22 @@ spec:
                   requests:
                     storage: {{ .Values.workerSecurity.stagingVolume.pvc.size }}
           {{- end }}
+        {{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+        - name: nfs-data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-nfs-data
+        {{- end }}
+        {{- include "ocr-local.tlsCaVolume" . | nindent 8 }}
+      initContainers:
+        {{- include "ocr-local.schemaReadinessInit" (dict "root" . "envKind" "worker" "securityContext" .Values.cpuWorker.containerSecurityContext) | nindent 8 }}
       containers:
         - name: cpu-worker
           image: {{ include "ocr-local.workerImage" . }}
           imagePullPolicy: {{ .Values.image.worker.pullPolicy | default "IfNotPresent" }}
           command:
+            - /usr/bin/tini
+            - -g
+            - --
             - celery
             - -A
             - coordinator.coordinator
@@ -61,15 +82,14 @@ spec:
           volumeMounts:
             - name: staging-volume
               mountPath: {{ .Values.workerSecurity.stagingVolume.mountPath }}
-          envFrom:
-            - configMapRef:
-                name: {{ .Release.Name }}-config
-            - secretRef:
-                name: {{ .Release.Name }}-secret
-            {{- if .Values.federation.enabled }}
-            - configMapRef:
-                name: {{ .Release.Name }}-federation-overlay
+            {{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+            - name: nfs-data
+              mountPath: {{ .Values.storage.nfs.mountPath | default "/shared" }}
             {{- end }}
+            {{- include "ocr-local.tlsCaVolumeMount" . | nindent 12 }}
+          {{- include "ocr-local.workerEnvFrom" . | nindent 10 }}
+          env:
+            {{- include "ocr-local.workerSecretEnv" . | nindent 12 }}
           startupProbe:
             exec:
               command:
@@ -81,12 +101,8 @@ spec:
           readinessProbe:
             exec:
               command:
-                - celery
-                - -A
-                - coordinator.coordinator
-                - inspect
-                - ping
-                - --timeout=5
+                - python3
+                - /app/coordinator/worker_healthcheck.py
             initialDelaySeconds: 10
             periodSeconds: 15
             failureThreshold: 3
@@ -94,13 +110,10 @@ spec:
           livenessProbe:
             exec:
               command:
-                - celery
-                - -A
-                - coordinator.coordinator
-                - inspect
-                - ping
-                - --timeout=10
+                - python3
+                - /app/coordinator/worker_healthcheck.py
             periodSeconds: 60
+            timeoutSeconds: 15
           resources:
             {{- toYaml .Values.cpuWorker.resources | nindent 12 }}
           {{- with .Values.cpuWorker.containerSecurityContext }}

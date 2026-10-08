@@ -12,6 +12,7 @@ Auth: Requires X-API-Key header (same as other API endpoints).
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import APIRouter, Depends, Request, Response
 from prometheus_client import (
@@ -22,9 +23,11 @@ from prometheus_client import (
     generate_latest,
 )
 
+from api.authz import require_platform_admin_for_global_control_plane
 from api.dashboard import MetricWindow, get_collector
 from api.fleet_status import WorkerState, get_fleet_tracker
 from api.identity import require_role
+from api.limits import get_default_rate, limiter
 from api.queue_alerting import get_queue_monitor
 
 logger = logging.getLogger(__name__)
@@ -94,6 +97,12 @@ _QUEUE_ACTIVE_ALERTS = Gauge(
     "Number of active queue alerts",
     registry=_REGISTRY,
 )
+_QUEUE_THRESHOLDS_DEGRADED = Gauge(
+    "ocr_api_queue_thresholds_degraded",
+    "1 while queue alerting runs on stale/default thresholds after a "
+    "threshold-config load failure, else 0",
+    registry=_REGISTRY,
+)
 
 # --- SLA gauges (per-tenant) ---
 _SLA_COMPLIANCE_PCT = Gauge(
@@ -141,6 +150,17 @@ _TENANT_STORAGE_BYTES = Gauge(
     registry=_REGISTRY,
 )
 
+_DEFAULT_MAX_PROMETHEUS_TENANTS = 10_000
+_TENANT_GAUGES = (
+    _SLA_COMPLIANCE_PCT,
+    _SLA_VIOLATION_COUNT,
+    _SLA_AVAILABILITY_PCT,
+    _SLA_P95_LATENCY_SECONDS,
+    _COST_ESTIMATE_TOTAL,
+    _TENANT_GPU_SECONDS,
+    _TENANT_STORAGE_BYTES,
+)
+
 # --- Language detection metrics (Plan A -- PR A4) ---
 # Counter of language-detection events, labelled by detected language
 # (PaddleOCR code, e.g. "en", "fr", "ch"), the tier the language belongs to
@@ -176,11 +196,51 @@ ocr_language_mixed_script_pages_total = Counter(
 )
 
 
+def _max_prometheus_tenants() -> int:
+    """Return the bounded number of tenant label sets refreshed per scrape."""
+    raw = os.environ.get("OCR_PROMETHEUS_MAX_TENANTS", "").strip()
+    if not raw:
+        return _DEFAULT_MAX_PROMETHEUS_TENANTS
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid OCR_PROMETHEUS_MAX_TENANTS=%r; using default %d",
+            raw,
+            _DEFAULT_MAX_PROMETHEUS_TENANTS,
+        )
+        return _DEFAULT_MAX_PROMETHEUS_TENANTS
+    if value <= 0:
+        logger.warning(
+            "OCR_PROMETHEUS_MAX_TENANTS must be positive; using default %d",
+            _DEFAULT_MAX_PROMETHEUS_TENANTS,
+        )
+        return _DEFAULT_MAX_PROMETHEUS_TENANTS
+    return value
+
+
+def _remove_stale_tenant_labels(active_tenants: set[str]) -> None:
+    """Bound registry cardinality by removing tenants absent from this scrape."""
+    for gauge in _TENANT_GAUGES:
+        metrics = getattr(gauge, "_metrics", {})
+        for label_values in list(metrics):
+            if label_values and str(label_values[0]) not in active_tenants:
+                try:
+                    gauge.remove(*label_values)
+                except (KeyError, ValueError):
+                    # A concurrent scrape may have removed the child already.
+                    continue
+
+
 def _refresh_metrics() -> None:
     """Pull latest values from the in-process singletons into the
     prometheus_client Gauge objects so that ``generate_latest`` returns
     fresh data.
     """
+    max_tenants = _max_prometheus_tenants()
+    active_tenants: set[str] = set()
+    tenant_source_loaded = False
+
     # --- Dashboard metrics ---
     dashboard = get_collector()
     snap = dashboard.get_snapshot(MetricWindow.MINUTE_5)
@@ -225,6 +285,7 @@ def _refresh_metrics() -> None:
     for q_info in q_snap.queues:
         _QUEUE_DEPTH.labels(queue_name=q_info["queue_name"]).set(q_info["depth"])
     _QUEUE_ACTIVE_ALERTS.set(len(q_snap.active_alerts))
+    _QUEUE_THRESHOLDS_DEGRADED.set(1 if q_snap.thresholds_degraded else 0)
 
     # --- SLA monitoring bridge ---
     try:
@@ -233,15 +294,18 @@ def _refresh_metrics() -> None:
         monitor = get_monitor()
         # Enumerate tracked tenants from internal window keys
         with monitor._lock:
-            tenant_ids = list(monitor._windows.keys())
+            tenant_ids = sorted(
+                (str(tenant_id) for tenant_id in monitor._windows),
+                key=str,
+            )[:max_tenants]
+        active_tenants.update(tenant_ids)
+        tenant_source_loaded = True
         for tenant_id in tenant_ids:
             report = monitor.evaluate_tenant(tenant_id)
             _SLA_COMPLIANCE_PCT.labels(tenant_id=tenant_id).set(
                 report.compliance_percentage
             )
-            _SLA_VIOLATION_COUNT.labels(tenant_id=tenant_id).set(
-                report.violation_count
-            )
+            _SLA_VIOLATION_COUNT.labels(tenant_id=tenant_id).set(report.violation_count)
             # Extract availability and p95 latency from individual SLO statuses
             for slo_status in report.slo_statuses:
                 if slo_status.definition.metric == "availability":
@@ -260,25 +324,32 @@ def _refresh_metrics() -> None:
         from cost_tracking import get_tracker
 
         tracker = get_tracker()
-        for tenant_id, usage in tracker.get_all_usage().items():
+        usage_items = sorted(
+            tracker.get_all_usage().items(),
+            key=lambda item: str(item[0]),
+        )[:max_tenants]
+        active_tenants.update(str(tenant_id) for tenant_id, _ in usage_items)
+        tenant_source_loaded = True
+        for tenant_id, usage in usage_items:
             cost = usage.estimated_cost()
             _COST_ESTIMATE_TOTAL.labels(tenant_id=tenant_id).set(
                 cost.get("total_cost", 0)
             )
-            _TENANT_GPU_SECONDS.labels(tenant_id=tenant_id).set(
-                usage.gpu_seconds
-            )
-            _TENANT_STORAGE_BYTES.labels(tenant_id=tenant_id).set(
-                usage.storage_bytes
-            )
+            _TENANT_GPU_SECONDS.labels(tenant_id=tenant_id).set(usage.gpu_seconds)
+            _TENANT_STORAGE_BYTES.labels(tenant_id=tenant_id).set(usage.storage_bytes)
     except Exception:
         logger.debug("Cost tracking bridge unavailable", exc_info=True)
 
+    if tenant_source_loaded:
+        _remove_stale_tenant_labels(active_tenants)
+
 
 @router.get("/api/v1/prometheus/", name="prometheus_metrics")
+@limiter.limit(get_default_rate())
 async def prometheus_metrics(
     request: Request,
     _auth: None = Depends(require_role("admin", "operator")),
+    _scope: None = Depends(require_platform_admin_for_global_control_plane),
 ) -> Response:
     """Return Prometheus text-format metrics from the API process."""
     _refresh_metrics()

@@ -1,3 +1,5 @@
+> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](../release-candidate.md) and the root installation guide.
+
 # PostgreSQL Backup Validation Guide
 
 **Version**: 1.1.0 | **Last Updated**: 2026-05-20

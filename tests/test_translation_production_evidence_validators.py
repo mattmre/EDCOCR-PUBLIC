@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 
+from ocr_local.translation.tsa import _der_integer, _der_sequence
 from scripts import validate_plugin_runtime_attestation as plugin_attest
 from scripts import validate_translation_cluster_evidence as cluster
 from scripts import validate_translation_model_approval as model_approval
 from scripts import validate_translation_tsa_assurance as tsa_assurance
-from ocr_local.translation.tsa import _der_integer, _der_sequence
 
 
 def test_model_approval_missing_artifact_fails(tmp_path):
@@ -18,7 +18,10 @@ def test_model_approval_missing_artifact_fails(tmp_path):
 
 def test_model_approval_requires_operator_approval_fields(tmp_path):
     approval = tmp_path / "approval.json"
-    approval.write_text(json.dumps({"schema_version": "translation-model-approval-v1"}), encoding="utf-8")
+    approval.write_text(
+        json.dumps({"schema_version": "translation-model-approval-v1"}),
+        encoding="utf-8",
+    )
 
     assert model_approval.main(["--approval", str(approval)]) == 1
 
@@ -47,7 +50,9 @@ def test_model_approval_accepts_complete_fixture(tmp_path):
         json.dumps({"exact_match_rate": 1.0, "segments": 200}),
         encoding="utf-8",
     )
-    provenance_hash = hashlib.sha256((model_dir / "provenance.json").read_bytes()).hexdigest()
+    provenance_hash = hashlib.sha256(
+        (model_dir / "provenance.json").read_bytes()
+    ).hexdigest()
     approval = tmp_path / "approval.json"
     approval.write_text(
         json.dumps(
@@ -55,7 +60,7 @@ def test_model_approval_accepts_complete_fixture(tmp_path):
                 "schema_version": "translation-model-approval-v1",
                 "approval_status": "approved",
                 "approved_by": "operator-fixture",
-                "approval_ticket": "TICKET-FIXTURE",
+                "approval_ticket": "BHS-FIXTURE",
                 "model_dir": "model",
                 "model_id": "fixture-model",
                 "source_url": "https://example.invalid/model",
@@ -89,7 +94,7 @@ def test_tsa_assurance_rejects_fake_tsr(tmp_path):
                 "tsa_url": "http://timestamp.digicert.com",
                 "tsa_policy_oid": "2.16.840.1.114412.7.1",
                 "approved_by": "operator",
-                "approval_ticket": "TICKET-1",
+                "approval_ticket": "BHS-1",
                 "tsr_path": "fake.tsr",
                 "certificate_chain_path": "chain.pem",
                 "trust_store_path": "trust.pem",
@@ -116,7 +121,7 @@ def test_tsa_assurance_accepts_parseable_dev_tsr_fixture(tmp_path):
                 "tsa_url": "http://timestamp.digicert.com",
                 "tsa_policy_oid": "2.16.840.1.114412.7.1",
                 "approved_by": "operator-fixture",
-                "approval_ticket": "TICKET-FIXTURE",
+                "approval_ticket": "BHS-FIXTURE",
                 "tsr_path": "dev.tsr",
                 "certificate_chain_path": "chain.pem",
                 "trust_store_path": "trust.pem",
@@ -272,4 +277,6 @@ def test_plugin_runtime_attestation_accepts_local_dev_only_with_explicit_flag(tm
     )
 
     assert plugin_attest.main(["--attestation", str(evidence)]) == 1
-    assert plugin_attest.main(["--attestation", str(evidence), "--allow-local-dev"]) == 0
+    assert (
+        plugin_attest.main(["--attestation", str(evidence), "--allow-local-dev"]) == 0
+    )

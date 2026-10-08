@@ -43,13 +43,15 @@ async function createTenantAdminKey(request, baseURL, headers, tenantId, permiss
   return response.json();
 }
 
-test.describe("Phase 7 multi-tenancy admin matrix", => {
+test.describe("Phase 7 multi-tenancy admin matrix", () => {
   test.skip(
     !hasEnv("PLAYWRIGHT_API_BASE_URL"),
-    "Set PLAYWRIGHT_API_BASE_URL to run feature-flag request tests.");
+    "Set PLAYWRIGHT_API_BASE_URL to run feature-flag request tests.",
+  );
   test.skip(
     MULTITENANCY_ENABLED === null,
-    "Set PLAYWRIGHT_EXPECT_MULTITENANCY_ENABLED to declare the local multi-tenancy matrix state.");
+    "Set PLAYWRIGHT_EXPECT_MULTITENANCY_ENABLED to declare the local multi-tenancy matrix state.",
+  );
 
   test("openapi reflects multi-tenancy admin route registration", async ({ request, baseURL }) => {
     const response = await request.get(`${baseURL}/openapi.json`);
@@ -71,7 +73,8 @@ test.describe("Phase 7 multi-tenancy admin matrix", => {
     test.skip(!MULTITENANCY_ENABLED, "Tenant lifecycle coverage only applies when multi-tenancy is enabled.");
     test.skip(
       !hasPlatformAdminKey(),
-      "Set PLAYWRIGHT_MULTITENANCY_PLATFORM_ADMIN_KEY for live multi-tenancy admin coverage.");
+      "Set PLAYWRIGHT_MULTITENANCY_PLATFORM_ADMIN_KEY for live multi-tenancy admin coverage.",
+    );
 
     const headers = buildPlatformAdminHeaders();
     const tenant = await createTenant(request, baseURL, headers, uniqueTenantName("playwright-tenant"));
@@ -119,7 +122,8 @@ test.describe("Phase 7 multi-tenancy admin matrix", => {
     test.skip(!MULTITENANCY_ENABLED, "Tenant key coverage only applies when multi-tenancy is enabled.");
     test.skip(
       !hasPlatformAdminKey(),
-      "Set PLAYWRIGHT_MULTITENANCY_PLATFORM_ADMIN_KEY for live multi-tenancy admin coverage.");
+      "Set PLAYWRIGHT_MULTITENANCY_PLATFORM_ADMIN_KEY for live multi-tenancy admin coverage.",
+    );
 
     const headers = buildPlatformAdminHeaders();
     const tenant = await createTenant(request, baseURL, headers, uniqueTenantName("playwright-key-tenant"));
@@ -130,7 +134,8 @@ test.describe("Phase 7 multi-tenancy admin matrix", => {
 
     const revokeResponse = await request.delete(
       `${baseURL}/api/v1/admin/tenants/${tenant.tenant_id}/keys/${keyPayload.key_id}`,
-      { headers });
+      { headers },
+    );
     expect(revokeResponse.status()).toBe(204);
   });
 
@@ -138,7 +143,8 @@ test.describe("Phase 7 multi-tenancy admin matrix", => {
     test.skip(!MULTITENANCY_ENABLED, "Tenant scope coverage only applies when multi-tenancy is enabled.");
     test.skip(
       !hasPlatformAdminKey(),
-      "Set PLAYWRIGHT_MULTITENANCY_PLATFORM_ADMIN_KEY for live multi-tenancy admin coverage.");
+      "Set PLAYWRIGHT_MULTITENANCY_PLATFORM_ADMIN_KEY for live multi-tenancy admin coverage.",
+    );
 
     const platformHeaders = buildPlatformAdminHeaders();
     const ownTenant = await createTenant(request, baseURL, platformHeaders, uniqueTenantName("playwright-own"));
@@ -154,7 +160,8 @@ test.describe("Phase 7 multi-tenancy admin matrix", => {
 
     const otherTenantResponse = await request.get(
       `${baseURL}/api/v1/admin/tenants/${otherTenant.tenant_id}`,
-      { headers: tenantHeaders });
+      { headers: tenantHeaders },
+    );
     expect(otherTenantResponse.status()).toBe(403);
     expect((await otherTenantResponse.json()).detail.error).toBe("forbidden");
 
@@ -175,7 +182,8 @@ test.describe("Phase 7 multi-tenancy admin matrix", => {
           name: "playwright-escalation-attempt",
           permissions: ["submit", "read", "admin", "platform_admin"],
         },
-      });
+      },
+    );
     expect(mintPlatformKeyResponse.status()).toBe(403);
     expect((await mintPlatformKeyResponse.json()).detail.error).toBe("forbidden");
   });

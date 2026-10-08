@@ -1,3 +1,5 @@
+> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](release-candidate.md) and the root installation guide.
+
 # Security Audit Checklist — EDCOCR
 
 > **Last updated:** 2026-03-16

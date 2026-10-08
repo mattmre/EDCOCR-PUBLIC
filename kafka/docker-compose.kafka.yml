@@ -1,4 +1,4 @@
-# Kafka event bus overlay for EDCOCR
+# Kafka event bus overlay for OCR_LOCAL
 #
 # Usage (standalone):
 #   docker compose -f kafka/docker-compose.kafka.yml up -d

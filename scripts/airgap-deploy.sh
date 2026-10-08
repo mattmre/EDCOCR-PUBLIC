@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Air-gapped deployment script for EDCOCR distributed pipeline.
+# Air-gapped deployment script for OCR_LOCAL distributed pipeline.
 #
 # Loads pre-bundled Docker images and starts the coordinator stack.
 # Run this in the directory created by airgap-bundle.sh.
@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-echo "=== EDCOCR Air-Gapped Deployment ==="
+echo "=== OCR_LOCAL Air-Gapped Deployment ==="
 echo ""
 
 # Check prerequisites
@@ -52,7 +52,7 @@ echo "  Images loaded successfully."
 
 echo ""
 echo "Step 2: Starting coordinator stack..."
-docker compose -f docker-compose.coordinator.yml up -d
+docker compose -f docker-compose.coordinator.yml up -d --no-build --pull never
 
 echo ""
 echo "Step 3: Waiting for services to be healthy..."
@@ -61,29 +61,32 @@ INTERVAL=5
 ELAPSED=0
 
 while [ $ELAPSED -lt $MAX_WAIT ]; do
-    PG_OK=false
-    RMQ_OK=false
-
-    if docker compose -f docker-compose.coordinator.yml exec -T postgres pg_isready -U ocr -d ocr_coordinator >/dev/null 2>&1; then
-        PG_OK=true
-    fi
-    if docker compose -f docker-compose.coordinator.yml exec -T rabbitmq rabbitmq-diagnostics -q ping >/dev/null 2>&1; then
-        RMQ_OK=true
-    fi
-
-    if $PG_OK && $RMQ_OK; then
-        echo "  All services healthy after ${ELAPSED}s."
+    READY=true
+    for service in postgres rabbitmq redis django celery-coordinator celery-beat flower; do
+        container=$(docker compose -f docker-compose.coordinator.yml ps -q "$service")
+        if [ -z "$container" ] || [ "$(docker inspect -f '{{.State.Running}}' "$container")" != true ]; then
+            READY=false
+        fi
+    done
+    docker compose -f docker-compose.coordinator.yml exec -T postgres pg_isready -U ocr -d ocr_coordinator >/dev/null 2>&1 || READY=false
+    docker compose -f docker-compose.coordinator.yml exec -T rabbitmq rabbitmq-diagnostics -q ping >/dev/null 2>&1 || READY=false
+    docker compose -f docker-compose.coordinator.yml exec -T redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli -e ping | grep -qx PONG' >/dev/null 2>&1 || READY=false
+    docker compose -f docker-compose.coordinator.yml exec -T django python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=3)" >/dev/null 2>&1 || READY=false
+    docker compose -f docker-compose.coordinator.yml exec -T celery-coordinator sh -c 'celery -A coordinator inspect ping --destination "coordinator@$HOSTNAME" --timeout 3' >/dev/null 2>&1 || READY=false
+    if $READY; then
+        echo "  Infrastructure and application startup probes passed after ${ELAPSED}s."
+        echo "  Real fixture OCR and operator production qualification remain separate gates."
         break
     fi
-
-    echo "  Waiting... (${ELAPSED}s / ${MAX_WAIT}s) PG=$PG_OK RMQ=$RMQ_OK"
+    echo "  Waiting for application startup... (${ELAPSED}s / ${MAX_WAIT}s)"
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
 done
 
 if [ $ELAPSED -ge $MAX_WAIT ]; then
-    echo "  WARNING: Services did not become healthy within ${MAX_WAIT}s."
+    echo "  ERROR: Services did not become healthy within ${MAX_WAIT}s." >&2
     echo "  Check logs with: docker compose -f docker-compose.coordinator.yml logs"
+    exit 1
 fi
 
 echo ""
@@ -95,7 +98,7 @@ echo "  Flower:        http://localhost:5555/"
 echo "  RabbitMQ Mgmt: http://localhost:15672/"
 echo ""
 echo "To start GPU workers on this node:"
-echo "  docker compose -f docker-compose.worker.yml up -d"
+echo "  docker compose -f docker-compose.worker.yml up -d --no-build --pull never"
 echo ""
 echo "To check status:"
 echo "  docker compose -f docker-compose.coordinator.yml ps"

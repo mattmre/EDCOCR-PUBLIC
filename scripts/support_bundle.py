@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Support bundle collector for EDCOCR.
+"""Support bundle collector for OCR_LOCAL.
 
 Collects system information, configuration, dependencies, logs, health
 status, and git state into a timestamped bundle directory for
@@ -444,7 +444,7 @@ def create_bundle(
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(
-        description="Collect a support bundle for EDCOCR troubleshooting.",
+        description="Collect a support bundle for OCR_LOCAL troubleshooting.",
     )
     parser.add_argument(
         "--output-dir",

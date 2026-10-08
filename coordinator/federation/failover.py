@@ -106,6 +106,7 @@ DECISION_REROUTED = "rerouted"
 DECISION_DRY_RUN = "dry_run"
 DECISION_NO_DESTINATION = "no_destination"
 DECISION_PEER_HEALTHY = "peer_healthy"
+DECISION_DISPATCH_FAILED = "dispatch_failed"
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +128,7 @@ class FailoverPolicy:
 
         All variables are prefixed ``OCR_FEDERATION_FAILOVER_``.
         """
+
         def _bool(name: str, default: bool) -> bool:
             raw = os.environ.get(name)
             if raw is None:
@@ -147,9 +149,7 @@ class FailoverPolicy:
             unhealthy_threshold_seconds=_int(
                 "OCR_FEDERATION_FAILOVER_UNHEALTHY_SECONDS", 120
             ),
-            min_in_flight_to_failover=_int(
-                "OCR_FEDERATION_FAILOVER_MIN_IN_FLIGHT", 1
-            ),
+            min_in_flight_to_failover=_int("OCR_FEDERATION_FAILOVER_MIN_IN_FLIGHT", 1),
             max_concurrent_failovers=_int(
                 "OCR_FEDERATION_FAILOVER_MAX_CONCURRENT", 100
             ),
@@ -166,6 +166,7 @@ class FailoverReport:
     jobs_failed_over: int = 0
     jobs_skipped_dry_run: int = 0
     jobs_skipped_no_destination: int = 0
+    jobs_dispatch_failed: int = 0
     started_at: float = 0.0
     ended_at: float = 0.0
 
@@ -176,6 +177,7 @@ class FailoverReport:
             "jobs_failed_over": self.jobs_failed_over,
             "jobs_skipped_dry_run": self.jobs_skipped_dry_run,
             "jobs_skipped_no_destination": self.jobs_skipped_no_destination,
+            "jobs_dispatch_failed": self.jobs_dispatch_failed,
             "duration_seconds": max(0.0, self.ended_at - self.started_at),
         }
 
@@ -198,7 +200,7 @@ class FailoverMetrics:
             failover_total=Counter(
                 "ocr_federation_failover_total",
                 "Federation failover decisions, labelled by source cluster "
-                "and decision (rerouted|dry_run|no_destination|peer_healthy).",
+                "and decision (rerouted|dry_run|no_destination|dispatch_failed).",
                 ["cluster", "decision"],
                 **kwargs,
             ),
@@ -258,9 +260,10 @@ class FailoverEngine:
     * Inserts a ``CustodyEvent`` row of type ``JOB_FAILOVER_REROUTED``.
     * Calls ``revoke_callback(celery_task_id)`` (best effort -- exceptions
       are logged and swallowed).
-    * Updates ``Job.assigned_cluster`` to the new destination.
+    * Persists a retryable failover intent before publication.
     * Calls ``dispatch_callback(job, new_cluster)`` to actually re-dispatch
-      the work.  In production this lands in ``coordinator.jobs.tasks``;
+      the work, then updates ``Job.assigned_cluster`` only after publication
+      succeeds. In production this lands in ``coordinator.jobs.tasks``;
       tests inject a mock.
     """
 
@@ -320,10 +323,7 @@ class FailoverEngine:
 
                 for peer_name in unhealthy_peers:
                     self._failover_peer(peer_name, report)
-                    if (
-                        report.jobs_failed_over
-                        >= self.policy.max_concurrent_failovers
-                    ):
+                    if report.jobs_failed_over >= self.policy.max_concurrent_failovers:
                         _LOG.info(
                             "failover.tick.max_concurrent_reached",
                             extra={
@@ -363,9 +363,11 @@ class FailoverEngine:
         for peer_name, health in health_map.items():
             healthy_flag = bool(getattr(health, "healthy", True))
             last_success = getattr(health, "last_success_ts", None)
+            first_failure = getattr(health, "first_failure_ts", None)
             if healthy_flag:
                 continue
-            elapsed = now - (last_success if last_success is not None else now)
+            baseline = last_success if last_success is not None else first_failure
+            elapsed = now - (baseline if baseline is not None else now)
             if elapsed >= threshold:
                 unhealthy.append(peer_name)
         return unhealthy
@@ -419,11 +421,16 @@ class FailoverEngine:
             self._in_flight_failover_ids.add(job_pk)
             try:
                 self.metrics.in_progress.inc()
-                self._reroute_job(job, peer_name, destination)
-                report.jobs_failed_over += 1
-                self.metrics.failover_total.labels(
-                    cluster=peer_name, decision=DECISION_REROUTED
-                ).inc()
+                if self._reroute_job(job, peer_name, destination):
+                    report.jobs_failed_over += 1
+                    self.metrics.failover_total.labels(
+                        cluster=peer_name, decision=DECISION_REROUTED
+                    ).inc()
+                else:
+                    report.jobs_dispatch_failed += 1
+                    self.metrics.failover_total.labels(
+                        cluster=peer_name, decision=DECISION_DISPATCH_FAILED
+                    ).inc()
             finally:
                 self._in_flight_failover_ids.discard(job_pk)
                 try:
@@ -431,10 +438,7 @@ class FailoverEngine:
                 except Exception:  # pragma: no cover - shim
                     pass
 
-            if (
-                report.jobs_failed_over
-                >= self.policy.max_concurrent_failovers
-            ):
+            if report.jobs_failed_over >= self.policy.max_concurrent_failovers:
                 break
 
     def _select_destination(self, job: Any, peer_name: str) -> str | None:
@@ -456,12 +460,32 @@ class FailoverEngine:
                 kwargs[key] = value
         kwargs["exclude"] = (peer_name,)
         try:
-            return self.router.select_cluster(**kwargs)
+            # C4's production router has a typed contract and returns a
+            # ClusterRoutingDecision; older/local routers accepted only the
+            # hint kwargs and returned a string.  Adapt both explicitly so a
+            # failover tick cannot silently route through an incompatible
+            # signature or treat ``cluster_name=None`` as a destination.
+            decision = self.router.select_cluster(
+                task_name=getattr(job, "task_name", None)
+                or "coordinator.jobs.tasks.ingest_document",
+                base_queue=getattr(job, "base_queue", None) or "coordinator",
+                kwargs=kwargs,
+            )
+            if hasattr(decision, "cluster_name"):
+                destination = decision.cluster_name
+                if destination is None:
+                    destination = getattr(self.router, "_local_name", None) or "local"
+            else:
+                # A legacy router returning ``None`` means no destination;
+                # only a typed C4 decision uses None for its local cluster.
+                destination = decision
+            return str(destination) if destination else None
         except TypeError:
             # Older router signatures may not accept ``exclude=``; degrade
             # gracefully by retrying without it.
             try:
-                return self.router.select_cluster()
+                destination = self.router.select_cluster(**kwargs)
+                return str(destination) if destination else None
             except Exception as exc:  # pragma: no cover - defensive
                 _LOG.warning(
                     "failover.router.select_failed",
@@ -475,12 +499,8 @@ class FailoverEngine:
             )
             return None
 
-    def _reroute_job(self, job: Any, peer_name: str, destination: str) -> None:
-        """Revoke the old Celery task, record custody, dispatch to ``destination``.
-
-        All side effects are wrapped in try/except so a partial failure on
-        one job does not abort the whole tick.
-        """
+    def _reroute_job(self, job: Any, peer_name: str, destination: str) -> bool:
+        """Publish a reroute and commit ownership only after publication."""
         celery_task_id = getattr(job, "celery_task_id", "") or ""
         if celery_task_id and self._revoke_callback is not None:
             try:
@@ -494,17 +514,15 @@ class FailoverEngine:
                     },
                 )
 
-        # Custody event + DB row update happen via the Django ORM when
-        # available; tests use an in-memory mock to assert the call.
-        self._record_custody_event(job, peer_name, destination)
-        self._update_job_cluster(job, destination)
+        if not self._set_failover_intent(job, destination):
+            return False
 
         if self._dispatch_callback is None:
             _LOG.warning(
                 "failover.dispatch.no_callback",
                 extra={"job_id": str(self._job_pk(job))},
             )
-            return
+            return False
         try:
             self._dispatch_callback(job, destination)
         except Exception as exc:  # pragma: no cover - defensive
@@ -516,6 +534,14 @@ class FailoverEngine:
                     "error": str(exc),
                 },
             )
+            return False
+
+        # Custody event + DB row update happen via the Django ORM when
+        # available; tests use an in-memory mock to assert the call.
+        if not self._update_job_cluster(job, destination):
+            return False
+        self._record_custody_event(job, peer_name, destination)
+        return True
 
     # -- DB / ORM glue ---------------------------------------------------
     def _list_in_flight_jobs(self, peer_name: str) -> list[Any]:
@@ -553,9 +579,7 @@ class FailoverEngine:
             )
             return []
 
-    def _record_custody_event(
-        self, job: Any, peer_name: str, destination: str
-    ) -> None:
+    def _record_custody_event(self, job: Any, peer_name: str, destination: str) -> None:
         try:  # pragma: no cover - exercised in coordinator integration
             from django.utils import timezone  # type: ignore[import-not-found]
             from jobs.models import CustodyEvent  # type: ignore[import-not-found]
@@ -581,12 +605,38 @@ class FailoverEngine:
                 },
             )
 
-    def _update_job_cluster(self, job: Any, destination: str) -> None:
+    def _set_failover_intent(self, job: Any, destination: str) -> bool:
+        """Persist a retryable destination before broker publication."""
         try:
-            setattr(job, "assigned_cluster", destination)
+            settings = getattr(job, "settings_json", {})
+            settings = dict(settings) if isinstance(settings, dict) else {}
+            settings["_failover_intent"] = {
+                "destination": destination,
+                "created_at": self._clock(),
+            }
+            setattr(job, "settings_json", settings)
             save_fn = getattr(job, "save", None)
             if callable(save_fn):
-                save_fn(update_fields=["assigned_cluster"])
+                save_fn(update_fields=["settings_json"])
+            return True
+        except Exception as exc:  # pragma: no cover - defensive
+            _LOG.warning(
+                "failover.intent.error",
+                extra={"job_id": str(self._job_pk(job)), "error": str(exc)},
+            )
+            return False
+
+    def _update_job_cluster(self, job: Any, destination: str) -> bool:
+        try:
+            setattr(job, "assigned_cluster", destination)
+            settings = getattr(job, "settings_json", {})
+            settings = dict(settings) if isinstance(settings, dict) else {}
+            settings.pop("_failover_intent", None)
+            setattr(job, "settings_json", settings)
+            save_fn = getattr(job, "save", None)
+            if callable(save_fn):
+                save_fn(update_fields=["assigned_cluster", "settings_json"])
+            return True
         except Exception as exc:  # pragma: no cover - defensive
             _LOG.warning(
                 "failover.update.error",
@@ -595,6 +645,7 @@ class FailoverEngine:
                     "error": str(exc),
                 },
             )
+            return False
 
     @staticmethod
     def _job_pk(job: Any) -> str | None:

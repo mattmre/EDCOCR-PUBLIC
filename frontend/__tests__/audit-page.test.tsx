@@ -7,10 +7,10 @@ import { setApiKey } from "@/lib/auth";
 
 const useParamsMock = vi.fn();
 
-vi.mock("next/navigation", => ({
-  useParams: => useParamsMock(),
-  useRouter: => ({ push: vi.fn() }),
-  usePathname: => "/audit/job-1",
+vi.mock("next/navigation", () => ({
+  useParams: () => useParamsMock(),
+  useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => "/audit/job-1",
 }));
 
 // The detail page calls fetchCustodyLog which uses fetch directly. Mock fetch
@@ -52,7 +52,7 @@ function ndjsonResponse(events: object[]): Response {
   });
 }
 
-describe("AuditDetailPage", => {
+describe("AuditDetailPage", () => {
   beforeEach(() => {
     setApiKey("test-key");
     useParamsMock.mockReturnValue({ id: "job-1" });
@@ -65,7 +65,7 @@ describe("AuditDetailPage", => {
     vi.restoreAllMocks();
   });
 
-  it("renders the timeline once the custody log loads", async => {
+  it("renders the timeline once the custody log loads", async () => {
     render(<AuditDetailPage />);
 
     await waitFor(() =>
@@ -79,7 +79,7 @@ describe("AuditDetailPage", => {
     expect(cards[2]).toHaveAttribute("data-event-type", "ocr_primary");
   });
 
-  it("expands an event payload when 'Show payload' is clicked", async => {
+  it("expands an event payload when 'Show payload' is clicked", async () => {
     const user = userEvent.setup();
     render(<AuditDetailPage />);
 
@@ -95,7 +95,7 @@ describe("AuditDetailPage", => {
     expect(within(cards[0]).getByText(/source_path/)).toBeInTheDocument();
   });
 
-  it("filters timeline entries by event type", async => {
+  it("filters timeline entries by event type", async () => {
     const user = userEvent.setup();
     render(<AuditDetailPage />);
 
@@ -113,7 +113,7 @@ describe("AuditDetailPage", => {
     expect(filtered[0]).toHaveAttribute("data-event-type", "page_extracted");
   });
 
-  it("flips the verification badge to 'Chain intact' after Verify", async => {
+  it("flips the verification badge to 'Chain intact' after Verify", async () => {
     const user = userEvent.setup();
     render(<AuditDetailPage />);
 
@@ -130,7 +130,7 @@ describe("AuditDetailPage", => {
     );
   });
 
-  it("shows a clear error when the audit endpoint returns 404", async => {
+  it("shows a clear error when the audit endpoint returns 404", async () => {
     (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
       new Response(JSON.stringify({ detail: "no_outputs" }), {
         status: 404,

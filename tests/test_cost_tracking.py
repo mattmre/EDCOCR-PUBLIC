@@ -622,7 +622,9 @@ class TestThreadSafety:
         for t in threads:
             t.join()
 
-        assert tracker.get_usage("t1").pages_processed == num_threads * records_per_thread
+        assert (
+            tracker.get_usage("t1").pages_processed == num_threads * records_per_thread
+        )
 
     def test_concurrent_multiple_tenants(self):
         tracker = CostTracker()
@@ -637,8 +639,7 @@ class TestThreadSafety:
                 tracker.record_api_call(tid)
 
         threads = [
-            threading.Thread(target=worker, args=(f"t{i}",))
-            for i in range(num_tenants)
+            threading.Thread(target=worker, args=(f"t{i}",)) for i in range(num_tenants)
         ]
         for t in threads:
             t.start()
@@ -786,13 +787,14 @@ class TestEdgeCases:
 
     def test_zero_pages(self):
         tracker = CostTracker()
+        # S2-11: non-positive deltas are no-ops (no tenant row created)
         tracker.record_pages("t1", 0)
-        assert tracker.get_usage("t1").pages_processed == 0
+        assert tracker.get_usage("t1") is None
 
     def test_zero_gpu_seconds(self):
         tracker = CostTracker()
         tracker.record_gpu_time("t1", 0.0)
-        assert tracker.get_usage("t1").gpu_seconds == 0.0
+        assert tracker.get_usage("t1") is None
 
     def test_large_page_count(self):
         tracker = CostTracker()

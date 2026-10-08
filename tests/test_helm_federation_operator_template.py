@@ -27,7 +27,11 @@ EXAMPLE_VALUES = CHART_PATH / "values-federation-example.yaml"
 # Minimal secrets so `required` calls in the chart don't abort the render.
 MIN_SECRETS = {
     "secrets.djangoSecretKey": "test-django-key",
+    "secrets.apiKey": "test-api-key",
     "secrets.postgresPassword": "test-pg",
+    "secrets.webhookSecretKey": "test-webhook",
+    "secrets.piiEncryptionKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "secrets.celeryTaskSigningKey": "test-signing",
     "secrets.rabbitmqPassword": "test-rmq",
     "secrets.redisPassword": "test-redis",
     "secrets.flowerPassword": "test-flower",
@@ -66,10 +70,11 @@ def test_disabled_emits_no_operator_resources() -> None:
     rendered = _helm_template()
     docs = _parse_docs(rendered)
     suspects = [
-        d for d in docs
-        if (d.get("metadata", {}) or {}).get("name", "").startswith(
-            "ocr-local-federation-"
-        )
+        d
+        for d in docs
+        if (d.get("metadata", {}) or {})
+        .get("name", "")
+        .startswith("ocr-local-federation-")
     ]
     assert suspects == [], (
         f"federation operator resources rendered while disabled: "
@@ -87,7 +92,8 @@ def enabled_docs() -> list[dict]:
 
 def test_cluster_registry_configmap_rendered(enabled_docs: list[dict]) -> None:
     cms = [
-        d for d in enabled_docs
+        d
+        for d in enabled_docs
         if d.get("kind") == "ConfigMap"
         and d.get("metadata", {}).get("name", "")
         == "ocr-local-federation-cluster-registry"
@@ -113,10 +119,10 @@ def test_cluster_registry_configmap_rendered(enabled_docs: list[dict]) -> None:
 
 def test_reconciler_deployment_rendered(enabled_docs: list[dict]) -> None:
     deploys = [
-        d for d in enabled_docs
+        d
+        for d in enabled_docs
         if d.get("kind") == "Deployment"
-        and d.get("metadata", {}).get("name", "")
-        == "ocr-local-federation-reconciler"
+        and d.get("metadata", {}).get("name", "") == "ocr-local-federation-reconciler"
     ]
     assert len(deploys) == 1
     deploy = deploys[0]
@@ -141,10 +147,10 @@ def test_reconciler_deployment_rendered(enabled_docs: list[dict]) -> None:
 
 def test_reconciler_service_rendered(enabled_docs: list[dict]) -> None:
     svcs = [
-        d for d in enabled_docs
+        d
+        for d in enabled_docs
         if d.get("kind") == "Service"
-        and d.get("metadata", {}).get("name", "")
-        == "ocr-local-federation-reconciler"
+        and d.get("metadata", {}).get("name", "") == "ocr-local-federation-reconciler"
     ]
     assert len(svcs) == 1
     ports = svcs[0]["spec"]["ports"]
@@ -153,22 +159,22 @@ def test_reconciler_service_rendered(enabled_docs: list[dict]) -> None:
 
 def test_reconciler_rbac_rendered(enabled_docs: list[dict]) -> None:
     sa = [
-        d for d in enabled_docs
+        d
+        for d in enabled_docs
         if d.get("kind") == "ServiceAccount"
-        and d.get("metadata", {}).get("name", "")
-        == "ocr-local-federation-reconciler"
+        and d.get("metadata", {}).get("name", "") == "ocr-local-federation-reconciler"
     ]
     role = [
-        d for d in enabled_docs
+        d
+        for d in enabled_docs
         if d.get("kind") == "Role"
-        and d.get("metadata", {}).get("name", "")
-        == "ocr-local-federation-reconciler"
+        and d.get("metadata", {}).get("name", "") == "ocr-local-federation-reconciler"
     ]
     rb = [
-        d for d in enabled_docs
+        d
+        for d in enabled_docs
         if d.get("kind") == "RoleBinding"
-        and d.get("metadata", {}).get("name", "")
-        == "ocr-local-federation-reconciler"
+        and d.get("metadata", {}).get("name", "") == "ocr-local-federation-reconciler"
     ]
     assert len(sa) == 1
     assert len(role) == 1
@@ -185,7 +191,8 @@ def test_reconciler_rbac_rendered(enabled_docs: list[dict]) -> None:
 
 def test_per_cluster_per_queue_policies_rendered(enabled_docs: list[dict]) -> None:
     policies = [
-        d for d in enabled_docs
+        d
+        for d in enabled_docs
         if d.get("kind") == "Policy"
         and d.get("apiVersion", "").startswith("rabbitmq.com/")
     ]
@@ -210,7 +217,8 @@ def test_per_cluster_per_queue_policies_rendered(enabled_docs: list[dict]) -> No
 
 def test_federation_crs_match_dynamic_clusters(enabled_docs: list[dict]) -> None:
     feds = [
-        d for d in enabled_docs
+        d
+        for d in enabled_docs
         if d.get("kind") == "Federation"
         and d.get("apiVersion", "").startswith("rabbitmq.com/")
     ]

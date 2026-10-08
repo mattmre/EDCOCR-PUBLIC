@@ -14,6 +14,8 @@ from api import config
 logger = logging.getLogger(__name__)
 
 _EVENT_STREAM_LOCK = threading.Lock()
+_MAX_EVENT_TEXT_LENGTH = 16 * 1024
+_MAX_EVENT_RECORD_BYTES = 1024 * 1024
 
 
 def _now_utc_iso() -> str:
@@ -36,10 +38,21 @@ def _append_event_record(record: dict[str, Any]) -> None:
 
     path = _event_stream_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(record, sort_keys=True)
+    if len(serialized.encode("utf-8")) > _MAX_EVENT_RECORD_BYTES:
+        raise ValueError(f"event record exceeds {_MAX_EVENT_RECORD_BYTES} bytes")
 
     with _EVENT_STREAM_LOCK:
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
+            handle.write(serialized + "\n")
+
+
+def _bounded_event_text(value: Any) -> str:
+    """Keep untrusted lifecycle text bounded in durable event records."""
+    text = str(value or "")
+    if len(text) <= _MAX_EVENT_TEXT_LENGTH:
+        return text
+    return text[:_MAX_EVENT_TEXT_LENGTH] + "\n...[truncated]"
 
 
 def _job_event_record(job, event_type: str) -> dict[str, Any]:
@@ -57,8 +70,10 @@ def _job_event_record(job, event_type: str) -> dict[str, Any]:
         "pages_completed": int(job.pages_completed or 0),
         "total_pages": int(job.total_pages or 0),
         "current_stage": job.current_stage or job.status,
-        "result_path": job.result_path or "",
-        "error_message": job.error_message or "",
+        # Public lifecycle records must not disclose the server filesystem
+        # layout.  Artifact routes provide the authenticated download path.
+        "result_available": bool(job.result_path),
+        "error_message": _bounded_event_text(job.error_message),
         "processing_time": job.processing_time,
     }
 
@@ -70,7 +85,9 @@ def _job_ws_payload(job, event_type: str) -> dict[str, Any]:
             "type": "completed",
             "job_id": job.job_id,
             "status": "completed",
-            "output_path": job.result_path or "",
+            # Keep the live notification contract path-free as well; clients
+            # retrieve artifacts through the authenticated REST route.
+            "result_available": bool(job.result_path),
             "pages_completed": int(job.pages_completed or 0),
         }
 
@@ -122,7 +139,9 @@ def publish_job_event(job, event_type: str) -> dict[str, Any]:
     try:
         _append_event_record(record)
     except Exception:
-        logger.exception("Failed to append durable job event %s for %s", event_type, job.job_id)
+        logger.exception(
+            "Failed to append durable job event %s for %s", event_type, job.job_id
+        )
 
     # Store in SQLite event store for replay
     _store_event_durable(job.job_id, event_type, record)
@@ -132,7 +151,11 @@ def publish_job_event(job, event_type: str) -> dict[str, Any]:
 
         notify_job_update_sync(job.job_id, _job_ws_payload(job, event_type))
     except Exception:
-        logger.exception("Failed to forward job event %s for %s to websocket clients", event_type, job.job_id)
+        logger.exception(
+            "Failed to forward job event %s for %s to websocket clients",
+            event_type,
+            job.job_id,
+        )
 
     return record
 
@@ -144,6 +167,7 @@ def _batch_event_record(batch, event_type: str) -> dict[str, Any]:
         "stream": "batch",
         "event_type": event_type,
         "batch_id": batch.batch_id,
+        "tenant_id": getattr(batch, "tenant_id", None),
         "status": batch.status,
         "priority": batch.priority,
         "total_jobs": int(batch.total_jobs or 0),
@@ -160,7 +184,9 @@ def publish_batch_event(batch, event_type: str) -> dict[str, Any]:
     try:
         _append_event_record(record)
     except Exception:
-        logger.exception("Failed to append durable batch event %s for %s", event_type, batch.batch_id)
+        logger.exception(
+            "Failed to append durable batch event %s for %s", event_type, batch.batch_id
+        )
 
     # Store in SQLite event store for replay
     _store_event_durable(batch.batch_id, event_type, record)

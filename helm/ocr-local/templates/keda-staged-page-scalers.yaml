@@ -1,0 +1,33 @@
+{{- if .Values.ocrStagedPage.enabled }}
+{{- range $stage := list "render" "finalize" }}
+{{- $profile := index $.Values.ocrStagedPage $stage }}
+{{- if $profile.autoscaling.enabled }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ $.Release.Name }}-ocr-{{ $stage }}-scaler
+  labels:
+    {{- include "ocr-local.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: ocr-{{ $stage }}
+spec:
+  scaleTargetRef:
+    name: {{ $.Release.Name }}-ocr-{{ $stage }}
+  minReplicaCount: {{ $profile.autoscaling.minReplicas }}
+  maxReplicaCount: {{ min $profile.autoscaling.maxReplicas ($.Values.keda.maxReplicaCount | default 50) }}
+  pollingInterval: 15
+  cooldownPeriod: 120
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: http
+        queueName: ocr_{{ $stage }}
+        vhostName: "/"
+        mode: QueueLength
+        value: {{ $profile.autoscaling.queueTarget | quote }}
+        excludeUnacknowledged: "false"
+      authenticationRef:
+        name: {{ $.Release.Name }}-rabbitmq-auth
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,16 @@
+{
+  "name": "large-farm",
+  "num_extractors": 12,
+  "num_workers": 16,
+  "num_compressors": 8,
+  "image_queue_size": 160,
+  "chunk_queue_size": 50,
+  "dpi": 300,
+  "description": "Large multi-worker baseline knobs (single-process ceilings)",
+  "topology_class": "farm",
+  "honest_limits": [
+    "Knob template only \u2014 does not prove multi-host farm (ES-9\u2026ES-12).",
+    "Per-process caps; true multi-host needs ES-10/11 registration+routing."
+  ],
+  "extra": {}
+}

@@ -1,8 +1,12 @@
 # CPU-only deployment overlay
 #
 # Use this override for environments without GPU hardware.  OCR tasks are
-# routed to the ocr_cpu queue and processed using ONNX Runtime / Tesseract
-# fallback instead of PaddleOCR GPU inference.
+# routed to the ocr_cpu queue and processed on the qualified native-Paddle CPU
+# recipe: python:3.12-slim-bookworm + paddlepaddle==3.0.0 + paddleocr==2.9.1
+# with models pre-baked in native Paddle format (Tesseract remains the
+# fallback engine).  ONNX Runtime is an explicit opt-in only -- it requires
+# installing onnxruntime separately and setting OCR_INFERENCE_BACKEND=onnx;
+# the shipped image does not include onnxruntime.
 #
 # Usage:
 #   docker-compose -f docker-compose.coordinator.yml \
@@ -18,12 +22,19 @@ services:
     build:
       context: ..
       dockerfile: coordinator/Dockerfile.worker
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        SOURCE_TREE_SHA256: ${SOURCE_TREE_SHA256:-unknown}
     environment:
       # Docker-internal hostnames (same network as coordinator compose)
       DATABASE_URL: postgres://ocr:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/ocr_coordinator
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
+      CELERY_TASK_SIGNING_KEY: ${CELERY_TASK_SIGNING_KEY:?Set CELERY_TASK_SIGNING_KEY in .env}
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY:?Set PII_ENCRYPTION_KEY in .env}
+      WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY:?Set WEBHOOK_SECRET_KEY in .env}
+      S3_PRESIGNED_TASK_KEY: ${S3_PRESIGNED_TASK_KEY:-}
       DJANGO_SETTINGS_MODULE: coordinator.settings
       DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-development}
       PRODUCTION_READINESS_ACK: ${PRODUCTION_READINESS_ACK:-false}
@@ -38,15 +49,18 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_REGION: ${S3_REGION:-us-east-1}
       # CPU OCR routing configuration
-      WORKER_QUEUES: ocr_cpu,cpu_general
+      WORKER_QUEUES: ocr_cpu,cpu_general,nlp_general
       WORKER_CONCURRENCY: ${CPU_OCR_CONCURRENCY:-4}
       OCR_TASK_ROUTING: cpu
-      OCR_INFERENCE_BACKEND: onnx
+      # Native Paddle CPU inference (qualified default). Only set this to
+      # 'onnx' after installing onnxruntime into the image; native-format
+      # baked caches are not ONNX models.
+      OCR_INFERENCE_BACKEND: paddle
       # OCR settings (models pre-baked in Docker image for air-gapped deployment)
       FASTTEXT_MODEL_PATH: ${FASTTEXT_MODEL_PATH:-/app/models/lid.176.bin}
     command: >
       celery -A coordinator worker
-      -Q ocr_cpu,cpu_general
+      -Q ocr_cpu,cpu_general,nlp_general
       -c ${CPU_OCR_CONCURRENCY:-4}
       --hostname cpu-ocr-worker@%h
       -l info

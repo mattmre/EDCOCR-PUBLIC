@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import re
 import sys
 import types
 from pathlib import Path
@@ -162,8 +163,14 @@ class TestSettingsCredentialWiring:
         )
         source = settings_path.read_text(encoding="utf-8")
 
-        assert "_get_credential('S3_ACCESS_KEY'" in source
-        assert "_get_credential('S3_SECRET_KEY'" in source
+        assert (
+            '_get_credential("S3_ACCESS_KEY"' in source
+            or "_get_credential('S3_ACCESS_KEY'" in source
+        )
+        assert (
+            '_get_credential("S3_SECRET_KEY"' in source
+            or "_get_credential('S3_SECRET_KEY'" in source
+        )
 
     def test_settings_uses_get_credential_for_django_secret(self):
         """DJANGO_SECRET_KEY must use _get_credential."""
@@ -177,7 +184,10 @@ class TestSettingsCredentialWiring:
         )
         source = settings_path.read_text(encoding="utf-8")
 
-        assert "_get_credential('DJANGO_SECRET_KEY'" in source
+        assert (
+            '_get_credential("DJANGO_SECRET_KEY"' in source
+            or "_get_credential('DJANGO_SECRET_KEY'" in source
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -193,9 +203,7 @@ class TestCloudStorageCredentialWiring:
         import pathlib
 
         cs_path = (
-            pathlib.Path(__file__).resolve().parent.parent
-            / "api"
-            / "cloud_storage.py"
+            pathlib.Path(__file__).resolve().parent.parent / "api" / "cloud_storage.py"
         )
         source = cs_path.read_text(encoding="utf-8")
 
@@ -205,9 +213,7 @@ class TestCloudStorageCredentialWiring:
         import pathlib
 
         cs_path = (
-            pathlib.Path(__file__).resolve().parent.parent
-            / "api"
-            / "cloud_storage.py"
+            pathlib.Path(__file__).resolve().parent.parent / "api" / "cloud_storage.py"
         )
         source = cs_path.read_text(encoding="utf-8")
 
@@ -218,14 +224,18 @@ class TestCloudStorageCredentialWiring:
         import pathlib
 
         cs_path = (
-            pathlib.Path(__file__).resolve().parent.parent
-            / "api"
-            / "cloud_storage.py"
+            pathlib.Path(__file__).resolve().parent.parent / "api" / "cloud_storage.py"
         )
         source = cs_path.read_text(encoding="utf-8")
 
-        assert '_get_credential("AZURE_STORAGE_CONNECTION_STRING"' in source
-        assert '_get_credential("AZURE_STORAGE_KEY"' in source
+        assert re.search(
+            r"_get_credential\(\s*['\"]AZURE_STORAGE_CONNECTION_STRING['\"]",
+            source,
+        )
+        assert re.search(
+            r"_get_credential\(\s*['\"]AZURE_STORAGE_KEY['\"]",
+            source,
+        )
 
     def test_cloud_storage_from_env_s3_uses_credential_manager(self):
         """StorageConfig.from_env() for S3 provider must go through
@@ -304,7 +314,10 @@ class TestHelmSecretWiring:
         )
         source = tpl_path.read_text(encoding="utf-8")
 
-        assert 'required "secrets.s3AccessKey is required when storage.backend=s3"' in source
+        assert (
+            'required "secrets.s3AccessKey is required when storage.backend=s3"'
+            in source
+        )
 
     def test_helm_secret_requires_s3_secret_key(self):
         import pathlib
@@ -318,7 +331,10 @@ class TestHelmSecretWiring:
         )
         source = tpl_path.read_text(encoding="utf-8")
 
-        assert 'required "secrets.s3SecretKey is required when storage.backend=s3"' in source
+        assert (
+            'required "secrets.s3SecretKey is required when storage.backend=s3"'
+            in source
+        )
 
     def test_helm_secret_requires_s3_endpoint(self):
         import pathlib
@@ -332,7 +348,10 @@ class TestHelmSecretWiring:
         )
         source = tpl_path.read_text(encoding="utf-8")
 
-        assert 'required "secrets.s3Endpoint is required when storage.backend=s3"' in source
+        assert (
+            'required "secrets.s3Endpoint is required for static S3 authentication"'
+            in source
+        )
 
     def test_helm_secret_requires_s3_bucket(self):
         import pathlib
@@ -346,7 +365,9 @@ class TestHelmSecretWiring:
         )
         source = tpl_path.read_text(encoding="utf-8")
 
-        assert 'required "secrets.s3Bucket is required when storage.backend=s3"' in source
+        assert (
+            'required "secrets.s3Bucket is required when storage.backend=s3"' in source
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -366,10 +387,7 @@ class TestStartupValidation:
     def _load_jobs_apps_module():
         """Load coordinator/jobs/apps.py with a stub django.apps.AppConfig."""
         apps_path = (
-            Path(__file__).resolve().parent.parent
-            / "coordinator"
-            / "jobs"
-            / "apps.py"
+            Path(__file__).resolve().parent.parent / "coordinator" / "jobs" / "apps.py"
         )
         module_name = "_test_jobs_apps"
         sentinel = object()
@@ -414,8 +432,8 @@ class TestStartupValidation:
         )
         source = apps_path.read_text(encoding="utf-8")
 
-        assert "'DEPLOYMENT_ENV'" in source
-        assert "'production'" in source
+        assert "DEPLOYMENT_ENV" in source
+        assert "production" in source
         assert "_validate_credentials" in source
 
     def test_validate_credentials_logs_warnings_on_failure(self):

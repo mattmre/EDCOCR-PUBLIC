@@ -6,24 +6,32 @@ an *additional* hard 404 guard inside each handler so the router can be
 mounted unconditionally during isolated tests but still refuse to serve
 when the flag is off.
 
-Auth follows the global ``api_key_middleware`` -- no explicit dependency
-on ``require_api_key`` is needed.
+The global ``api_key_middleware`` establishes identity; explicit route
+dependencies enforce viewer/operator roles even when the development-only
+anonymous mode is enabled.
 
 CRITICAL: tenant isolation is enforced via the ``tenant_id`` path
 parameter.  Filters use the path tenant directly so cross-tenant access
-is impossible.
+is impossible (see docs/release-candidate.md).
 
 CRITICAL: ``require_certified`` is accepted as a *tenant policy* flag
 but does NOT bypass the ``certified=False`` enforcement at translation
-sidecar write time.
+sidecar write time (see docs/release-candidate.md).
 """
+
 from __future__ import annotations
 
 import os
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
+
+from api.deps import MAX_PAGE_OFFSET
+from api.identity import require_role
+from api.language_tags import canonicalize_language_tags
+from api.limits import get_default_rate, limiter
+from api.routers.translation_scope import bind_requested_tenant
 
 router = APIRouter(prefix="/api/v1/translation", tags=["translation"])
 
@@ -57,10 +65,12 @@ def _ensure_enabled() -> None:
 
 
 class TenantConfigUpsert(BaseModel):
-    target_languages: list[str] = Field(default_factory=list)
-    preferred_engines: list[str] = Field(default_factory=list)
+    target_languages: list[str] = Field(default_factory=list, max_length=64)
+    preferred_engines: list[str] = Field(default_factory=list, max_length=64)
     allow_nc_licensed: bool = False
     require_certified: bool = False
+    # S2-04: empty string / None means no residency pin (cloud policy only).
+    residency_region: str | None = Field(default=None, max_length=64)
     default_quality_tier: str = "standard"
 
     @field_validator("default_quality_tier")
@@ -72,6 +82,29 @@ class TenantConfigUpsert(BaseModel):
             )
         return v
 
+    @field_validator("target_languages")
+    @classmethod
+    def _target_languages(cls, values: list[str]) -> list[str]:
+        if not values:
+            return []
+        return canonicalize_language_tags(values, max_items=64)
+
+    @field_validator("preferred_engines")
+    @classmethod
+    def _preferred_engines(cls, values: list[str]) -> list[str]:
+        cleaned = [value.strip() for value in values]
+        if any(not value or len(value) > 128 for value in cleaned):
+            raise ValueError("preferred_engines entries must be 1..128 characters")
+        return cleaned
+
+    @field_validator("residency_region")
+    @classmethod
+    def _residency_region(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned or None
+
 
 class TenantConfigOut(BaseModel):
     tenant_id: str
@@ -79,6 +112,7 @@ class TenantConfigOut(BaseModel):
     preferred_engines: list[str]
     allow_nc_licensed: bool
     require_certified: bool
+    residency_region: str | None = None
     default_quality_tier: str
     created_at: str | None = None
     updated_at: str | None = None
@@ -91,8 +125,15 @@ class GlossaryEntryIn(BaseModel):
     target_lang: str = Field(min_length=1, max_length=10)
     case_sensitive: bool = False
     is_regex: bool = False
-    priority: int = 100
-    notes: str | None = None
+    priority: int = Field(default=100, ge=-100_000, le=100_000)
+    notes: str | None = Field(default=None, max_length=2_000)
+
+    @field_validator("source_lang", "target_lang")
+    @classmethod
+    def _language_tag(cls, value: str) -> str:
+        from api.language_tags import canonicalize_language_tag
+
+        return canonicalize_language_tag(value, max_length=10)
 
 
 class GlossaryEntryUpdate(BaseModel):
@@ -102,8 +143,17 @@ class GlossaryEntryUpdate(BaseModel):
     target_lang: str | None = Field(default=None, min_length=1, max_length=10)
     case_sensitive: bool | None = None
     is_regex: bool | None = None
-    priority: int | None = None
-    notes: str | None = None
+    priority: int | None = Field(default=None, ge=-100_000, le=100_000)
+    notes: str | None = Field(default=None, max_length=2_000)
+
+    @field_validator("source_lang", "target_lang")
+    @classmethod
+    def _language_tag(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        from api.language_tags import canonicalize_language_tag
+
+        return canonicalize_language_tag(value, max_length=10)
 
 
 class GlossaryEntryOut(BaseModel):
@@ -128,6 +178,21 @@ class GlossaryListOut(BaseModel):
     page_size: int
 
 
+def _normalize_glossary_language_filter(value: str | None) -> str | None:
+    """Canonicalize a glossary language filter before querying Django."""
+    if value is None:
+        return None
+    from api.language_tags import canonicalize_language_tag
+
+    try:
+        return canonicalize_language_tag(value, max_length=10)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="language filters must be valid bounded BCP-47 tags",
+        ) from exc
+
+
 # ---------------------------------------------------------------------------
 # Lazy Django imports
 # ---------------------------------------------------------------------------
@@ -146,18 +211,34 @@ def _get_models() -> tuple[Any, Any]:
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"Coordinator models unavailable: {exc}",
+            detail="Coordinator models are temporarily unavailable.",
         ) from exc
     return TranslationTenantConfig, GlossaryEntry
 
 
+def _tenant_rls_context(tenant_id: str):
+    """Bind one admin ORM operation to its path-authorized tenant."""
+    try:
+        from jobs.rls import tenant_rls_context  # type: ignore[import-not-found]
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Coordinator tenant authorization is temporarily unavailable.",
+        ) from exc
+    return tenant_rls_context(tenant_id)
+
+
 def _config_to_dict(row: Any) -> dict[str, Any]:
+    residency = getattr(row, "residency_region", None) or None
+    if isinstance(residency, str):
+        residency = residency.strip() or None
     return {
         "tenant_id": row.tenant_id,
         "target_languages": list(row.target_languages or []),
         "preferred_engines": list(row.preferred_engines or []),
         "allow_nc_licensed": bool(row.allow_nc_licensed),
         "require_certified": bool(row.require_certified),
+        "residency_region": residency,
         "default_quality_tier": row.default_quality_tier or "standard",
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
@@ -191,14 +272,21 @@ def _entry_to_dict(row: Any) -> dict[str, Any]:
     response_model=TenantConfigOut,
     name="get_tenant_translation_config",
 )
-def get_tenant_config(tenant_id: str) -> TenantConfigOut:
+@limiter.limit(get_default_rate())
+def get_tenant_config(
+    request: Request,
+    tenant_id: str,
+    _auth: None = Depends(require_role("viewer", "operator")),
+) -> TenantConfigOut:
     """Read the translation config for ``tenant_id``.
 
     Returns 404 when no row exists for the tenant.
     """
     _ensure_enabled()
+    tenant_id = bind_requested_tenant(request, tenant_id) or tenant_id
     TranslationTenantConfig, _ = _get_models()
-    row = TranslationTenantConfig.objects.filter(tenant_id=tenant_id).first()
+    with _tenant_rls_context(tenant_id):
+        row = TranslationTenantConfig.objects.filter(tenant_id=tenant_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="tenant config not found")
     return TenantConfigOut(**_config_to_dict(row))
@@ -209,12 +297,16 @@ def get_tenant_config(tenant_id: str) -> TenantConfigOut:
     response_model=TenantConfigOut,
     name="upsert_tenant_translation_config",
 )
+@limiter.limit(get_default_rate())
 def upsert_tenant_config(
+    request: Request,
     tenant_id: str,
     payload: TenantConfigUpsert,
+    _auth: None = Depends(require_role("operator")),
 ) -> TenantConfigOut:
     """Create or update the translation config for ``tenant_id``."""
     _ensure_enabled()
+    tenant_id = bind_requested_tenant(request, tenant_id) or tenant_id
     TranslationTenantConfig, _ = _get_models()
 
     defaults = {
@@ -222,12 +314,14 @@ def upsert_tenant_config(
         "preferred_engines": payload.preferred_engines,
         "allow_nc_licensed": payload.allow_nc_licensed,
         "require_certified": payload.require_certified,
+        "residency_region": payload.residency_region or "",
         "default_quality_tier": payload.default_quality_tier,
     }
-    row, _created = TranslationTenantConfig.objects.update_or_create(
-        tenant_id=tenant_id,
-        defaults=defaults,
-    )
+    with _tenant_rls_context(tenant_id):
+        row, _created = TranslationTenantConfig.objects.update_or_create(
+            tenant_id=tenant_id,
+            defaults=defaults,
+        )
     return TenantConfigOut(**_config_to_dict(row))
 
 
@@ -241,27 +335,42 @@ def upsert_tenant_config(
     response_model=GlossaryListOut,
     name="list_tenant_glossary",
 )
+@limiter.limit(get_default_rate())
 def list_glossary(
+    request: Request,
     tenant_id: str,
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=10_000),
     page_size: int = Query(100, ge=1, le=500),
-    source_lang: str | None = Query(None),
-    target_lang: str | None = Query(None),
+    source_lang: str | None = Query(None, max_length=10),
+    target_lang: str | None = Query(None, max_length=10),
+    _auth: None = Depends(require_role("viewer", "operator")),
 ) -> GlossaryListOut:
     """Paginated list of glossary entries for ``tenant_id``."""
     _ensure_enabled()
+    tenant_id = bind_requested_tenant(request, tenant_id) or tenant_id
     _, GlossaryEntry = _get_models()
 
-    qs = GlossaryEntry.objects.filter(tenant_id=tenant_id)
-    if source_lang:
-        qs = qs.filter(source_lang=source_lang)
-    if target_lang:
-        qs = qs.filter(target_lang=target_lang)
-    qs = qs.order_by("priority", "id")
+    with _tenant_rls_context(tenant_id):
+        qs = GlossaryEntry.objects.filter(tenant_id=tenant_id)
+        source_lang = _normalize_glossary_language_filter(source_lang)
+        target_lang = _normalize_glossary_language_filter(target_lang)
+        if source_lang:
+            qs = qs.filter(source_lang=source_lang)
+        if target_lang:
+            qs = qs.filter(target_lang=target_lang)
+        qs = qs.order_by("priority", "id")
 
-    total = qs.count()
-    offset = (page - 1) * page_size
-    rows = list(qs[offset:offset + page_size])
+        total = qs.count()
+        offset = (page - 1) * page_size
+        if offset > MAX_PAGE_OFFSET:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "pagination_offset_too_large",
+                    "message": "page and page_size exceed the supported pagination depth",
+                },
+            )
+        rows = list(qs[offset : offset + page_size])
     return GlossaryListOut(
         entries=[GlossaryEntryOut(**_entry_to_dict(r)) for r in rows],
         total=total,
@@ -276,9 +385,12 @@ def list_glossary(
     status_code=201,
     name="create_tenant_glossary_entry",
 )
+@limiter.limit(get_default_rate())
 def create_glossary_entry(
+    request: Request,
     tenant_id: str,
     payload: GlossaryEntryIn,
+    _auth: None = Depends(require_role("operator")),
 ) -> GlossaryEntryOut:
     """Create a glossary entry under ``tenant_id``.
 
@@ -287,6 +399,7 @@ def create_glossary_entry(
     entries).
     """
     _ensure_enabled()
+    tenant_id = bind_requested_tenant(request, tenant_id) or tenant_id
     _, GlossaryEntry = _get_models()
 
     # Lazy import to avoid Django at module import time.
@@ -295,25 +408,26 @@ def create_glossary_entry(
     except Exception as exc:  # pragma: no cover - non-Django fallback
         raise HTTPException(
             status_code=503,
-            detail=f"Django unavailable: {exc}",
+            detail="Coordinator database is temporarily unavailable.",
         ) from exc
 
     try:
-        row = GlossaryEntry.objects.create(
-            tenant_id=tenant_id,
-            source_term=payload.source_term,
-            target_term=payload.target_term,
-            source_lang=payload.source_lang,
-            target_lang=payload.target_lang,
-            case_sensitive=payload.case_sensitive,
-            is_regex=payload.is_regex,
-            priority=payload.priority,
-            notes=payload.notes or "",
-        )
+        with _tenant_rls_context(tenant_id):
+            row = GlossaryEntry.objects.create(
+                tenant_id=tenant_id,
+                source_term=payload.source_term,
+                target_term=payload.target_term,
+                source_lang=payload.source_lang,
+                target_lang=payload.target_lang,
+                case_sensitive=payload.case_sensitive,
+                is_regex=payload.is_regex,
+                priority=payload.priority,
+                notes=payload.notes or "",
+            )
     except IntegrityError as exc:
         raise HTTPException(
             status_code=409,
-            detail=f"duplicate glossary entry: {exc}",
+            detail="duplicate glossary entry",
         ) from exc
     return GlossaryEntryOut(**_entry_to_dict(row))
 
@@ -323,10 +437,13 @@ def create_glossary_entry(
     response_model=GlossaryEntryOut,
     name="update_tenant_glossary_entry",
 )
+@limiter.limit(get_default_rate())
 def update_glossary_entry(
+    request: Request,
     tenant_id: str,
     entry_id: int,
     payload: GlossaryEntryUpdate,
+    _auth: None = Depends(require_role("operator")),
 ) -> GlossaryEntryOut:
     """Patch fields on a glossary entry under ``tenant_id``.
 
@@ -335,6 +452,7 @@ def update_glossary_entry(
     entry.
     """
     _ensure_enabled()
+    tenant_id = bind_requested_tenant(request, tenant_id) or tenant_id
     _, GlossaryEntry = _get_models()
 
     try:
@@ -342,33 +460,41 @@ def update_glossary_entry(
     except Exception as exc:  # pragma: no cover - non-Django fallback
         raise HTTPException(
             status_code=503,
-            detail=f"Django unavailable: {exc}",
+            detail="Coordinator database is temporarily unavailable.",
         ) from exc
 
-    row = GlossaryEntry.objects.filter(
-        tenant_id=tenant_id, pk=entry_id,
-    ).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="glossary entry not found")
+    with _tenant_rls_context(tenant_id):
+        row = GlossaryEntry.objects.filter(
+            tenant_id=tenant_id,
+            pk=entry_id,
+        ).first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="glossary entry not found")
 
-    update_fields = []
-    for field_name in (
-        "source_term", "target_term", "source_lang", "target_lang",
-        "case_sensitive", "is_regex", "priority", "notes",
-    ):
-        value = getattr(payload, field_name)
-        if value is not None:
-            setattr(row, field_name, value)
-            update_fields.append(field_name)
+        update_fields = []
+        for field_name in (
+            "source_term",
+            "target_term",
+            "source_lang",
+            "target_lang",
+            "case_sensitive",
+            "is_regex",
+            "priority",
+            "notes",
+        ):
+            value = getattr(payload, field_name)
+            if value is not None:
+                setattr(row, field_name, value)
+                update_fields.append(field_name)
 
-    if update_fields:
-        try:
-            row.save(update_fields=update_fields + ["updated_at"])
-        except IntegrityError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail=f"duplicate glossary entry: {exc}",
-            ) from exc
+        if update_fields:
+            try:
+                row.save(update_fields=update_fields + ["updated_at"])
+            except IntegrityError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail="duplicate glossary entry",
+                ) from exc
 
     return GlossaryEntryOut(**_entry_to_dict(row))
 
@@ -378,14 +504,23 @@ def update_glossary_entry(
     status_code=204,
     name="delete_tenant_glossary_entry",
 )
-def delete_glossary_entry(tenant_id: str, entry_id: int) -> None:
+@limiter.limit(get_default_rate())
+def delete_glossary_entry(
+    request: Request,
+    tenant_id: str,
+    entry_id: int,
+    _auth: None = Depends(require_role("operator")),
+) -> None:
     """Delete a glossary entry under ``tenant_id``."""
     _ensure_enabled()
+    tenant_id = bind_requested_tenant(request, tenant_id) or tenant_id
     _, GlossaryEntry = _get_models()
 
-    deleted, _ = GlossaryEntry.objects.filter(
-        tenant_id=tenant_id, pk=entry_id,
-    ).delete()
+    with _tenant_rls_context(tenant_id):
+        deleted, _ = GlossaryEntry.objects.filter(
+            tenant_id=tenant_id,
+            pk=entry_id,
+        ).delete()
     if deleted == 0:
         raise HTTPException(status_code=404, detail="glossary entry not found")
     return None

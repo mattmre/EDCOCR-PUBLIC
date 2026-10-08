@@ -74,12 +74,12 @@ def client(tmp_path, populated_entity_index):
     source.mkdir(exist_ok=True)
     output.mkdir(exist_ok=True)
 
-    with patch("api.config.SOURCE_FOLDER", str(source)), \
-         patch("api.config.OUTPUT_FOLDER", str(output)), \
-         patch("api.config.OCR_API_KEY", "test-key-recall"), \
-         patch("api.config.ALLOW_UNAUTHENTICATED", False), \
-         patch("api.auth.OCR_API_KEY", "test-key-recall"), \
-         patch("api.auth.ALLOW_UNAUTHENTICATED", False), \
+    with patch("api.config.SOURCE_FOLDER", str(source)),\
+         patch("api.config.OUTPUT_FOLDER", str(output)),\
+         patch("api.config.OCR_API_KEY", "test-key-recall"),\
+         patch("api.config.ALLOW_UNAUTHENTICATED", False),\
+         patch("api.auth.OCR_API_KEY", "test-key-recall"),\
+         patch("api.auth.ALLOW_UNAUTHENTICATED", False),\
          patch("api.job_manager.config") as mock_config:
         mock_config.SOURCE_FOLDER = str(source)
         mock_config.OUTPUT_FOLDER = str(output)

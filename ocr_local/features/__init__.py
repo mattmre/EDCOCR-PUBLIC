@@ -10,7 +10,7 @@ through the standard Python machinery::
 Root-level paths such as ``import ner`` continue to work through thin
 shim modules at the repository root.
 
- Phase 2 is complete: every feature module has been physically
+maintenance review Phase 2 is complete: every feature module has been physically
 migrated into this package, so no PEP-562 ``__getattr__`` lazy-loader is
 required.  ``_FEATURE_MODULES`` is retained as an empty tuple so that
 legacy introspection (``from ocr_local.features import _FEATURE_MODULES``)
@@ -20,6 +20,6 @@ continues to resolve.
 from __future__ import annotations
 
 # Retained as a stable public symbol for legacy introspection and tests.
-# After  Phase 2 every feature module lives in this package and is
+# After maintenance review Phase 2 every feature module lives in this package and is
 # resolved by the standard import machinery, so this tuple is empty.
 _FEATURE_MODULES: tuple[str, ...] = ()

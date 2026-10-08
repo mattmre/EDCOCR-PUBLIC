@@ -420,18 +420,25 @@ def check_resource_naming(
     resources: list[dict], tf_file: str, report: ValidationReport
 ) -> None:
     """Resource names should follow a consistent convention."""
+    relationship_or_external_types = (
+        "aws_iam_role_policy_attachment",
+        "aws_route_table_association",
+        "google_project_iam_member",
+        "helm_release",
+    )
     for res in resources:
         content_text = "\n".join(res["content_lines"])
-        # Check that display_name or Name tag contains cluster_name reference
+        # Names may be derived from an explicit module input rather than the
+        # cluster name itself (for example, a shared VPC or image registry).
         has_name_ref = (
             "var.cluster_name" in content_text
             or "${var.cluster_name}" in content_text
             or "display_name" in content_text
+            or "var.network_name" in content_text
+            or "var.artifact_registry_name" in content_text
+            or "var.ecr_repository_names" in content_text
         )
-        # Skip data sources and simple resources
-        if res["type"].startswith("aws_iam_role_policy_attachment"):
-            continue
-        if res["type"].startswith("google_project_iam_member"):
+        if res["type"].startswith(relationship_or_external_types):
             continue
         if not has_name_ref and "name" not in res["type"]:
             report.add(
@@ -490,7 +497,17 @@ def check_resource_tags(
         "oci_containerengine_node_pool",
     ]
 
+    # Google Compute Network and Subnetwork do not expose a labels attribute
+    # in the supported provider schema. Do not report an impossible remedy.
+    non_taggable_types = {
+        "aws_route_table_association",
+        "google_compute_network",
+        "google_compute_subnetwork",
+    }
+
     for res in resources:
+        if res["type"] in non_taggable_types:
+            continue
         if not any(res["type"].startswith(p) for p in taggable_prefixes):
             continue
         content_text = "\n".join(res["content_lines"])
@@ -728,9 +745,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         md = report.to_markdown()
         print(md)
-        print(f"\n{'PASSED' if report.passed else 'FAILED'}: "
-              f"{report.error_count} errors, {report.warning_count} warnings, "
-              f"{report.info_count} info")
+        print(
+            f"\n{'PASSED' if report.passed else 'FAILED'}: "
+            f"{report.error_count} errors, {report.warning_count} warnings, "
+            f"{report.info_count} info"
+        )
 
     # Write to output directory if requested
     if args.output_dir:
@@ -739,9 +758,7 @@ def main(argv: list[str] | None = None) -> int:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
         json_path = out_dir / f"terraform-validation-{timestamp}.json"
-        json_path.write_text(
-            json.dumps(report.to_dict(), indent=2), encoding="utf-8"
-        )
+        json_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
 
         md_path = out_dir / f"terraform-validation-{timestamp}.md"
         md_path.write_text(report.to_markdown(), encoding="utf-8")

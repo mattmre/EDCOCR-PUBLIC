@@ -1,11 +1,13 @@
-"""Tests for AssemblyMessage TypedDict schema.
+"""Tests for AssemblyMessage TypedDict schema (maintenance review).
 
 Verifies that:
 - AssemblyMessage and _AssemblyMessageRequired are proper TypedDict subclasses
-- The full 12-key schema is defined correctly
-- All 6 assembly_queue.put() sites produce messages with the full key set
-- The assembler consumer reads all 12 keys correctly via .get()
+- The full 17-key schema is defined correctly
+- All assembly_queue.put() sites produce compatible messages
+- The assembler consumer reads the schema correctly via .get()
 """
+
+import ast
 import queue
 import typing
 
@@ -15,19 +17,31 @@ import pytest
 def _get_assembly_types():
     """Import AssemblyMessage and _AssemblyMessageRequired from ocr_gpu_async."""
     from ocr_gpu_async import AssemblyMessage, _AssemblyMessageRequired
+
     return AssemblyMessage, _AssemblyMessageRequired
 
 
 # Expected keys split by required vs optional
-REQUIRED_KEYS = {"doc_id", "page_num", "text", "status", "chunk_path"}
+REQUIRED_KEYS = {
+    "doc_id",
+    "page_num",
+    "text",
+    "status",
+    "chunk_path",
+    "checkpoint_sha256",
+}
 OPTIONAL_KEYS = {
     "structure_data",
     "ocr_confidence",
     "ocr_method",
+    "ocr_language",
     "handwriting_data",
     "signature_data",
     "vertical_text_data",
     "table_fallback_data",
+    "language_data",
+    "resume_metadata",
+    "cache_hit",
 }
 ALL_KEYS = REQUIRED_KEYS | OPTIONAL_KEYS
 
@@ -49,11 +63,11 @@ class TestAssemblyMessageTypedDict:
         hints = typing.get_type_hints(_AssemblyMessageRequired)
         assert set(hints.keys()) == REQUIRED_KEYS
 
-    def test_assembly_message_has_all_12_keys(self):
+    def test_assembly_message_has_all_17_keys(self):
         AssemblyMessage, _ = _get_assembly_types()
         hints = typing.get_type_hints(AssemblyMessage)
         assert set(hints.keys()) == ALL_KEYS
-        assert len(hints) == 12
+        assert len(hints) == 17
 
     def test_required_keys_are_required(self):
         """Required keys should come from the base class with total=True."""
@@ -76,6 +90,15 @@ class TestAssemblyMessageTypedDict:
         assert hints["text"] is str
         assert hints["status"] is str
         assert hints["ocr_confidence"] is float
+        # Domain objects on the live success path, not plain dict payloads.
+        for key in (
+            "handwriting_data",
+            "signature_data",
+            "vertical_text_data",
+            "table_fallback_data",
+            "language_data",
+        ):
+            assert hints[key] == object | None, key
 
 
 class TestFailurePathMessages:
@@ -89,13 +112,18 @@ class TestFailurePathMessages:
             "text": "",
             "status": "RESUMED",
             "chunk_path": "/tmp/test/1.pdf",
+            "checkpoint_sha256": "a" * 64,
             "structure_data": None,
             "ocr_confidence": 0.0,
             "ocr_method": "RESUMED",
+            "ocr_language": "en",
             "handwriting_data": None,
             "signature_data": None,
             "vertical_text_data": None,
             "table_fallback_data": None,
+            "language_data": None,
+            "resume_metadata": None,
+            "cache_hit": False,
         }
 
     def _make_extract_failed_message(self):
@@ -106,13 +134,18 @@ class TestFailurePathMessages:
             "text": "",
             "status": "EXTRACT_FAILED",
             "chunk_path": None,
+            "checkpoint_sha256": None,
             "structure_data": None,
             "ocr_confidence": 0.0,
             "ocr_method": "EXTRACT_FAILED",
+            "ocr_language": "",
             "handwriting_data": None,
             "signature_data": None,
             "vertical_text_data": None,
             "table_fallback_data": None,
+            "language_data": None,
+            "resume_metadata": None,
+            "cache_hit": False,
         }
 
     def _make_critical_failed_message(self):
@@ -123,17 +156,22 @@ class TestFailurePathMessages:
             "text": "",
             "status": "CRITICAL_FAILED",
             "chunk_path": "/tmp/test/5.pdf",
+            "checkpoint_sha256": "b" * 64,
             "structure_data": None,
             "ocr_confidence": 0.0,
             "ocr_method": "CRITICAL_FAILED",
+            "ocr_language": "",
             "handwriting_data": None,
             "signature_data": None,
             "vertical_text_data": None,
             "table_fallback_data": None,
+            "language_data": None,
+            "resume_metadata": None,
+            "cache_hit": False,
         }
 
     @pytest.mark.parametrize("status", ["RESUMED", "EXTRACT_FAILED", "CRITICAL_FAILED"])
-    def test_failure_messages_have_all_12_keys(self, status):
+    def test_failure_messages_have_all_17_keys(self, status):
         makers = {
             "RESUMED": self._make_resumed_message,
             "EXTRACT_FAILED": self._make_extract_failed_message,
@@ -141,7 +179,7 @@ class TestFailurePathMessages:
         }
         msg = makers[status]()
         assert set(msg.keys()) == ALL_KEYS
-        assert len(msg) == 12
+        assert len(msg) == 17
 
     @pytest.mark.parametrize("status", ["RESUMED", "EXTRACT_FAILED", "CRITICAL_FAILED"])
     def test_failure_messages_have_correct_defaults(self, status):
@@ -158,10 +196,11 @@ class TestFailurePathMessages:
         assert msg["signature_data"] is None
         assert msg["vertical_text_data"] is None
         assert msg["table_fallback_data"] is None
+        assert msg["cache_hit"] is False
 
 
 class TestAssemblerConsumerReads:
-    """Verify the assembler consumer can read all 12 keys via .get() from any message."""
+    """Verify the assembler consumer can read all 17 keys via .get()."""
 
     def _simulate_assembler_read(self, msg):
         """Simulate how the assembler thread reads keys from an assembly message."""
@@ -170,6 +209,7 @@ class TestAssemblerConsumerReads:
         status = msg.get("status", "UNKNOWN")
         msg_text = msg.get("text", "")
         chunk_path = msg.get("chunk_path")
+        checkpoint_sha256 = msg.get("checkpoint_sha256")
         msg_structure = msg.get("structure_data")
         msg_hw = msg.get("handwriting_data")
         msg_sig = msg.get("signature_data")
@@ -177,12 +217,17 @@ class TestAssemblerConsumerReads:
         msg_tf = msg.get("table_fallback_data")
         ocr_method = msg.get("ocr_method", "")
         ocr_confidence = float(msg.get("ocr_confidence", 0.0) or 0.0)
+        ocr_language = msg.get("ocr_language", "")
+        language_data = msg.get("language_data")
+        resume_metadata = msg.get("resume_metadata")
+        cache_hit = bool(msg.get("cache_hit", False))
         return {
             "doc_id": doc_id,
             "page_num": page_num,
             "status": status,
             "text": msg_text,
             "chunk_path": chunk_path,
+            "checkpoint_sha256": checkpoint_sha256,
             "structure_data": msg_structure,
             "handwriting_data": msg_hw,
             "signature_data": msg_sig,
@@ -190,6 +235,10 @@ class TestAssemblerConsumerReads:
             "table_fallback_data": msg_tf,
             "ocr_method": ocr_method,
             "ocr_confidence": ocr_confidence,
+            "ocr_language": ocr_language,
+            "language_data": language_data,
+            "resume_metadata": resume_metadata,
+            "cache_hit": cache_hit,
         }
 
     def test_resumed_message_round_trip(self):
@@ -199,19 +248,25 @@ class TestAssemblerConsumerReads:
             "text": "",
             "status": "RESUMED",
             "chunk_path": "/tmp/1.pdf",
+            "checkpoint_sha256": "c" * 64,
             "structure_data": None,
             "ocr_confidence": 0.0,
             "ocr_method": "RESUMED",
+            "ocr_language": "en",
             "handwriting_data": None,
             "signature_data": None,
             "vertical_text_data": None,
             "table_fallback_data": None,
+            "language_data": None,
+            "resume_metadata": None,
+            "cache_hit": False,
         }
         result = self._simulate_assembler_read(msg)
         assert result["doc_id"] == "doc1"
         assert result["status"] == "RESUMED"
         assert result["ocr_method"] == "RESUMED"
         assert result["ocr_confidence"] == 0.0
+        assert result["checkpoint_sha256"] == "c" * 64
 
     def test_success_message_round_trip(self):
         msg = {
@@ -220,13 +275,18 @@ class TestAssemblerConsumerReads:
             "text": "Hello world",
             "status": "OK",
             "chunk_path": "/tmp/3.pdf",
+            "checkpoint_sha256": "d" * 64,
             "structure_data": {"layout_regions": []},
             "ocr_confidence": 0.95,
             "ocr_method": "Paddle-en",
+            "ocr_language": "en",
             "handwriting_data": {"is_handwritten": False},
             "signature_data": None,
             "vertical_text_data": None,
             "table_fallback_data": None,
+            "language_data": None,
+            "resume_metadata": None,
+            "cache_hit": False,
         }
         result = self._simulate_assembler_read(msg)
         assert result["doc_id"] == "doc2"
@@ -234,6 +294,7 @@ class TestAssemblerConsumerReads:
         assert result["ocr_confidence"] == 0.95
         assert result["ocr_method"] == "Paddle-en"
         assert result["structure_data"] == {"layout_regions": []}
+        assert result["checkpoint_sha256"] == "d" * 64
 
     def test_queue_round_trip(self):
         """Test that messages survive queue.put/get correctly."""
@@ -244,75 +305,61 @@ class TestAssemblerConsumerReads:
             "text": "",
             "status": "CRITICAL_FAILED",
             "chunk_path": None,
+            "checkpoint_sha256": None,
             "structure_data": None,
             "ocr_confidence": 0.0,
             "ocr_method": "CRITICAL_FAILED",
+            "ocr_language": "",
             "handwriting_data": None,
             "signature_data": None,
             "vertical_text_data": None,
             "table_fallback_data": None,
+            "language_data": None,
+            "resume_metadata": None,
+            "cache_hit": False,
         }
         q.put(msg)
         received = q.get(timeout=1)
         assert set(received.keys()) == ALL_KEYS
         assert received["status"] == "CRITICAL_FAILED"
         assert received["ocr_method"] == "CRITICAL_FAILED"
+        assert received["checkpoint_sha256"] is None
 
 
 class TestSourceCodeConsistency:
-    """Verify that all assembly_queue.put() sites in ocr_gpu_async.py have 12 keys."""
+    """Verify that all assembly_queue.put() sites use the full 17-key schema."""
 
     def test_all_put_sites_have_full_schema(self):
         """Parse ocr_gpu_async.py source and verify all assembly_queue.put sites
-        include the full set of 12 keys."""
+        include the full set of 17 keys."""
         import inspect
 
         # Read the source file directly
         import ocr_gpu_async
+
         source_path = inspect.getfile(ocr_gpu_async)
         with open(source_path, encoding="utf-8") as f:
             source = f.read()
 
-        # Find all assembly_queue.put({ ... }) blocks by scanning for the pattern
-        # We look for lines containing assembly_queue.put({ and then collect
-        # the dict keys within that block
-        lines = source.split("\n")
+        tree = ast.parse(source)
         put_sites = []
-        i = 0
-        while i < len(lines):
-            stripped = lines[i].strip()
-            if "assembly_queue.put({" in stripped:
-                # Collect lines until we find the closing })
-                block_lines = [lines[i]]
-                j = i + 1
-                brace_depth = stripped.count("{") - stripped.count("}")
-                while j < len(lines) and brace_depth > 0:
-                    block_lines.append(lines[j])
-                    brace_depth += lines[j].count("{") - lines[j].count("}")
-                    j += 1
-                # Extract keys from the block
-                keys_found = set()
-                for line in block_lines:
-                    line_stripped = line.strip()
-                    if line_stripped.startswith('"') and '":' in line_stripped:
-                        key = line_stripped.split('"')[1]
-                        keys_found.add(key)
-                put_sites.append({
-                    "line": i + 1,
-                    "keys": keys_found,
-                    "status": None,
-                })
-                # Extract status from the block
-                for line in block_lines:
-                    if '"status"' in line:
-                        parts = line.split('"')
-                        for pi, part in enumerate(parts):
-                            if part == "status" and pi + 2 < len(parts):
-                                put_sites[-1]["status"] = parts[pi + 2]
-                                break
-                i = j
-            else:
-                i += 1
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_interruptible_queue_put"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id == "assembly_queue"
+                and isinstance(node.args[1], ast.Dict)
+            ):
+                continue
+            keys = {
+                key.value
+                for key in node.args[1].keys
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            }
+            put_sites.append({"line": node.lineno, "keys": keys})
 
         # We expect 6 sites
         assert len(put_sites) == 6, (
@@ -320,10 +367,9 @@ class TestSourceCodeConsistency:
             f"{[s['line'] for s in put_sites]}"
         )
 
-        # All 6 sites should have all 12 keys
+        # All 6 sites should have all 17 keys
         for site in put_sites:
             missing = ALL_KEYS - site["keys"]
-            assert not missing, (
-                f"Site at line {site['line']} (status={site['status']}) "
-                f"is missing keys: {missing}"
-            )
+            assert (
+                not missing
+            ), f"Site at line {site['line']} is missing keys: {missing}"

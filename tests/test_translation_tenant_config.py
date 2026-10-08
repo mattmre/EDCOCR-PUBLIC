@@ -8,11 +8,12 @@ Django-backed tests run only when ``DJANGO_SETTINGS_MODULE`` is already
 set in the environment (the coordinator/jobs/tests path).  This file
 intentionally does NOT setdefault DJANGO_SETTINGS_MODULE -- doing so
 would trigger pytest-django's session-scoped fixture and break root
-tests run via ``-c pytest.ini``.  See .
+tests run via ``-c pytest.ini``.  See docs/release-candidate.md.
 
 REST-endpoint tests use FastAPI TestClient against an isolated app
 instance, gated identically.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -36,9 +37,8 @@ if _COORDINATOR_DIR not in sys.path:
 # set in the environment.  Setting it here would trigger pytest-django's
 # session fixture and break tests running under the root pytest config.
 _DJANGO_OK = False
-if (
-    importlib.util.find_spec("django") is not None
-    and os.environ.get("DJANGO_SETTINGS_MODULE")
+if importlib.util.find_spec("django") is not None and os.environ.get(
+    "DJANGO_SETTINGS_MODULE"
 ):
     try:
         import django
@@ -117,13 +117,17 @@ class TestGlossaryEntryModelStructure:
         from jobs.models import GlossaryEntry
 
         constraints = [
-            c for c in GlossaryEntry._meta.constraints
+            c
+            for c in GlossaryEntry._meta.constraints
             if c.name == "unique_literal_glossary_entry"
         ]
         assert len(constraints) == 1
         constraint = constraints[0]
         assert set(constraint.fields) == {
-            "tenant_id", "source_term", "source_lang", "target_lang",
+            "tenant_id",
+            "source_term",
+            "source_lang",
+            "target_lang",
         }
 
     def test_indexes_include_tenant_lang_pair(self):
@@ -244,9 +248,10 @@ class TestGlossaryEntryRoundTrip:
             target_lang="fr",
             is_regex=True,
         )
-        assert GlossaryEntry.objects.filter(
-            tenant_id="tenant-a", is_regex=True
-        ).count() == 2
+        assert (
+            GlossaryEntry.objects.filter(tenant_id="tenant-a", is_regex=True).count()
+            == 2
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -297,16 +302,28 @@ class TestLoadTenantGlossary:
         from ocr_local.translation.glossary import load_tenant_glossary
 
         DjangoGE.objects.create(
-            tenant_id="t-prio", source_term="hi", target_term="bonjour",
-            source_lang="en", target_lang="fr", priority=200,
+            tenant_id="t-prio",
+            source_term="hi",
+            target_term="bonjour",
+            source_lang="en",
+            target_lang="fr",
+            priority=200,
         )
         DjangoGE.objects.create(
-            tenant_id="t-prio", source_term="bye", target_term="au revoir",
-            source_lang="en", target_lang="fr", priority=10,
+            tenant_id="t-prio",
+            source_term="bye",
+            target_term="au revoir",
+            source_lang="en",
+            target_lang="fr",
+            priority=10,
         )
         DjangoGE.objects.create(
-            tenant_id="t-prio", source_term="hello", target_term="salut",
-            source_lang="en", target_lang="fr", priority=100,
+            tenant_id="t-prio",
+            source_term="hello",
+            target_term="salut",
+            source_lang="en",
+            target_lang="fr",
+            priority=100,
         )
         out = load_tenant_glossary("t-prio", "en", "fr")
         assert [e.priority for e in out] == [10, 100, 200]
@@ -325,7 +342,9 @@ class TestGetTenantPolicy:
 
         policy = get_tenant_policy(None)
         assert policy.tenant_id == "default"
-        assert policy.allow_nllb_commercial is True  # dataclass default
+        # NC-licensed weights are opt-in; the safe default must remain
+        # refused for commercial tenants.
+        assert policy.allow_nllb_commercial is False
 
     def test_returns_default_when_no_row(self):
         from ocr_local.translation.policy import get_tenant_policy
@@ -379,9 +398,22 @@ def admin_app(monkeypatch):
     pytest.importorskip("httpx")
 
     monkeypatch.setenv("ENABLE_TRANSLATION_API", "true")
+    from api.identity import AuthIdentity
     from api.routers.translation_admin import router
 
     app = fastapi.FastAPI()
+
+    @app.middleware("http")
+    async def test_operator_identity(request, call_next):
+        # The router now enforces its documented RBAC boundary.  These
+        # endpoint-contract tests represent the coordinator admin client.
+        request.state.identity = AuthIdentity(
+            subject="translation-test-admin",
+            role="admin",
+            auth_method="test",
+        )
+        return await call_next(request)
+
     app.include_router(router)
     return app
 
@@ -416,7 +448,8 @@ class TestTenantConfigEndpoints:
             "default_quality_tier": "standard",
         }
         resp = admin_client.put(
-            "/api/v1/translation/tenants/t-create/config", json=payload,
+            "/api/v1/translation/tenants/t-create/config",
+            json=payload,
         )
         assert resp.status_code == 200
         body = resp.json()
@@ -499,7 +532,8 @@ class TestGlossaryEndpoints:
             "is_regex": False,
         }
         first = admin_client.post(
-            "/api/v1/translation/tenants/t-dup/glossary", json=payload,
+            "/api/v1/translation/tenants/t-dup/glossary",
+            json=payload,
         )
         assert first.status_code == 201
         second = admin_client.post(
@@ -663,13 +697,15 @@ def test_admin_endpoints_require_api_key(monkeypatch):
     monkeypatch.setenv("OCR_API_KEY", "test-key-abc")
     monkeypatch.setenv("ENABLE_TRANSLATION_API", "true")
 
-    import importlib
-
     import api.auth as _auth
-    import api.config as _config
 
-    importlib.reload(_config)
-    importlib.reload(_auth)
+    # Patch the already-imported auth constants instead of reloading the
+    # module.  Reloading leaves module-level config values behind after
+    # monkeypatch restores the environment, contaminating later API tests
+    # with the temporary anonymous/operator policy.
+    monkeypatch.setattr(_auth, "OCR_API_KEY", "test-key-abc")
+    monkeypatch.setattr(_auth, "ALLOW_UNAUTHENTICATED", False)
+    monkeypatch.setattr(_auth, "ENABLE_MULTITENANCY", False)
 
     from api.routers.translation_admin import router
 
@@ -691,7 +727,7 @@ def test_require_certified_does_not_unlock_certified_sidecar(tmp_path):
     """Tenant ``require_certified=True`` must NOT bypass write-time
     enforcement of ``certified=False`` in translation sidecars.
 
-    Verifies : even when a tenant config sets
+    Verifies docs/release-candidate.md: even when a tenant config sets
     ``require_certified=True`` (a *policy* flag), the sidecar writer
     still rejects ``certified=True`` payloads -- promotion happens
     elsewhere via the strong-auth review queue.

@@ -74,6 +74,7 @@ class TestExtractGpuIndex(TestCase):
             del env["CUDA_VISIBLE_DEVICES"]
             # Ensure the env var is truly absent
             import os
+
             os.environ.pop("CUDA_VISIBLE_DEVICES", None)
             result = _extract_gpu_index()
         assert result is None
@@ -97,73 +98,106 @@ class TestRouteTask(TestCase):
         """When per-GPU queues are disabled, process_page routes to 'ocr_gpu'."""
         import coordinator.celery as celery_module
 
-        with patch.object(celery_module, '_PER_GPU_QUEUES_ENABLED', False):
+        with patch.object(celery_module, "_PER_GPU_QUEUES_ENABLED", False):
             result = celery_module._route_task(
-                'jobs.tasks.process_page', None, None, None,
+                "jobs.tasks.process_page",
+                None,
+                None,
+                None,
             )
-        assert result == {'queue': 'ocr_gpu'}
+        assert result == {"queue": "ocr_gpu"}
 
     def test_gpu_task_per_gpu_round_robin(self):
         """When per-GPU queues are enabled, GPU tasks distribute round-robin."""
         import coordinator.celery as celery_module
 
-        with patch.object(celery_module, '_PER_GPU_QUEUES_ENABLED', True), \
-             patch.object(celery_module, '_GPU_COUNT', 4), \
-             patch.object(celery_module, '_gpu_round_robin_counter', itertools.count()):
-
+        with (
+            patch.object(celery_module, "_PER_GPU_QUEUES_ENABLED", True),
+            patch.object(celery_module, "_GPU_COUNT", 4),
+            patch.object(celery_module, "_gpu_round_robin_counter", itertools.count()),
+            patch.dict("os.environ", {"OCR_PER_GPU_STRICT": "true"}),
+        ):
             result0 = celery_module._route_task(
-                'jobs.tasks.process_page', None, None, None,
+                "jobs.tasks.process_page",
+                None,
+                None,
+                None,
             )
             result1 = celery_module._route_task(
-                'jobs.tasks.process_page', None, None, None,
+                "jobs.tasks.process_page",
+                None,
+                None,
+                None,
             )
             result2 = celery_module._route_task(
-                'jobs.tasks.process_document', None, None, None,
+                "jobs.tasks.process_document",
+                None,
+                None,
+                None,
             )
             result3 = celery_module._route_task(
-                'jobs.tasks.process_page', None, None, None,
+                "jobs.tasks.process_page",
+                None,
+                None,
+                None,
             )
             # After 4 tasks, wraps around
             result4 = celery_module._route_task(
-                'jobs.tasks.process_page', None, None, None,
+                "jobs.tasks.process_page",
+                None,
+                None,
+                None,
             )
 
-        assert result0 == {'queue': 'ocr_gpu_0'}
-        assert result1 == {'queue': 'ocr_gpu_1'}
-        assert result2 == {'queue': 'ocr_gpu_2'}
-        assert result3 == {'queue': 'ocr_gpu_3'}
+        assert result0 == {"queue": "ocr_gpu_0"}
+        assert result1 == {"queue": "ocr_gpu_1"}
+        assert result2 == {"queue": "ocr_gpu_2"}
+        assert result3 == {"queue": "ocr_gpu_3"}
         # Wraps around to 0
-        assert result4 == {'queue': 'ocr_gpu_0'}
+        assert result4 == {"queue": "ocr_gpu_0"}
 
     def test_cpu_task_routes_unchanged(self):
         """compress_pdf always routes to 'cpu_general' regardless of per-GPU setting."""
         import coordinator.celery as celery_module
 
         # Test with per-GPU enabled -- should not affect CPU tasks
-        with patch.object(celery_module, '_PER_GPU_QUEUES_ENABLED', True), \
-             patch.object(celery_module, '_GPU_COUNT', 4):
+        with (
+            patch.object(celery_module, "_PER_GPU_QUEUES_ENABLED", True),
+            patch.object(celery_module, "_GPU_COUNT", 4),
+        ):
             result = celery_module._route_task(
-                'jobs.tasks.compress_pdf', None, None, None,
+                "jobs.tasks.compress_pdf",
+                None,
+                None,
+                None,
             )
-        assert result == {'queue': 'cpu_general'}
+        assert result == {"queue": "cpu_general"}
 
     def test_coordinator_task_routes_unchanged(self):
         """ingest_document always routes to 'coordinator' regardless of per-GPU setting."""
         import coordinator.celery as celery_module
 
-        with patch.object(celery_module, '_PER_GPU_QUEUES_ENABLED', True), \
-             patch.object(celery_module, '_GPU_COUNT', 4):
+        with (
+            patch.object(celery_module, "_PER_GPU_QUEUES_ENABLED", True),
+            patch.object(celery_module, "_GPU_COUNT", 4),
+        ):
             result = celery_module._route_task(
-                'jobs.tasks.ingest_document', None, None, None,
+                "jobs.tasks.ingest_document",
+                None,
+                None,
+                None,
             )
-        assert result == {'queue': 'coordinator'}
+        assert result == {"queue": "coordinator"}
 
     def test_unknown_task_returns_none(self):
         """Unknown task names should return None (default routing)."""
         import coordinator.celery as celery_module
 
         result = celery_module._route_task(
-            'some.unknown.task', None, None, None,
+            "some.unknown.task",
+            None,
+            None,
+            None,
         )
         assert result is None
 
@@ -171,20 +205,55 @@ class TestRouteTask(TestCase):
         """process_document task should also route to GPU queues."""
         import coordinator.celery as celery_module
 
-        with patch.object(celery_module, '_PER_GPU_QUEUES_ENABLED', False):
+        with patch.object(celery_module, "_PER_GPU_QUEUES_ENABLED", False):
             result = celery_module._route_task(
-                'jobs.tasks.process_document', None, None, None,
+                "jobs.tasks.process_document",
+                None,
+                None,
+                None,
             )
-        assert result == {'queue': 'ocr_gpu'}
+        assert result == {"queue": "ocr_gpu"}
+
+    def test_explicit_tesseract_lane_routes_to_owned_queue(self):
+        """A signed lane request bypasses Paddle CPU/GPU queues."""
+        import coordinator.celery as celery_module
+
+        for task_name in (
+            "jobs.tasks.process_document",
+            "jobs.tasks.process_page",
+        ):
+            result = celery_module._route_task(
+                task_name,
+                None,
+                {"ocr_engine_lane": "tesseract"},
+                None,
+            )
+            assert result == {"queue": "ocr_tesseract"}
+
+    def test_unknown_engine_lane_does_not_create_ghost_queue(self):
+        """Unrecognized lane data follows the configured primary route."""
+        import coordinator.celery as celery_module
+
+        with patch.object(celery_module, "_PER_GPU_QUEUES_ENABLED", False):
+            result = celery_module._route_task(
+                "jobs.tasks.process_page",
+                None,
+                {"ocr_engine_lane": "untrusted-lane"},
+                None,
+            )
+        assert result == {"queue": "ocr_gpu"}
 
     def test_extract_entities_routes_to_cpu(self):
         """extract_entities should always route to cpu_general."""
         import coordinator.celery as celery_module
 
         result = celery_module._route_task(
-            'jobs.tasks.extract_entities', None, None, None,
+            "jobs.tasks.extract_entities",
+            None,
+            None,
+            None,
         )
-        assert result == {'queue': 'cpu_general'}
+        assert result == {"queue": "cpu_general"}
 
 
 # ===========================================================================
@@ -292,7 +361,11 @@ class TestCapabilityInference(TestCase):
     @patch("jobs.signals._detect_cpu", return_value=(16, 32768))
     @patch("jobs.signals._extract_gpu_index", return_value=0)
     def test_per_gpu_queue_infers_ocr_capability(
-        self, mock_gpuidx, mock_cpu, mock_gpu, mock_hostname,
+        self,
+        mock_gpuidx,
+        mock_cpu,
+        mock_gpu,
+        mock_hostname,
     ):
         """queues=['ocr_gpu_0'] should produce capabilities=['ocr']."""
         from jobs.signals import on_worker_ready
@@ -310,7 +383,11 @@ class TestCapabilityInference(TestCase):
     @patch("jobs.signals._detect_cpu", return_value=(16, 32768))
     @patch("jobs.signals._extract_gpu_index", return_value=None)
     def test_shared_queue_infers_ocr_capability(
-        self, mock_gpuidx, mock_cpu, mock_gpu, mock_hostname,
+        self,
+        mock_gpuidx,
+        mock_cpu,
+        mock_gpu,
+        mock_hostname,
     ):
         """queues=['ocr_gpu'] should produce capabilities=['ocr']."""
         from jobs.signals import on_worker_ready
@@ -328,7 +405,11 @@ class TestCapabilityInference(TestCase):
     @patch("jobs.signals._detect_cpu", return_value=(16, 32768))
     @patch("jobs.signals._extract_gpu_index", return_value=1)
     def test_per_gpu_queue_with_cpu_infers_both_capabilities(
-        self, mock_gpuidx, mock_cpu, mock_gpu, mock_hostname,
+        self,
+        mock_gpuidx,
+        mock_cpu,
+        mock_gpu,
+        mock_hostname,
     ):
         """queues=['ocr_gpu_1', 'cpu_general'] should produce both ocr and compress/ner."""
         from jobs.signals import on_worker_ready
@@ -351,7 +432,11 @@ class TestCapabilityInference(TestCase):
     @patch("jobs.signals._detect_cpu", return_value=(4, 8192))
     @patch("jobs.signals._extract_gpu_index", return_value=None)
     def test_unrelated_queue_no_ocr_capability(
-        self, mock_gpuidx, mock_cpu, mock_gpu, mock_hostname,
+        self,
+        mock_gpuidx,
+        mock_cpu,
+        mock_gpu,
+        mock_hostname,
     ):
         """queues=['cpu_general'] should not produce 'ocr' capability."""
         from jobs.signals import on_worker_ready

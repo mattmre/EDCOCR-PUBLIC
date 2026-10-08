@@ -22,6 +22,9 @@ _pyjwt_exceptions = None
 _httpx = None
 
 _JWKS_CACHE_TTL = 3600  # 1 hour
+_JWKS_MAX_RESPONSE_BYTES = 1 * 1024 * 1024
+_JWKS_MAX_KEYS = 64
+_JWKS_MAX_STALE_SECONDS = 2 * 3600
 
 
 def _ensure_jwt():
@@ -70,6 +73,7 @@ class JWKSCache:
         self._ttl = ttl
         self._keys: list[dict[str, Any]] = []
         self._fetched_at: float = 0.0
+        self._stale_since: float | None = None
         self._lock = threading.Lock()
 
     @property
@@ -94,15 +98,51 @@ class JWKSCache:
         try:
             resp = httpx.get(self._jwks_uri, timeout=10.0)
             resp.raise_for_status()
+            # HTTPX buffers a response before returning from ``get``.  Check
+            # both the declared and actual body sizes before invoking JSON
+            # parsing so a hostile/misconfigured issuer cannot amplify the
+            # already-buffered body into an unbounded parser/key-set load.
+            content_length = getattr(resp, "headers", {}).get("content-length")
+            try:
+                declared_length = int(content_length) if content_length else 0
+            except (TypeError, ValueError):
+                declared_length = 0
+            if declared_length > _JWKS_MAX_RESPONSE_BYTES:
+                raise ValueError("JWKS response exceeds the safety limit")
+            raw_body = getattr(resp, "content", None)
+            if (
+                isinstance(raw_body, (bytes, bytearray))
+                and len(raw_body) > _JWKS_MAX_RESPONSE_BYTES
+            ):
+                raise ValueError("JWKS response exceeds the safety limit")
             data = resp.json()
-            self._keys = data.get("keys", [])
+            if not isinstance(data, dict):
+                raise ValueError("JWKS response must be a JSON object")
+            keys = data.get("keys", [])
+            if not isinstance(keys, list) or len(keys) > _JWKS_MAX_KEYS:
+                raise ValueError("JWKS response contains too many or invalid keys")
+            if any(not isinstance(key, dict) for key in keys):
+                raise ValueError("JWKS response contains a non-object key")
+            self._keys = keys
             self._fetched_at = time.time()
+            self._stale_since = None
             logger.info(
                 "JWKS cache refreshed from %s (%d keys)",
                 self._jwks_uri,
                 len(self._keys),
             )
         except Exception:
+            if self._keys:
+                now = time.time()
+                if self._stale_since is None:
+                    self._stale_since = now
+                elif now - self._stale_since > _JWKS_MAX_STALE_SECONDS:
+                    logger.error(
+                        "JWKS cache for %s exceeded the stale-key grace window; "
+                        "refusing stale signing keys",
+                        self._jwks_uri,
+                    )
+                    self._keys = []
             logger.warning(
                 "Failed to fetch JWKS from %s — using stale cache (%d keys)",
                 self._jwks_uri,
@@ -207,8 +247,30 @@ def validate_jwt(token: str) -> dict[str, Any]:
             if key.key_id == token_kid:
                 signing_key = key
                 break
+        if signing_key is None:
+            # Post-sweep HIGH: kid present but unknown — fail closed (do not
+            # fall back to first key, which enables key-confusion attacks).
+            # Force one cache invalidate + refresh then re-check before giving up.
+            try:
+                cache.invalidate()
+                keys = cache.get_keys()
+                jwk_set = pyjwt.PyJWKSet.from_dict({"keys": keys})
+                for key in jwk_set.keys:
+                    if key.key_id == token_kid:
+                        signing_key = key
+                        break
+            except Exception:
+                signing_key = None
+            if signing_key is None:
+                raise ValueError(
+                    f"JWT kid {token_kid!r} not found in JWKS — refusing first-key fallback"
+                )
     if signing_key is None:
-        # No kid match or no kid in token — use first key
+        # No kid in token: only use first key when a single key is published
+        if len(jwk_set.keys) != 1:
+            raise ValueError(
+                "JWT missing kid and JWKS has multiple keys — refuse ambiguous key selection"
+            )
         signing_key = jwk_set.keys[0]
 
     try:

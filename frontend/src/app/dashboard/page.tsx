@@ -42,8 +42,8 @@ async function getOrNull<T>(path: string, signal: AbortSignal): Promise<T | null
   }
 }
 
-function formatNumber(n: number, fractionDigits = 0): string {
-  if (!Number.isFinite(n)) return "—";
+function formatNumber(n: number | null | undefined, fractionDigits = 0): string {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
   return n.toLocaleString(undefined, {
     maximumFractionDigits: fractionDigits,
     minimumFractionDigits: 0,
@@ -108,7 +108,7 @@ export default function DashboardPage() {
   const fleet = useAutoRefresh(fetchFleet, REFRESH_INTERVAL_MS);
   const jobs = useAutoRefresh(fetchJobs, REFRESH_INTERVAL_MS);
 
-  const refreshAll = => {
+  const refreshAll = () => {
     health.refresh();
     snapshot.refresh();
     fleet.refresh();
@@ -121,17 +121,20 @@ export default function DashboardPage() {
   const externalTranslationInfo = subsystemTone(externalTranslation);
 
   // Queue counts: prefer dashboard snapshot when present, fall back to
-  // counts from /health/detailed.
+  // counts from /health/detailed. A null source means "unknown" — never
+  // render a fabricated 0 (FE01).
   const queued =
-    snapshot.data?.jobs?.queued ?? health.data?.jobs?.["submitted"] ?? 0;
+    snapshot.data?.jobs?.queued ?? health.data?.jobs?.["submitted"] ?? null;
   const processing =
     snapshot.data?.jobs?.active ??
     health.data?.jobs?.["processing"] ??
-    0;
+    null;
   const completed =
     snapshot.data?.jobs?.completed ??
     health.data?.jobs?.["completed"] ??
-    0;
+    null;
+  const queueUnknown =
+    queued === null || processing === null || completed === null;
 
   // Throughput.
   const ppm = snapshot.data?.throughput?.pages_per_minute;
@@ -143,7 +146,11 @@ export default function DashboardPage() {
   const totalGpus = fleet.data?.gpu?.total_gpus ?? 0;
 
   // Surface the most user-actionable error (health > jobs > snapshot/fleet).
-  const fatalError = health.error ?? jobs.error;
+  // Snapshot/fleet errors must not be swallowed: a mid-session 401 on those
+  // hooks means the key was revoked, and the page must not keep rendering
+  // stale content as if authenticated (FE04).
+  const fatalError =
+    health.error ?? jobs.error ?? snapshot.error ?? fleet.error;
 
   return (
     <div className="space-y-6">
@@ -195,11 +202,15 @@ export default function DashboardPage() {
 
         <MetricCard
           label="Jobs in queue"
-          value={`${formatNumber(queued)} queued`}
+          value={queueUnknown ? "—" : `${formatNumber(queued)} queued`}
           loading={health.loading && !health.data && snapshot.loading && !snapshot.data}
-          description={`${formatNumber(processing)} processing · ${formatNumber(
-            completed
-          )} completed`}
+          description={
+            queueUnknown
+              ? "Queue counts unavailable"
+              : `${formatNumber(processing)} processing · ${formatNumber(
+                  completed
+                )} completed`
+          }
         />
 
         <MetricCard
@@ -235,7 +246,7 @@ export default function DashboardPage() {
         />
 
         <MetricCard
-          label="EXTERNAL_TRANSLATION"
+          label="EDC_TRANSLATION"
           value={externalTranslationInfo.label}
           tone={externalTranslationInfo.tone}
           loading={health.loading && !health.data}

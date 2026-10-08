@@ -46,9 +46,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-DEFAULT_REGISTRY_DIR = os.environ.get(
-    "LAYOUTLM_REGISTRY_DIR", "./models/registry"
-)
+DEFAULT_REGISTRY_DIR = os.environ.get("LAYOUTLM_REGISTRY_DIR", "./models/registry")
 
 MANIFEST_FILENAME = "manifest.json"
 
@@ -171,9 +169,7 @@ class ModelRegistry:
             name=name,
             version=version,
             model_path=str(Path(model_dir).resolve()),
-            adapter_path=(
-                str(Path(adapter_path).resolve()) if adapter_path else None
-            ),
+            adapter_path=(str(Path(adapter_path).resolve()) if adapter_path else None),
             label_set_name=label_set_name,
             created_at=now,
             metrics=metrics or {},
@@ -185,7 +181,9 @@ class ModelRegistry:
 
         logger.info(
             "Registered model %r v%s at %s",
-            name, version, new_entry.model_path,
+            name,
+            version,
+            new_entry.model_path,
         )
         return new_entry
 
@@ -247,6 +245,9 @@ class ModelRegistry:
         Returns:
             The matching :class:`ModelRegistryEntry`, or ``None`` if the
             env var is unset or the model is not found.
+
+        Claim honesty (LT-20 / S2-14): registry resolution is **not**
+        ``PROD_REAL`` proof. Weights existence alone does not promote claim tier.
         """
         active_spec = os.environ.get("LAYOUTLM_ACTIVE_MODEL", "")
         if not active_spec:
@@ -259,12 +260,36 @@ class ModelRegistry:
             version = None
 
         try:
-            return self.get_model(name, version)
+            entry = self.get_model(name, version)
         except KeyError:
             logger.warning(
-                "LAYOUTLM_ACTIVE_MODEL=%r not found in registry", active_spec,
+                "LAYOUTLM_ACTIVE_MODEL=%r not found in registry",
+                active_spec,
             )
             return None
+        # Existence-only check: refuse claim inflation when weights path missing.
+        weights = getattr(entry, "weights_path", None) or getattr(
+            entry, "model_path", None
+        )
+        if weights and not os.path.isfile(str(weights)):
+            logger.warning(
+                "LT-20: LAYOUTLM active model %r weights missing at %s — "
+                "not PROD_REAL; demoting to None",
+                active_spec,
+                weights,
+            )
+            if (os.environ.get("LAYOUTLM_REQUIRE_WEIGHTS") or "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+            ):
+                return None
+        return entry
+
+    @staticmethod
+    def claim_tier() -> str:
+        """Honest claim label for LayoutLM (LT-20) — never PROD_REAL from registry alone."""
+        return "LAB_REGISTRY_ONLY_NOT_PROD_REAL"
 
     # ------------------------------------------------------------------
     # Internal helpers

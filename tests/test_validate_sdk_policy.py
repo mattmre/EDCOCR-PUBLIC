@@ -66,7 +66,15 @@ def fake_project(tmp_path: Path) -> Path:
             "version": "1.2.0",
             "main": "dist/index.js",
             "types": "dist/index.d.ts",
-            "engines": {"node": ">=18.0.0"},
+            "engines": {"node": "^20.19.0 || >=22.12.0"},
+            "devEngines": {
+                "runtime": {
+                    "name": "node",
+                    "version": "^20.19.0 || >=22.12.0",
+                    "onFail": "error",
+                }
+            },
+            "devDependencies": {"@types/node": "^20.19.43"},
         }),
         encoding="utf-8",
     )
@@ -259,6 +267,102 @@ class TestTypescriptSdkStructure:
         result = check_typescript_sdk_structure(fake_project)
         assert not result.passed
         assert any("engines" in d.lower() for d in result.details)
+
+    def test_engines_node_18_fails(self, fake_project: Path) -> None:
+        """Legacy Node 18 floor must be rejected for the Active 1.2.x matrix."""
+        pkg = fake_project / "sdk" / "typescript" / "package.json"
+        pkg.write_text(
+            json.dumps({
+                "name": "@edcocr/sdk",
+                "version": "1.2.0",
+                "main": "dist/index.js",
+                "types": "dist/index.d.ts",
+                "engines": {"node": ">=18.0.0"},
+                "devEngines": {
+                    "runtime": {
+                        "name": "node",
+                        "version": ">=18.0.0",
+                        "onFail": "error",
+                    }
+                },
+                "devDependencies": {"@types/node": "^20.19.43"},
+            }),
+            encoding="utf-8",
+        )
+        result = check_typescript_sdk_structure(fake_project)
+        assert not result.passed
+        assert any("engines.node" in d and ">=18.0.0" in d for d in result.details)
+
+    def test_types_node_26_fails(self, fake_project: Path) -> None:
+        """@types/node major 26 must not be accepted for the Node 20 type surface."""
+        pkg = fake_project / "sdk" / "typescript" / "package.json"
+        pkg.write_text(
+            json.dumps({
+                "name": "@edcocr/sdk",
+                "version": "1.2.0",
+                "main": "dist/index.js",
+                "types": "dist/index.d.ts",
+                "engines": {"node": "^20.19.0 || >=22.12.0"},
+                "devEngines": {
+                    "runtime": {
+                        "name": "node",
+                        "version": "^20.19.0 || >=22.12.0",
+                        "onFail": "error",
+                    }
+                },
+                "devDependencies": {"@types/node": "^26.0.0"},
+            }),
+            encoding="utf-8",
+        )
+        result = check_typescript_sdk_structure(fake_project)
+        assert not result.passed
+        assert any("@types/node" in d for d in result.details)
+
+    def test_missing_dev_engines_fails(self, fake_project: Path) -> None:
+        """devEngines.runtime must be present and match engines.node."""
+        pkg = fake_project / "sdk" / "typescript" / "package.json"
+        pkg.write_text(
+            json.dumps({
+                "name": "@edcocr/sdk",
+                "version": "1.2.0",
+                "main": "dist/index.js",
+                "types": "dist/index.d.ts",
+                "engines": {"node": "^20.19.0 || >=22.12.0"},
+                "devDependencies": {"@types/node": "^20.19.43"},
+            }),
+            encoding="utf-8",
+        )
+        result = check_typescript_sdk_structure(fake_project)
+        assert not result.passed
+        assert any("devEngines" in d for d in result.details)
+
+    def test_mismatched_dev_engines_fails(self, fake_project: Path) -> None:
+        """devEngines.runtime.version must equal engines.node."""
+        pkg = fake_project / "sdk" / "typescript" / "package.json"
+        pkg.write_text(
+            json.dumps({
+                "name": "@edcocr/sdk",
+                "version": "1.2.0",
+                "main": "dist/index.js",
+                "types": "dist/index.d.ts",
+                "engines": {"node": "^20.19.0 || >=22.12.0"},
+                "devEngines": {
+                    "runtime": {
+                        "name": "node",
+                        "version": ">=18.0.0",
+                        "onFail": "error",
+                    }
+                },
+                "devDependencies": {"@types/node": "^20.19.43"},
+            }),
+            encoding="utf-8",
+        )
+        result = check_typescript_sdk_structure(fake_project)
+        assert not result.passed
+        assert any(
+            "devEngines.runtime.version must match engines.node" in d
+            for d in result.details
+        )
 
     def test_invalid_json(self, fake_project: Path) -> None:
         pkg = fake_project / "sdk" / "typescript" / "package.json"

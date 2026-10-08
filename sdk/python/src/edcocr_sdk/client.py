@@ -1,4 +1,4 @@
-"""Synchronous and asynchronous HTTP clients for the EDCOCR API.
+"""Synchronous and asynchronous HTTP clients for the OCR_LOCAL API.
 
 Usage (sync)::
 
@@ -20,8 +20,8 @@ Usage (async)::
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, Iterable, Optional, Union
@@ -48,7 +48,7 @@ from edcocr_sdk.models import (
 
 logger = logging.getLogger(__name__)
 
-SDK_VERSION = "4.1.0"
+SDK_VERSION = "4.2.0-rc.1"
 USER_AGENT = f"edcocr-sdk-python/{SDK_VERSION}"
 
 
@@ -150,7 +150,7 @@ def _build_submit_data(
 
 
 class EDCOCRClient:
-    """Synchronous Python client for the EDCOCR REST API.
+    """Synchronous Python client for the OCR_LOCAL REST API.
 
     Args:
         base_url: Root URL of the OCR API (e.g. ``http://localhost:8000``).
@@ -450,7 +450,9 @@ class EDCOCRClient:
                 handle = open(path, "rb")
                 handles.append(handle)
                 files.append(("files", (path.name, handle)))
-            resp = self.client.post("/api/v1/jobs/batch", data=data, files=files or None)
+            resp = self.client.post(
+                "/api/v1/jobs/batch", data=data, files=files or None
+            )
         finally:
             for handle in handles:
                 handle.close()
@@ -583,7 +585,7 @@ class EDCOCRClient:
 
 
 class AsyncEDCOCRClient:
-    """Asynchronous Python client for the EDCOCR REST API.
+    """Asynchronous Python client for the OCR_LOCAL REST API.
 
     Uses ``httpx.AsyncClient`` under the hood for non-blocking I/O.
 
@@ -926,9 +928,7 @@ class AsyncEDCOCRClient:
     ) -> Job:
         """Submit a file and wait for completion."""
         result = await self.submit_job(file_path=file_path, **submit_kwargs)
-        return await self.wait_for_completion(
-            result.job_id, poll_interval, timeout
-        )
+        return await self.wait_for_completion(result.job_id, poll_interval, timeout)
 
     # ------------------------------------------------------------------
     # Lifecycle

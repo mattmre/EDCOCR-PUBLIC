@@ -85,7 +85,8 @@ export function AlertsList({
 
   const total = alerts.length;
   const start = (page - 1) * pageSize;
-  const visible = useMemo( => alerts.slice(start, start + pageSize),
+  const visible = useMemo(
+    () => alerts.slice(start, start + pageSize),
     [alerts, start, pageSize]
   );
   const clock = nowMs ?? Date.now();

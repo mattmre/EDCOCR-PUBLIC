@@ -1,4 +1,4 @@
-"""Tests for compute_source_fingerprint_fast.
+"""Tests for compute_source_fingerprint_fast (maintenance review).
 
 Validates that the fast stat-based fingerprint used in the scheduler
 produces deterministic, collision-resistant IDs without reading file
@@ -128,7 +128,7 @@ class TestFastFingerprintNoFileRead:
         f.write_bytes(b"%PDF-1.4\n%%EOF\n")
 
         stat_result = os.stat(str(f))
-        with mock.patch("ocr_gpu_async.os.stat", return_value=stat_result) as mock_stat, \
+        with mock.patch("ocr_gpu_async.os.stat", return_value=stat_result) as mock_stat,\
              mock.patch("builtins.open", side_effect=AssertionError("open() must not be called")):
             fp = compute_source_fingerprint_fast(str(f))
 

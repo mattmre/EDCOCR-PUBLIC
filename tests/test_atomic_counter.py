@@ -1,4 +1,4 @@
-"""Tests for thread-safe page counter.
+"""Tests for thread-safe page counter (maintenance review).
 
 Verifies that global_pages_processed is protected by _pages_processed_lock,
 matching the established pattern used for global_docs_processed.

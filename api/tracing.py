@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 # Version import (best-effort)
 # ---------------------------------------------------------------------------
 
-_SERVICE_VERSION_DEFAULT = "4.1.0"
+_SERVICE_VERSION_DEFAULT = "1.3.0"
 try:
     from ocr_local.config.version import __version__ as _service_version
 except ImportError:
@@ -137,11 +137,13 @@ class LocalSpan:
         self.attributes[key] = value
 
     def add_event(self, name: str, attributes: Optional[Dict[str, Any]] = None) -> None:
-        self.events.append({
-            "name": name,
-            "timestamp": time.time(),
-            "attributes": attributes or {},
-        })
+        self.events.append(
+            {
+                "name": name,
+                "timestamp": time.time(),
+                "attributes": attributes or {},
+            }
+        )
 
     def set_status(self, status: SpanStatus, description: str = "") -> None:
         self.status = status
@@ -240,6 +242,39 @@ class LocalTracer:
 # ---------------------------------------------------------------------------
 
 
+def assert_otel_enable_path_policy() -> None:
+    """LT-09 / S2-13: fail-closed OTel enable-path under production.
+
+    When OTEL is enabled in production, refuse pure ``console`` exporter and
+    default localhost collector unless ``OTEL_ALLOW_LOCAL_COLLECTOR=true``.
+    """
+    dep = (os.environ.get("DEPLOYMENT_ENV") or "").strip().lower()
+    if dep not in ("production", "prod"):
+        return
+    exporter = (os.environ.get("OTEL_EXPORTER") or "console").strip().lower()
+    endpoint = (
+        os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or "http://localhost:4317"
+    ).strip()
+    allow_local = (
+        os.environ.get("OTEL_ALLOW_LOCAL_COLLECTOR") or ""
+    ).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if exporter in ("console", "none", ""):
+        raise RuntimeError(
+            "LT-09/S2-13: OTEL_ENABLED under production refuses console exporter; "
+            "set OTEL_EXPORTER=otlp and a non-local OTEL_EXPORTER_OTLP_ENDPOINT"
+        )
+    local_markers = ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
+    if any(m in endpoint for m in local_markers) and not allow_local:
+        raise RuntimeError(
+            "LT-09/S2-13: OTEL_EXPORTER_OTLP_ENDPOINT is local under production; "
+            "pin a collector host or set OTEL_ALLOW_LOCAL_COLLECTOR=true"
+        )
+
+
 def _parse_otlp_headers(raw: str) -> Dict[str, str]:
     """Parse ``OTEL_EXPORTER_OTLP_HEADERS`` value into a dict.
 
@@ -305,7 +340,8 @@ class TracingConfig:
         sampling_strategy: **Deprecated** legacy alias. Prefer *sampler*.
     """
 
-    enabled: bool = True
+    # R3-RC-07 / S2-04 posture: default OFF — opt-in only (was true theater).
+    enabled: bool = False
     service_name: str = "ocr-local-api"
     service_version: str = ""
     environment: str = "development"
@@ -342,19 +378,29 @@ class TracingConfig:
         | ``OTEL_TRACES_SAMPLER``           | ``OTEL_SAMPLING_STRATEGY``          |
         | ``OTEL_TRACES_SAMPLER_ARG``       | ``OTEL_SAMPLE_RATE``                |
         | ``OTEL_ENVIRONMENT``              | ``DEPLOYMENT_ENV``                  |
-        | ``OTEL_ENABLED``                  | (default ``true``)                  |
+        | ``OTEL_ENABLED``                  | (default ``false`` — R3-RC-07)      |
         | ``OTEL_EXPORTER``                 | (default ``console``)               |
         +-----------------------------------+-------------------------------------+
         """
-        # --- enabled ---
-        enabled = os.environ.get("OTEL_ENABLED", "true").lower() == "true"
+        # --- enabled (default false / fail-closed — R3-RC-07) ---
+        enabled = os.environ.get("OTEL_ENABLED", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        # LT-09 / S2-13: production enable-path requires non-console exporter
+        # endpoint and refuses default localhost collector without waiver.
+        if enabled:
+            assert_otel_enable_path_policy()
 
         # --- service identity ---
         service_name = os.environ.get(
-            "OTEL_SERVICE_NAME", "ocr-local-api",
+            "OTEL_SERVICE_NAME",
+            "ocr-local-api",
         )
         service_version = os.environ.get(
-            "OTEL_SERVICE_VERSION", _service_version,
+            "OTEL_SERVICE_VERSION",
+            _service_version,
         )
 
         # --- environment ---
@@ -367,7 +413,8 @@ class TracingConfig:
         # --- exporter ---
         exporter = os.environ.get("OTEL_EXPORTER", "console")
         endpoint = os.environ.get(
-            "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317",
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "http://localhost:4317",
         )
         headers = _parse_otlp_headers(
             os.environ.get("OTEL_EXPORTER_OTLP_HEADERS", ""),
@@ -381,7 +428,8 @@ class TracingConfig:
             sampler = raw_sampler
         elif legacy_strategy:
             sampler = _LEGACY_STRATEGY_MAP.get(
-                legacy_strategy, "parentbased_traceidratio",
+                legacy_strategy,
+                "parentbased_traceidratio",
             )
         else:
             sampler = "parentbased_traceidratio"
@@ -471,12 +519,14 @@ def init_tracing(config: Optional[TracingConfig] = None) -> Any:
                 sampler = ratio_sampler
 
         # --- resource ---
-        resource = Resource.create({
-            "service.name": config.service_name,
-            "service.version": config.service_version,
-            "service.namespace": "ocr-local",
-            "deployment.environment": config.environment,
-        })
+        resource = Resource.create(
+            {
+                "service.name": config.service_name,
+                "service.version": config.service_version,
+                "service.namespace": "ocr-local",
+                "deployment.environment": config.environment,
+            }
+        )
         provider = TracerProvider(resource=resource, sampler=sampler)
 
         # --- exporter ---

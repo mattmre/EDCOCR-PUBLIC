@@ -1,4 +1,4 @@
-"""Tests for output_assembler.py wiring into CLI pipeline (ocr_gpu_async.py).
+"""Tests for maintenance review: output_assembler.py wiring into CLI pipeline (ocr_gpu_async.py).
 
 Verifies that:
 - ENABLE_RETRIEVAL_OUTPUT env var is read correctly
@@ -8,8 +8,12 @@ Verifies that:
 - The --enable-retrieval-output CLI flag is registered
 """
 
+import ast
+import hashlib
 import inspect
 import os
+import threading
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -99,7 +103,7 @@ def test_finalize_doc_retrieval_output_has_exception_handler():
     idx = source.index("ENABLE_RETRIEVAL_OUTPUT and _OUTPUT_ASSEMBLER_AVAILABLE")
     retrieval_section = source[idx:]
     # Should have an except clause for the retrieval block
-    assert "Retrieval output assembly failed" in retrieval_section
+    assert "enabled retrieval output failed" in retrieval_section
 
 
 def test_parse_args_has_enable_retrieval_output():
@@ -140,12 +144,17 @@ def test_main_logs_retrieval_output_status():
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_doc(doc_id="test-doc", path="/app/ocr_source/test.pdf",
-                   output_pdf="/app/ocr_output/EXPORT/PDF/test.pdf",
-                   output_txt_dir="/app/ocr_output/EXPORT/TEXT",
-                   total_pages=2, temp_dir="/tmp/test-doc"):
+def _make_mock_doc(
+    doc_id="test-doc",
+    path="/app/ocr_source/test.pdf",
+    output_pdf="/app/ocr_output/EXPORT/PDF/test.pdf",
+    output_txt_dir="/app/ocr_output/EXPORT/TEXT",
+    total_pages=2,
+    temp_dir="/tmp/test-doc",
+):
     """Create a mock document object matching the pipeline's DocRecord pattern."""
     doc = mock.MagicMock()
+    doc.doc_id = doc_id
     doc.path = path
     doc.output_pdf = output_pdf
     doc.output_txt_dir = output_txt_dir
@@ -157,6 +166,8 @@ def _make_mock_doc(doc_id="test-doc", path="/app/ocr_source/test.pdf",
     doc.finalized = True
     doc.start_time = 0
     doc.custody_chain = None
+    doc.source_fingerprint = None
+    doc.source_authority = None
     return doc
 
 
@@ -172,11 +183,77 @@ def _make_page_data_snap(total_pages=2):
         "vertical_text": {},
         "table_fallback": {},
         "classification": {},
+        "chunk_digests": {},
     }
 
 
+def _write_checkpoint(pipe, path, *, document_id, page_num, text):
+    """Write a source-geometry-bound checkpoint for finalization."""
+    with pipe.fitz.open() as pdf:
+        page = pdf.new_page()
+        page.insert_text((72, 72), text)
+        geometry = pipe.PageGeometry.from_pdf_page(page)
+        pdf_bytes = pdf.tobytes()
+    profile = pipe._checkpoint_processing_profile(
+        actual_render_dpi=int(pipe.DPI),
+        page_routing_target="default",
+        execution_device="cpu",
+        execution_engine="PaddleOCR",
+        gpu_optimization_applied=False,
+        preprocessing_applied=False,
+    )
+    payload = pipe._embed_page_checkpoint_metadata(
+        pdf_bytes,
+        document_id=document_id,
+        page_num=page_num,
+        status=pipe.PageStatus.PADDLE,
+        ocr_method="PaddleOCR",
+        ocr_language="en",
+        ocr_confidence=0.9,
+        text_length=len(text),
+        has_text=True,
+        processing_profile=profile,
+        canonical_text=text,
+        page_geometry=geometry,
+    )
+    Path(path).write_bytes(payload)
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _prepare_finalization_case(pipe, tmp_path, total_pages):
+    source = tmp_path / "source" / "test.pdf"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    with pipe.fitz.open() as source_pdf:
+        for _ in range(total_pages):
+            source_pdf.new_page()
+        source.write_bytes(source_pdf.tobytes())
+    temp_dir = tmp_path / "chunks"
+    temp_dir.mkdir()
+    output_root = tmp_path / "output"
+    output_txt_dir = output_root / "EXPORT" / "TEXT"
+    output_txt_dir.mkdir(parents=True)
+    doc = _make_mock_doc(
+        path=str(source),
+        temp_dir=str(temp_dir),
+        output_pdf=str(output_root / "EXPORT" / "PDF" / "test.pdf"),
+        output_txt_dir=str(output_txt_dir),
+        total_pages=total_pages,
+    )
+    snap = _make_page_data_snap(total_pages)
+    for page_num in range(1, total_pages + 1):
+        checkpoint = temp_dir / f"{page_num}.pdf"
+        snap["chunk_digests"][page_num] = _write_checkpoint(
+            pipe,
+            checkpoint,
+            document_id="test-doc",
+            page_num=page_num,
+            text=snap["texts"][page_num],
+        )
+    return doc, snap
+
+
 @pytest.fixture
-def _patch_pipeline_globals():
+def _patch_pipeline_globals(tmp_path):
     """Patch pipeline globals so _finalize_doc can run without full pipeline context."""
     import ocr_gpu_async
 
@@ -207,8 +284,10 @@ def _patch_pipeline_globals():
         "_EXTRACTION_AVAILABLE": False,
         "_ROUTING_AVAILABLE": False,
         "_ENTITY_CONSOLIDATOR_AVAILABLE": False,
-        "SOURCE_FOLDER": "/app/ocr_source",
-        "OUTPUT_FOLDER": "/app/ocr_output",
+        "SOURCE_FOLDER": str(tmp_path / "source"),
+        "OUTPUT_FOLDER": str(tmp_path / "output"),
+        "fatal_pipeline_error_event": threading.Event(),
+        "finalization_abort_event": threading.Event(),
     }
     for attr, val in flag_patches.items():
         p = mock.patch.object(ocr_gpu_async, attr, val)
@@ -247,11 +326,9 @@ def _patch_pipeline_globals():
 @mock.patch("ocr_gpu_async.write_retrieval_markdown")
 @mock.patch("ocr_gpu_async.write_retrieval_json")
 @mock.patch("ocr_gpu_async.assemble_retrieval_output")
-@mock.patch("ocr_gpu_async.fitz")
 @mock.patch("ocr_gpu_async.log_failure")
 def test_finalize_doc_calls_assemble_retrieval_output(
     mock_log_failure,
-    mock_fitz,
     mock_assemble,
     mock_write_json,
     mock_write_md,
@@ -262,30 +339,7 @@ def test_finalize_doc_calls_assemble_retrieval_output(
     _finalize_doc should call assemble_retrieval_output."""
     import ocr_gpu_async
 
-    # Setup mock fitz
-    mock_pdf = mock.MagicMock()
-    mock_pdf.page_count = 2
-    mock_fitz.open.return_value = mock_pdf
-    mock_pdf.__enter__ = mock.MagicMock(return_value=mock_pdf)
-    mock_pdf.__exit__ = mock.MagicMock(return_value=False)
-
-    # Create temp chunk files
-    temp_dir = str(tmp_path / "chunks")
-    os.makedirs(temp_dir, exist_ok=True)
-    for p in range(1, 3):
-        with open(os.path.join(temp_dir, f"{p}.pdf"), "w") as f:
-            f.write("mock chunk")
-
-    output_pdf = str(tmp_path / "output.pdf")
-    output_txt_dir = str(tmp_path / "text")
-    os.makedirs(output_txt_dir, exist_ok=True)
-
-    doc = _make_mock_doc(
-        temp_dir=temp_dir,
-        output_pdf=output_pdf,
-        output_txt_dir=output_txt_dir,
-    )
-    snap = _make_page_data_snap(2)
+    doc, snap = _prepare_finalization_case(ocr_gpu_async, tmp_path, 2)
 
     # Mock the RetrievalDocument returned by assemble_retrieval_output
     mock_ret_doc = mock.MagicMock()
@@ -293,7 +347,9 @@ def test_finalize_doc_calls_assemble_retrieval_output(
     mock_ret_doc.entities = [{"type": "PERSON", "text": "John"}]
     mock_ret_doc.key_value_pairs = []
     mock_assemble.return_value = mock_ret_doc
-    mock_write_json.return_value = "/app/ocr_output/EXPORT/RETRIEVAL/test.retrieval.json"
+    mock_write_json.return_value = (
+        "/app/ocr_output/EXPORT/RETRIEVAL/test.retrieval.json"
+    )
     mock_write_md.return_value = "/app/ocr_output/EXPORT/RETRIEVAL/test.retrieval.md"
 
     ocr_gpu_async._finalize_doc(doc, "test-doc", snap)
@@ -311,11 +367,9 @@ def test_finalize_doc_calls_assemble_retrieval_output(
     mock_write_md.assert_called_once()
 
 
-@mock.patch("ocr_gpu_async.fitz")
 @mock.patch("ocr_gpu_async.log_failure")
 def test_finalize_doc_skips_retrieval_when_disabled(
     mock_log_failure,
-    mock_fitz,
     _patch_pipeline_globals,
     tmp_path,
 ):
@@ -325,27 +379,7 @@ def test_finalize_doc_skips_retrieval_when_disabled(
 
     # Override the retrieval flag to False
     with mock.patch.object(ocr_gpu_async, "ENABLE_RETRIEVAL_OUTPUT", False):
-        mock_pdf = mock.MagicMock()
-        mock_pdf.page_count = 1
-        mock_fitz.open.return_value = mock_pdf
-        mock_pdf.__enter__ = mock.MagicMock(return_value=mock_pdf)
-        mock_pdf.__exit__ = mock.MagicMock(return_value=False)
-
-        temp_dir = str(tmp_path / "chunks")
-        os.makedirs(temp_dir, exist_ok=True)
-        with open(os.path.join(temp_dir, "1.pdf"), "w") as f:
-            f.write("mock")
-
-        output_txt_dir = str(tmp_path / "text")
-        os.makedirs(output_txt_dir, exist_ok=True)
-
-        doc = _make_mock_doc(
-            temp_dir=temp_dir,
-            output_pdf=str(tmp_path / "out.pdf"),
-            output_txt_dir=output_txt_dir,
-            total_pages=1,
-        )
-        snap = _make_page_data_snap(1)
+        doc, snap = _prepare_finalization_case(ocr_gpu_async, tmp_path, 1)
 
         with mock.patch.object(
             ocr_gpu_async, "assemble_retrieval_output"
@@ -354,11 +388,9 @@ def test_finalize_doc_skips_retrieval_when_disabled(
             mock_assemble.assert_not_called()
 
 
-@mock.patch("ocr_gpu_async.fitz")
 @mock.patch("ocr_gpu_async.log_failure")
 def test_finalize_doc_skips_retrieval_when_module_unavailable(
     mock_log_failure,
-    mock_fitz,
     _patch_pipeline_globals,
     tmp_path,
 ):
@@ -367,27 +399,7 @@ def test_finalize_doc_skips_retrieval_when_module_unavailable(
     import ocr_gpu_async
 
     with mock.patch.object(ocr_gpu_async, "_OUTPUT_ASSEMBLER_AVAILABLE", False):
-        mock_pdf = mock.MagicMock()
-        mock_pdf.page_count = 1
-        mock_fitz.open.return_value = mock_pdf
-        mock_pdf.__enter__ = mock.MagicMock(return_value=mock_pdf)
-        mock_pdf.__exit__ = mock.MagicMock(return_value=False)
-
-        temp_dir = str(tmp_path / "chunks")
-        os.makedirs(temp_dir, exist_ok=True)
-        with open(os.path.join(temp_dir, "1.pdf"), "w") as f:
-            f.write("mock")
-
-        output_txt_dir = str(tmp_path / "text")
-        os.makedirs(output_txt_dir, exist_ok=True)
-
-        doc = _make_mock_doc(
-            temp_dir=temp_dir,
-            output_pdf=str(tmp_path / "out.pdf"),
-            output_txt_dir=output_txt_dir,
-            total_pages=1,
-        )
-        snap = _make_page_data_snap(1)
+        doc, snap = _prepare_finalization_case(ocr_gpu_async, tmp_path, 1)
 
         with mock.patch.object(
             ocr_gpu_async, "assemble_retrieval_output"
@@ -399,47 +411,27 @@ def test_finalize_doc_skips_retrieval_when_module_unavailable(
 @mock.patch("ocr_gpu_async.write_retrieval_markdown")
 @mock.patch("ocr_gpu_async.write_retrieval_json")
 @mock.patch("ocr_gpu_async.assemble_retrieval_output", side_effect=RuntimeError("boom"))
-@mock.patch("ocr_gpu_async.fitz")
 @mock.patch("ocr_gpu_async.log_failure")
-def test_finalize_doc_retrieval_error_does_not_break_pipeline(
+def test_finalize_doc_retrieval_error_blocks_publication(
     mock_log_failure,
-    mock_fitz,
     mock_assemble,
     mock_write_json,
     mock_write_md,
     _patch_pipeline_globals,
     tmp_path,
 ):
-    """If assemble_retrieval_output raises an exception, the pipeline continues."""
+    """Required retrieval output failures must block transactional publication."""
     import ocr_gpu_async
 
-    mock_pdf = mock.MagicMock()
-    mock_pdf.page_count = 1
-    mock_fitz.open.return_value = mock_pdf
-    mock_pdf.__enter__ = mock.MagicMock(return_value=mock_pdf)
-    mock_pdf.__exit__ = mock.MagicMock(return_value=False)
-
-    temp_dir = str(tmp_path / "chunks")
-    os.makedirs(temp_dir, exist_ok=True)
-    with open(os.path.join(temp_dir, "1.pdf"), "w") as f:
-        f.write("mock")
-
-    output_txt_dir = str(tmp_path / "text")
-    os.makedirs(output_txt_dir, exist_ok=True)
-
-    doc = _make_mock_doc(
-        temp_dir=temp_dir,
-        output_pdf=str(tmp_path / "out.pdf"),
-        output_txt_dir=output_txt_dir,
-        total_pages=1,
-    )
-    snap = _make_page_data_snap(1)
+    doc, snap = _prepare_finalization_case(ocr_gpu_async, tmp_path, 1)
 
     # Should NOT raise; the exception should be caught and logged
     ocr_gpu_async._finalize_doc(doc, "test-doc", snap)
 
     # Verify assemble was attempted
     mock_assemble.assert_called_once()
+    assert ocr_gpu_async.fatal_pipeline_error_event.is_set()
+    assert not Path(doc.output_pdf).exists()
     # write functions should NOT have been called (exception before them)
     mock_write_json.assert_not_called()
 
@@ -495,8 +487,16 @@ def test_retrieval_output_writes_to_correct_directory():
     """Retrieval output should target EXPORT/RETRIEVAL/ subdirectory."""
     import ocr_gpu_async
 
-    source = inspect.getsource(ocr_gpu_async._finalize_doc)
-    # write_retrieval_json is called with OUTPUT_FOLDER as the output_dir,
-    # and write_retrieval_json internally creates EXPORT/RETRIEVAL/
-    assert "write_retrieval_json(ret_doc, OUTPUT_FOLDER" in source
-    assert "write_retrieval_markdown(ret_doc, OUTPUT_FOLDER" in source
+    tree = ast.parse(inspect.getsource(ocr_gpu_async._finalize_doc))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "write_retrieval_json"
+    ]
+    assert any(
+        [ast.unparse(arg) for arg in call.args[:3]]
+        == ["ret_doc", "attempt_output_root", "rel_dir"]
+        for call in calls
+    )

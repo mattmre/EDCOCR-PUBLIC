@@ -1,4 +1,4 @@
-"""Tests for the ocr_local namespace compatibility layer.
+"""Tests for the ocr_local namespace compatibility layer (maintenance review).
 
 These tests verify that:
 1. ocr_local sub-packages are importable
@@ -64,7 +64,7 @@ def test_config_subpackage_importable() -> None:
 
 
 def test_phase2_migration_complete() -> None:
-    """ Phase 2 terminal state -- all sub-packages fully migrated.
+    """maintenance review Phase 2 terminal state -- all sub-packages fully migrated.
 
     Every compat sub-package frozenset in ``_SUBPACKAGE_MODULES`` must be
     empty, every lazy-loader tuple must be an empty tuple, and each
@@ -147,7 +147,7 @@ def test_ocr_local_version() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7.  Phase 2: physically migrated modules
+# 7. maintenance review Phase 2: physically migrated modules
 # ---------------------------------------------------------------------------
 
 
@@ -1005,7 +1005,7 @@ def test_vertical_text_feature_attr_access() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 -- ml/ migrations
+# maintenance review Phase 2 -- ml/ migrations
 # ---------------------------------------------------------------------------
 # layoutlm_calibration -- Phase 2 migration tests
 # ---------------------------------------------------------------------------

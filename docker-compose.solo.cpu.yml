@@ -1,0 +1,21 @@
+# CPU SOLO + API. Requires Docker Compose >= 2.24.4.
+# bash scripts/with_runtime_source.sh root-cpu docker compose \
+#   -f docker-compose.solo.yml -f docker-compose.solo.cpu.yml \
+#   --profile api up -d --build
+services:
+  ocr-solo:
+    build:
+      dockerfile: Dockerfile
+      args:
+        MODEL_PRELOAD_LANGUAGES: ${SOLO_MODEL_PRELOAD_LANGUAGES:-}
+    environment:
+      NVIDIA_VISIBLE_DEVICES: void
+      NUM_WORKERS: ${SOLO_NUM_WORKERS:-1}
+      NUM_EXTRACTORS: ${SOLO_NUM_EXTRACTORS:-2}
+      NUM_COMPRESSORS: ${SOLO_NUM_COMPRESSORS:-1}
+      IMAGE_QUEUE_SIZE: ${SOLO_IMAGE_QUEUE_SIZE:-8}
+    shm_size: ${SOLO_SHM_SIZE:-2gb}
+    deploy:
+      resources:
+        reservations:
+          devices: !reset []

@@ -3,7 +3,7 @@ import { act, renderHook } from "@testing-library/react";
 import { useSettings } from "@/lib/hooks";
 import { SETTINGS_STORAGE_KEY, saveSettings } from "@/lib/settings-store";
 
-describe("useSettings", => {
+describe("useSettings", () => {
   beforeEach(() => {
     window.localStorage.clear();
     document.documentElement.classList.remove("theme-light", "theme-dark");
@@ -13,7 +13,7 @@ describe("useSettings", => {
     vi.restoreAllMocks();
   });
 
-  it("hydrates from localStorage on mount", => {
+  it("hydrates from localStorage on mount", () => {
     const seed = {
       schema_version: 1,
       general: { theme: "dark", timezone: "UTC", dateFormat: "us" },
@@ -40,7 +40,7 @@ describe("useSettings", => {
     expect(document.documentElement.dataset.theme).toBe("dark");
   });
 
-  it("update merges per-section without dropping other sections", => {
+  it("update merges per-section without dropping other sections", () => {
     const { result } = renderHook(() => useSettings());
     const initialTheme = result.current.settings.general.theme;
     act(() => {
@@ -50,7 +50,7 @@ describe("useSettings", => {
     expect(result.current.settings.general.theme).toBe(initialTheme);
   });
 
-  it("save persists current state and bumps lastSavedAt", => {
+  it("save persists current state and bumps lastSavedAt", () => {
     const { result } = renderHook(() => useSettings());
     act(() => {
       result.current.update({ display: { pageSize: 10 } });
@@ -67,7 +67,7 @@ describe("useSettings", => {
     expect(JSON.parse(persisted as string).display.pageSize).toBe(10);
   });
 
-  it("save returns false when localStorage throws and does not bump lastSavedAt", => {
+  it("save returns false when localStorage throws and does not bump lastSavedAt", () => {
     const { result } = renderHook(() => useSettings());
     const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new DOMException("QuotaExceededError");
@@ -81,7 +81,7 @@ describe("useSettings", => {
     spy.mockRestore();
   });
 
-  it("reset wipes localStorage and restores defaults", => {
+  it("reset wipes localStorage and restores defaults", () => {
     saveSettings({
       schema_version: 1,
       general: { theme: "dark", timezone: "UTC", dateFormat: "iso" },
@@ -111,7 +111,7 @@ describe("useSettings", => {
     expect(result.current.lastSavedAt).toBeNull();
   });
 
-  it("update of theme applies the theme to the document immediately", => {
+  it("update of theme applies the theme to the document immediately", () => {
     const { result } = renderHook(() => useSettings());
     act(() => {
       result.current.update({ general: { theme: "light" } });
@@ -123,7 +123,7 @@ describe("useSettings", => {
     expect(document.documentElement.dataset.theme).toBe("dark");
   });
 
-  it("multiple updates stack and a single save persists the merged value", => {
+  it("multiple updates stack and a single save persists the merged value", () => {
     const { result } = renderHook(() => useSettings());
     act(() => {
       result.current.update({ display: { compactMode: true } });

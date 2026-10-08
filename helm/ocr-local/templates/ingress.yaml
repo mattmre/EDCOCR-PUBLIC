@@ -30,7 +30,14 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ .Release.Name }}-coordinator
+                name: {{ required "api.enabled must be true when frontend.enabled=true" (ternary (printf "%s-api" .Release.Name) "" .Values.api.enabled) }}
+                port:
+                  number: 8000
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ required "api.enabled must be true when frontend.enabled=true" (ternary (printf "%s-api" .Release.Name) "" .Values.api.enabled) }}
                 port:
                   number: 8000
           - path: /
@@ -45,7 +52,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ .Release.Name }}-coordinator
+                name: {{ required "api.enabled must be true when frontend.enabled=false and ingress.enabled=true" (ternary (printf "%s-api" .Release.Name) "" .Values.api.enabled) }}
                 port:
                   number: 8000
           {{- end }}

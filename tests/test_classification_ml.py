@@ -89,9 +89,15 @@ class TestExtendedDocumentTypes:
     def test_new_types_present(self):
         """All 9 new types are present in the extended list."""
         new_types = {
-            "scientific_paper", "legal_filing", "email_printout",
-            "spreadsheet", "presentation", "specification",
-            "resume", "medical_record", "government_form",
+            "scientific_paper",
+            "legal_filing",
+            "email_printout",
+            "spreadsheet",
+            "presentation",
+            "specification",
+            "resume",
+            "medical_record",
+            "government_form",
         }
         extended_set = set(DOCUMENT_TYPES_EXTENDED)
         for ntype in new_types:
@@ -106,18 +112,26 @@ class TestExtendedDocumentTypes:
             if etype == "handwritten_note":
                 assert _ML_TO_BASE_TYPE.get(etype) == "handwritten"
             else:
-                assert etype in _ML_TO_BASE_TYPE, (
-                    f"Extended type {etype} missing from _ML_TO_BASE_TYPE"
-                )
-                assert _ML_TO_BASE_TYPE[etype] in base_set, (
-                    f"Mapped base type for {etype} not in DOCUMENT_TYPES"
-                )
+                assert (
+                    etype in _ML_TO_BASE_TYPE
+                ), f"Extended type {etype} missing from _ML_TO_BASE_TYPE"
+                assert (
+                    _ML_TO_BASE_TYPE[etype] in base_set
+                ), f"Mapped base type for {etype} not in DOCUMENT_TYPES"
 
     def test_base_types_unchanged(self):
         """Original DOCUMENT_TYPES list is unmodified."""
         expected = [
-            "invoice", "contract", "letter", "form", "report",
-            "memo", "receipt", "handwritten", "photograph", "other",
+            "invoice",
+            "contract",
+            "letter",
+            "form",
+            "report",
+            "memo",
+            "receipt",
+            "handwritten",
+            "photograph",
+            "other",
         ]
         assert DOCUMENT_TYPES == expected
 
@@ -169,7 +183,12 @@ class TestClassificationMode:
 
     def test_invalid_confidence_threshold_falls_back_to_default(self):
         """Invalid threshold env values should not crash module import."""
-        module_path = Path(__file__).resolve().parent.parent / "classification.py"
+        module_path = (
+            Path(__file__).resolve().parent.parent
+            / "ocr_local"
+            / "features"
+            / "classification.py"
+        )
         spec = importlib.util.spec_from_file_location(
             "classification_invalid_threshold_test",
             module_path,
@@ -205,9 +224,7 @@ class TestMLDocumentClassifier:
 
     def test_init_custom_params(self):
         """MLDocumentClassifier accepts custom model path and device."""
-        clf = MLDocumentClassifier(
-            model_path="custom/model", device="cuda"
-        )
+        clf = MLDocumentClassifier(model_path="custom/model", device="cuda")
         assert clf.model_path == "custom/model"
         assert clf.device == "cuda"
 
@@ -404,13 +421,17 @@ class TestClassifyPageHybrid:
     def test_both_agree(self):
         """Both heuristic and ML agree on invoice -- hybrid picks invoice."""
         heuristic = PageClassification(
-            page_num=1, predicted_type="invoice",
-            confidence=0.7, method="ensemble",
+            page_num=1,
+            predicted_type="invoice",
+            confidence=0.7,
+            method="ensemble",
             type_scores={"invoice": 0.7},
         )
         ml = PageClassification(
-            page_num=1, predicted_type="invoice",
-            confidence=0.9, method="ml",
+            page_num=1,
+            predicted_type="invoice",
+            confidence=0.9,
+            method="ml",
             type_scores={"invoice": 0.9},
         )
         result = classify_page_hybrid(heuristic, ml, 1)
@@ -422,12 +443,15 @@ class TestClassifyPageHybrid:
     def test_ml_below_threshold_fallback(self):
         """ML confidence below threshold -- falls back to heuristic."""
         heuristic = PageClassification(
-            page_num=1, predicted_type="letter",
-            confidence=0.6, method="ensemble",
+            page_num=1,
+            predicted_type="letter",
+            confidence=0.6,
+            method="ensemble",
             type_scores={"letter": 0.6},
         )
         ml = PageClassification(
-            page_num=1, predicted_type="contract",
+            page_num=1,
+            predicted_type="contract",
             confidence=0.3,  # Below default threshold of 0.5
             method="ml",
             type_scores={"contract": 0.3},
@@ -440,12 +464,15 @@ class TestClassifyPageHybrid:
     def test_ml_at_threshold_uses_hybrid(self):
         """ML confidence exactly at threshold -- uses hybrid weighting."""
         heuristic = PageClassification(
-            page_num=1, predicted_type="form",
-            confidence=0.5, method="ensemble",
+            page_num=1,
+            predicted_type="form",
+            confidence=0.5,
+            method="ensemble",
             type_scores={"form": 0.5},
         )
         ml = PageClassification(
-            page_num=1, predicted_type="invoice",
+            page_num=1,
+            predicted_type="invoice",
             confidence=0.5,  # Exactly at threshold
             method="ml",
             type_scores={"invoice": 0.5},
@@ -459,13 +486,17 @@ class TestClassifyPageHybrid:
     def test_disagree_ml_wins(self):
         """ML and heuristic disagree -- ML wins due to higher weight (0.7)."""
         heuristic = PageClassification(
-            page_num=1, predicted_type="letter",
-            confidence=0.8, method="ensemble",
+            page_num=1,
+            predicted_type="letter",
+            confidence=0.8,
+            method="ensemble",
             type_scores={"letter": 0.8},
         )
         ml = PageClassification(
-            page_num=1, predicted_type="contract",
-            confidence=0.8, method="ml",
+            page_num=1,
+            predicted_type="contract",
+            confidence=0.8,
+            method="ml",
             type_scores={"contract": 0.8},
         )
         result = classify_page_hybrid(heuristic, ml, 1)
@@ -476,13 +507,17 @@ class TestClassifyPageHybrid:
     def test_extended_type_mapped_to_base(self):
         """ML returns extended type -- gets mapped to base type in hybrid."""
         heuristic = PageClassification(
-            page_num=1, predicted_type="report",
-            confidence=0.5, method="ensemble",
+            page_num=1,
+            predicted_type="report",
+            confidence=0.5,
+            method="ensemble",
             type_scores={"report": 0.5},
         )
         ml = PageClassification(
-            page_num=1, predicted_type="scientific_paper",
-            confidence=0.8, method="ml",
+            page_num=1,
+            predicted_type="scientific_paper",
+            confidence=0.8,
+            method="ml",
             type_scores={"scientific_paper": 0.8},
         )
         result = classify_page_hybrid(heuristic, ml, 1)
@@ -519,13 +554,17 @@ class TestClassifyPageHybrid:
     def test_type_scores_merged(self):
         """Type scores from both sources are merged with weights."""
         heuristic = PageClassification(
-            page_num=1, predicted_type="invoice",
-            confidence=0.6, method="ensemble",
+            page_num=1,
+            predicted_type="invoice",
+            confidence=0.6,
+            method="ensemble",
             type_scores={"invoice": 0.6, "receipt": 0.3},
         )
         ml = PageClassification(
-            page_num=1, predicted_type="invoice",
-            confidence=0.8, method="ml",
+            page_num=1,
+            predicted_type="invoice",
+            confidence=0.8,
+            method="ml",
             type_scores={"invoice": 0.8},
         )
         result = classify_page_hybrid(heuristic, ml, 1)
@@ -539,13 +578,17 @@ class TestClassifyPageHybrid:
     def test_empty_heuristic_scores(self):
         """Heuristic has no scores -- ML scores dominate."""
         heuristic = PageClassification(
-            page_num=1, predicted_type="other",
-            confidence=0.0, method="ensemble",
+            page_num=1,
+            predicted_type="other",
+            confidence=0.0,
+            method="ensemble",
             type_scores={},
         )
         ml = PageClassification(
-            page_num=1, predicted_type="invoice",
-            confidence=0.9, method="ml",
+            page_num=1,
+            predicted_type="invoice",
+            confidence=0.9,
+            method="ml",
             type_scores={"invoice": 0.9},
         )
         result = classify_page_hybrid(heuristic, ml, 1)
@@ -556,13 +599,17 @@ class TestClassifyPageHybrid:
     def test_both_zero_confidence(self):
         """Both zero confidence -- ML below threshold, falls back to heuristic."""
         heuristic = PageClassification(
-            page_num=1, predicted_type="other",
-            confidence=0.0, method="ensemble",
+            page_num=1,
+            predicted_type="other",
+            confidence=0.0,
+            method="ensemble",
             type_scores={},
         )
         ml = PageClassification(
-            page_num=1, predicted_type="other",
-            confidence=0.0, method="ml",
+            page_num=1,
+            predicted_type="other",
+            confidence=0.0,
+            method="ml",
             type_scores={},
         )
         result = classify_page_hybrid(heuristic, ml, 1)
@@ -572,13 +619,17 @@ class TestClassifyPageHybrid:
     def test_page_num_preserved(self):
         """Page number is correctly preserved in hybrid result."""
         heuristic = PageClassification(
-            page_num=42, predicted_type="form",
-            confidence=0.5, method="ensemble",
+            page_num=42,
+            predicted_type="form",
+            confidence=0.5,
+            method="ensemble",
             type_scores={"form": 0.5},
         )
         ml = PageClassification(
-            page_num=42, predicted_type="form",
-            confidence=0.7, method="ml",
+            page_num=42,
+            predicted_type="form",
+            confidence=0.7,
+            method="ml",
             type_scores={"form": 0.7},
         )
         result = classify_page_hybrid(heuristic, ml, 42)
@@ -600,22 +651,22 @@ class TestEnsembleModeRouting:
             cls_mod.CLASSIFICATION_MODE = "heuristic"
 
             text_result = PageClassification(
-                page_num=1, predicted_type="invoice",
-                confidence=0.7, method="text_rules",
+                page_num=1,
+                predicted_type="invoice",
+                confidence=0.7,
+                method="text_rules",
                 type_scores={"invoice": 0.7},
             )
             layout_result = PageClassification(
-                page_num=1, predicted_type="form",
-                confidence=0.5, method="layout_features",
+                page_num=1,
+                predicted_type="form",
+                confidence=0.5,
+                method="layout_features",
                 type_scores={"form": 0.5},
             )
 
-            ensemble_result = classify_page_ensemble(
-                text_result, layout_result, 1
-            )
-            heuristic_result = _heuristic_ensemble(
-                text_result, layout_result, 1
-            )
+            ensemble_result = classify_page_ensemble(text_result, layout_result, 1)
+            heuristic_result = _heuristic_ensemble(text_result, layout_result, 1)
 
             assert ensemble_result.predicted_type == heuristic_result.predicted_type
             assert ensemble_result.confidence == heuristic_result.confidence
@@ -633,14 +684,14 @@ class TestEnsembleModeRouting:
             cls_mod.CLASSIFICATION_MODE = "ml"
 
             mock_ml.return_value = PageClassification(
-                page_num=1, predicted_type="contract",
-                confidence=0.85, method="ml",
+                page_num=1,
+                predicted_type="contract",
+                confidence=0.85,
+                method="ml",
                 type_scores={"contract": 0.85},
             )
 
-            result = classify_page_ensemble(
-                None, None, 1, text="Agreement hereby"
-            )
+            result = classify_page_ensemble(None, None, 1, text="Agreement hereby")
             assert result.predicted_type == "contract"
             assert result.confidence == 0.85
             mock_ml.assert_called_once()
@@ -657,20 +708,22 @@ class TestEnsembleModeRouting:
             cls_mod.CLASSIFICATION_MODE = "ml"
 
             mock_ml.return_value = PageClassification(
-                page_num=1, predicted_type="other",
-                confidence=0.0, method="ml",
+                page_num=1,
+                predicted_type="other",
+                confidence=0.0,
+                method="ml",
                 type_scores={},
             )
 
             text_result = PageClassification(
-                page_num=1, predicted_type="invoice",
-                confidence=0.6, method="text_rules",
+                page_num=1,
+                predicted_type="invoice",
+                confidence=0.6,
+                method="text_rules",
                 type_scores={"invoice": 0.6},
             )
 
-            result = classify_page_ensemble(
-                text_result, None, 1, text="Invoice #123"
-            )
+            result = classify_page_ensemble(text_result, None, 1, text="Invoice #123")
             # Should fall back to heuristic
             assert result.predicted_type == "invoice"
             assert result.method == "ensemble"  # from _heuristic_ensemble
@@ -688,25 +741,29 @@ class TestEnsembleModeRouting:
             cls_mod.CLASSIFICATION_MODE = "ensemble"
 
             mock_ml.return_value = PageClassification(
-                page_num=1, predicted_type="invoice",
-                confidence=0.8, method="ml",
+                page_num=1,
+                predicted_type="invoice",
+                confidence=0.8,
+                method="ml",
                 type_scores={"invoice": 0.8},
             )
             mock_hybrid.return_value = PageClassification(
-                page_num=1, predicted_type="invoice",
-                confidence=0.75, method="hybrid",
+                page_num=1,
+                predicted_type="invoice",
+                confidence=0.75,
+                method="hybrid",
                 type_scores={"invoice": 0.75},
             )
 
             text_result = PageClassification(
-                page_num=1, predicted_type="invoice",
-                confidence=0.6, method="text_rules",
+                page_num=1,
+                predicted_type="invoice",
+                confidence=0.6,
+                method="text_rules",
                 type_scores={"invoice": 0.6},
             )
 
-            result = classify_page_ensemble(
-                text_result, None, 1, text="Invoice text"
-            )
+            result = classify_page_ensemble(text_result, None, 1, text="Invoice text")
 
             mock_ml.assert_called_once()
             mock_hybrid.assert_called_once()
@@ -723,8 +780,10 @@ class TestEnsembleModeRouting:
             cls_mod.CLASSIFICATION_MODE = "invalid_mode"
 
             text_result = PageClassification(
-                page_num=1, predicted_type="letter",
-                confidence=0.5, method="text_rules",
+                page_num=1,
+                predicted_type="letter",
+                confidence=0.5,
+                method="text_rules",
                 type_scores={"letter": 0.5},
             )
 
@@ -842,7 +901,11 @@ class TestGracefulDegradation:
         clf = MLDocumentClassifier()
 
         # Mock the import to fail
-        original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+        original_import = (
+            __builtins__.__import__
+            if hasattr(__builtins__, "__import__")
+            else __import__
+        )
 
         def mock_import(name, *args, **kwargs):
             if name in ("torch", "transformers"):
@@ -909,16 +972,13 @@ class TestBackwardCompatibility:
         doc = DocumentClassification(document_id="d2", source_file="test.pdf")
         doc.pages = [
             PageClassification(
-                page_num=1, predicted_type="invoice",
-                confidence=0.8, method="hybrid"
+                page_num=1, predicted_type="invoice", confidence=0.8, method="hybrid"
             ),
             PageClassification(
-                page_num=2, predicted_type="contract",
-                confidence=0.6, method="hybrid"
+                page_num=2, predicted_type="contract", confidence=0.6, method="hybrid"
             ),
             PageClassification(
-                page_num=3, predicted_type="invoice",
-                confidence=0.7, method="hybrid"
+                page_num=3, predicted_type="invoice", confidence=0.7, method="hybrid"
             ),
         ]
         result = finalize_classification(doc)
@@ -938,13 +998,16 @@ class TestJsonEngineLabelML:
         doc = DocumentClassification(document_id="ml1", source_file="t.pdf")
         doc.pages = [
             PageClassification(
-                page_num=1, predicted_type="invoice",
-                confidence=0.8, method="ml",
+                page_num=1,
+                predicted_type="invoice",
+                confidence=0.8,
+                method="ml",
             ),
         ]
         doc = finalize_classification(doc)
         path = write_classification_json(doc, str(tmp_path), "", "0.9.0")
         import json
+
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         assert data["processing"]["classification_engine"] == "ml"
@@ -954,37 +1017,51 @@ class TestJsonEngineLabelML:
         doc = DocumentClassification(document_id="h1", source_file="t.pdf")
         doc.pages = [
             PageClassification(
-                page_num=1, predicted_type="invoice",
-                confidence=0.8, method="hybrid",
+                page_num=1,
+                predicted_type="invoice",
+                confidence=0.8,
+                method="hybrid",
             ),
         ]
         doc = finalize_classification(doc)
         path = write_classification_json(doc, str(tmp_path), "", "0.9.0")
         import json
+
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        assert data["processing"]["classification_engine"] == "text_rules+layout_features+ml"
+        assert (
+            data["processing"]["classification_engine"]
+            == "text_rules+layout_features+ml"
+        )
 
     def test_mixed_methods_engine_label(self, tmp_path):
         """Pages with mix of heuristic and ML methods produce correct label."""
         doc = DocumentClassification(document_id="mix1", source_file="t.pdf")
         doc.pages = [
             PageClassification(
-                page_num=1, predicted_type="invoice",
-                confidence=0.8, method="text_rules",
+                page_num=1,
+                predicted_type="invoice",
+                confidence=0.8,
+                method="text_rules",
             ),
             PageClassification(
-                page_num=2, predicted_type="contract",
-                confidence=0.7, method="hybrid",
+                page_num=2,
+                predicted_type="contract",
+                confidence=0.7,
+                method="hybrid",
             ),
         ]
         doc = finalize_classification(doc)
         path = write_classification_json(doc, str(tmp_path), "", "0.9.0")
         import json
+
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         # "hybrid" takes priority
-        assert data["processing"]["classification_engine"] == "text_rules+layout_features+ml"
+        assert (
+            data["processing"]["classification_engine"]
+            == "text_rules+layout_features+ml"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -996,13 +1073,17 @@ class TestHeuristicEnsemble:
     def test_text_and_layout_agree(self):
         """Extracted _heuristic_ensemble matches old classify_page_ensemble behavior."""
         text_result = PageClassification(
-            page_num=1, predicted_type="invoice",
-            confidence=0.6, method="text_rules",
+            page_num=1,
+            predicted_type="invoice",
+            confidence=0.6,
+            method="text_rules",
             type_scores={"invoice": 0.6},
         )
         layout_result = PageClassification(
-            page_num=1, predicted_type="invoice",
-            confidence=0.7, method="layout_features",
+            page_num=1,
+            predicted_type="invoice",
+            confidence=0.7,
+            method="layout_features",
             type_scores={"invoice": 0.7},
         )
         result = _heuristic_ensemble(text_result, layout_result, 1)
@@ -1012,8 +1093,10 @@ class TestHeuristicEnsemble:
     def test_none_text_result(self):
         """_heuristic_ensemble handles None text_result."""
         layout_result = PageClassification(
-            page_num=1, predicted_type="form",
-            confidence=0.6, method="layout_features",
+            page_num=1,
+            predicted_type="form",
+            confidence=0.6,
+            method="layout_features",
             type_scores={"form": 0.6},
         )
         result = _heuristic_ensemble(None, layout_result, 1)
@@ -1023,8 +1106,10 @@ class TestHeuristicEnsemble:
     def test_none_layout_fallback(self):
         """_heuristic_ensemble falls back to text when layout is None."""
         text_result = PageClassification(
-            page_num=1, predicted_type="letter",
-            confidence=0.5, method="text_rules",
+            page_num=1,
+            predicted_type="letter",
+            confidence=0.5,
+            method="text_rules",
             type_scores={"letter": 0.5},
         )
         result = _heuristic_ensemble(text_result, None, 1)

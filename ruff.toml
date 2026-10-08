@@ -1,4 +1,4 @@
-# Ruff configuration for EDCOCR
+# Ruff configuration for OCR_LOCAL
 # https://docs.astral.sh/ruff/
 
 [lint]
@@ -19,6 +19,9 @@ ignore = [
 "OCRLOCAL.py" = ["E", "F", "W", "I"]
 # legacy sync pipelines are frozen compatibility code
 "legacy/*.py" = ["E", "F", "W", "I"]
+# These fixtures intentionally contain undefined names and secret-shaped tokens
+# so the workspace-hygiene scanner can prove that it catches malformed source.
+"**/tests/fixtures/workspace_hygiene/_generated/**/*.py" = ["F821"]
 
 [lint.isort]
 known-first-party = ["optimize_pdfs", "download_models", "OCR_GPU", "ocr_gpu_async", "OCRLOCAL", "custody", "dpi_escalation", "ner", "preprocessing", "advanced_preprocessing", "validation", "ocr_distributed", "ocr_inference_backend", "engine_selection", "benchmark_ocr", "benchmark_signature", "paddle_compat", "classification", "semantic_extraction", "file_watcher", "file_watcher_config", "format_loaders", "trocr_recognition", "unicode_utils", "font_selector", "easyocr_engine", "handwriting", "language_config", "vertical_text", "signature_verification", "table_fallback", "version", "cost_tracking", "sla_monitoring", "specialist_routing", "routing", "relationship_extraction", "entity_consolidator", "barcode_extraction", "barcode_pipeline", "omr_detection", "symbology_extraction", "vlm_config", "vlm_gateway", "failover_drill", "validate_keda", "credential_manager", "credential_audit", "validate_cjk_vertical", "layoutlm_structure", "layoutlm_labels", "layoutlm_data", "layoutlm_finetune", "layoutlm_evaluate", "layoutlm_model_registry", "layoutlm_calibration", "layoutlm_summarization", "api_versioning", "security_scan", "benchmark_comparison", "docker_optimize", "rc_validation", "release_gate", "dashboard", "fleet_status", "queue_alerting", "analytics", "python_client", "sdk", "typescript_sdk", "edcocr_sdk", "cloud_storage", "event_bus", "tracing", "adaptive_batch", "page_cache", "gpu_optimization", "page_routing", "migration_validator", "corpus_validator", "redis_sentinel_drill", "pg_backup_validation", "embedding_service", "profiling", "ocr_metrics", "release_evidence", "validate_topology", "ha_proof", "support_bundle", "env_preflight", "upgrade_readiness"]

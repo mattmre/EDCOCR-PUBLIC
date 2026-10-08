@@ -1,6 +1,6 @@
 {{- if and .Values.federation.enabled .Values.federation.mtls.enabled (not .Values.federation.mtls.caRef) }}
 # =============================================================================
-# Federation mTLS — bootstrap Issuer (item C8)
+# Federation mTLS — bootstrap Issuer (Plan C Phase 1, item C8)
 #
 # Self-signed bootstrap Issuer used to mint the federation root CA Certificate
 # that subsequent leaf certs (coordinator, rabbitmq, peer client) are issued

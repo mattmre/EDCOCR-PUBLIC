@@ -1,5 +1,5 @@
 """
-Distributed Pipeline Scale Testing Framework for EDCOCR.
+Distributed Pipeline Scale Testing Framework for OCR_LOCAL.
 
 Validates the coordinator + worker architecture under load by generating
 synthetic PDF corpora, submitting jobs, monitoring completion, and
@@ -53,11 +53,11 @@ CORPUS_PROFILES = {
 
 # Simulate mode timing distributions (milliseconds per page)
 # Based on distributed overhead estimates
-SIM_INGEST_MS = (100, 300)        # File copy to NFS + DB record creation
+SIM_INGEST_MS = (100, 300)  # File copy to NFS + DB record creation
 SIM_OCR_PER_PAGE_MS = (200, 600)  # PaddleOCR on GPU worker
-SIM_ASSEMBLY_MS = (50, 150)       # PDF merge + text concatenation
-SIM_COMPRESS_MS = (40, 120)       # Ghostscript per-page
-SIM_NER_MS = (20, 80)             # spaCy entity extraction
+SIM_ASSEMBLY_MS = (50, 150)  # PDF merge + text concatenation
+SIM_COMPRESS_MS = (40, 120)  # Ghostscript per-page
+SIM_NER_MS = (20, 80)  # spaCy entity extraction
 SIM_FANOUT_OVERHEAD_MS = (200, 500)  # Chord setup + callback overhead
 
 # Fan-out threshold matching coordinator/jobs/tasks.py
@@ -75,6 +75,7 @@ DEFAULT_CONFIG = {
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class WorkerStats:
@@ -143,6 +144,7 @@ class ScaleTestResult:
 # Synthetic PDF corpus generation
 # ---------------------------------------------------------------------------
 
+
 def _minimal_pdf_bytes(num_pages):
     """Generate a minimal valid PDF with the given number of pages.
 
@@ -210,9 +212,7 @@ def _minimal_pdf_bytes(num_pages):
         parts.append(f"{offset:010d} 00000 n \n".encode())
 
     parts.append(b"trailer\n")
-    parts.append(
-        f"<< /Size {len(objects) + 1} /Root 1 0 R >>\n".encode()
-    )
+    parts.append(f"<< /Size {len(objects) + 1} /Root 1 0 R >>\n".encode())
     parts.append(b"startxref\n")
     parts.append(f"{xref_offset}\n".encode())
     parts.append(b"%%EOF\n")
@@ -261,12 +261,14 @@ def generate_corpus(num_jobs, output_dir, seed=None):
         with open(filepath, "wb") as f:
             f.write(pdf_bytes)
 
-        corpus.append({
-            "path": filepath,
-            "pages": num_pages,
-            "size_category": category,
-            "size_bytes": len(pdf_bytes),
-        })
+        corpus.append(
+            {
+                "path": filepath,
+                "pages": num_pages,
+                "size_category": category,
+                "size_bytes": len(pdf_bytes),
+            }
+        )
 
     return corpus
 
@@ -293,6 +295,7 @@ def corpus_summary(corpus):
 # ---------------------------------------------------------------------------
 # Simulate mode
 # ---------------------------------------------------------------------------
+
 
 def _sample_ms(low_high):
     """Draw a random sample from a uniform distribution (ms)."""
@@ -391,8 +394,12 @@ def simulate_distributed(num_jobs=20, num_workers=1, config=None, seed=None):
         ner_ms = _sample_ms(SIM_NER_MS)
 
         total_job_ms = (
-            ingest_ms + fanout_overhead_ms + effective_ocr_ms
-            + assembly_ms + compress_ms + ner_ms
+            ingest_ms
+            + fanout_overhead_ms
+            + effective_ocr_ms
+            + assembly_ms
+            + compress_ms
+            + ner_ms
         )
 
         # Simulate occasional failures (2% rate)
@@ -436,14 +443,20 @@ def simulate_distributed(num_jobs=20, num_workers=1, config=None, seed=None):
         pages = worker_page_counts[worker_name]
         times = worker_page_times[worker_name]
         avg_time = statistics.mean(times) if times else 0.0
-        worker_ppm = (pages / result.duration_seconds) * 60 if result.duration_seconds > 0 else 0.0
-        result.per_worker_stats.append(WorkerStats(
-            hostname=worker_name,
-            pages_processed=pages,
-            tasks_completed=pages,
-            avg_page_time_ms=avg_time,
-            ppm=worker_ppm,
-        ).to_dict())
+        worker_ppm = (
+            (pages / result.duration_seconds) * 60
+            if result.duration_seconds > 0
+            else 0.0
+        )
+        result.per_worker_stats.append(
+            WorkerStats(
+                hostname=worker_name,
+                pages_processed=pages,
+                tasks_completed=pages,
+                avg_page_time_ms=avg_time,
+                ppm=worker_ppm,
+            ).to_dict()
+        )
 
     # Corpus info
     result.corpus_info = {
@@ -451,7 +464,9 @@ def simulate_distributed(num_jobs=20, num_workers=1, config=None, seed=None):
         "total_pages": total_pages,
         "avg_pages_per_doc": total_pages / num_jobs if num_jobs > 0 else 0,
         "fanout_count": sum(1 for m in corpus_meta if m["pages"] > FANOUT_THRESHOLD),
-        "single_worker_count": sum(1 for m in corpus_meta if m["pages"] <= FANOUT_THRESHOLD),
+        "single_worker_count": sum(
+            1 for m in corpus_meta if m["pages"] <= FANOUT_THRESHOLD
+        ),
     }
 
     if failed > 0:
@@ -464,15 +479,23 @@ def simulate_distributed(num_jobs=20, num_workers=1, config=None, seed=None):
 # Live mode (requires Django coordinator stack)
 # ---------------------------------------------------------------------------
 
+
 def _setup_django():
     """Initialize Django settings for ORM access."""
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "coordinator.coordinator.settings")
     import django
+
     django.setup()
 
 
-def live_distributed(num_jobs=20, corpus_dir=None, config=None, poll_interval=2.0,
-                     timeout=3600, seed=None):
+def live_distributed(
+    num_jobs=20,
+    corpus_dir=None,
+    config=None,
+    poll_interval=2.0,
+    timeout=3600,
+    seed=None,
+):
     """Run a live scale test against the distributed coordinator.
 
     Generates a synthetic corpus, submits jobs via Celery, monitors
@@ -511,8 +534,10 @@ def live_distributed(num_jobs=20, corpus_dir=None, config=None, poll_interval=2.
         corpus_info=corpus_info,
     )
 
-    print(f"Corpus generated: {corpus_info['total_documents']} docs, "
-          f"{corpus_info['total_pages']} pages")
+    print(
+        f"Corpus generated: {corpus_info['total_documents']} docs, "
+        f"{corpus_info['total_pages']} pages"
+    )
 
     # Submit all jobs — create Job records first, then dispatch via Celery
     job_ids = []
@@ -521,7 +546,7 @@ def live_distributed(num_jobs=20, corpus_dir=None, config=None, poll_interval=2.
             source_file=doc["path"],
             status=Job.Status.SUBMITTED,
         )
-        ingest_document.delay(str(job.job_id))
+        ingest_document.delay(str(job.job_id), tenant_id=str(job.tenant_id or ""))
         job_ids.append(job.job_id)
     print(f"Submitted {len(job_ids)} jobs")
 
@@ -540,8 +565,12 @@ def live_distributed(num_jobs=20, corpus_dir=None, config=None, poll_interval=2.
 
         done_count = sum(1 for s in statuses if s in terminal_statuses)
         in_progress = len(statuses) - done_count
-        print(f"\r  [{elapsed:.0f}s] {done_count}/{len(job_ids)} done, "
-              f"{in_progress} in progress", end="", flush=True)
+        print(
+            f"\r  [{elapsed:.0f}s] {done_count}/{len(job_ids)} done, "
+            f"{in_progress} in progress",
+            end="",
+            flush=True,
+        )
 
         if done_count >= len(job_ids):
             break
@@ -587,9 +616,7 @@ def live_distributed(num_jobs=20, corpus_dir=None, config=None, poll_interval=2.
         result.fleet_ppm = (result.pages_processed / result.duration_seconds) * 60
 
     # Per-worker stats — only workers that participated in this test run
-    active_hostnames = page_results.values_list(
-        "worker_hostname", flat=True
-    ).distinct()
+    active_hostnames = page_results.values_list("worker_hostname", flat=True).distinct()
     workers = Worker.objects.filter(hostname__in=active_hostnames)
     for worker in workers:
         worker_pages = page_results.filter(
@@ -600,16 +627,22 @@ def live_distributed(num_jobs=20, corpus_dir=None, config=None, poll_interval=2.
         times = list(worker_pages.values_list("processing_time_ms", flat=True))
         if times:
             avg_time = statistics.mean(times)
-        w_ppm = (page_count / result.duration_seconds) * 60 if result.duration_seconds > 0 else 0.0
+        w_ppm = (
+            (page_count / result.duration_seconds) * 60
+            if result.duration_seconds > 0
+            else 0.0
+        )
 
-        result.per_worker_stats.append(WorkerStats(
-            hostname=worker.hostname,
-            pages_processed=page_count,
-            tasks_completed=worker.tasks_completed,
-            tasks_failed=worker.tasks_failed,
-            avg_page_time_ms=avg_time,
-            ppm=w_ppm,
-        ).to_dict())
+        result.per_worker_stats.append(
+            WorkerStats(
+                hostname=worker.hostname,
+                pages_processed=page_count,
+                tasks_completed=worker.tasks_completed,
+                tasks_failed=worker.tasks_failed,
+                avg_page_time_ms=avg_time,
+                ppm=w_ppm,
+            ).to_dict()
+        )
 
     # Error summary
     error_messages = list(
@@ -631,8 +664,8 @@ def live_distributed(num_jobs=20, corpus_dir=None, config=None, poll_interval=2.
 # Crash recovery test
 # ---------------------------------------------------------------------------
 
-def crash_recovery_test(corpus_dir=None, config=None, poll_interval=2.0,
-                        timeout=600):
+
+def crash_recovery_test(corpus_dir=None, config=None, poll_interval=2.0, timeout=600):
     """Test worker crash recovery by killing a worker during processing.
 
     Submits a large document (100+ pages) that triggers chord fan-out,
@@ -678,7 +711,7 @@ def crash_recovery_test(corpus_dir=None, config=None, poll_interval=2.0,
         source_file=large_pdf_path,
         status=Job.Status.SUBMITTED,
     )
-    ingest_document.delay(str(job.job_id))
+    ingest_document.delay(str(job.job_id), tenant_id=str(job.tenant_id or ""))
 
     start_time = time.monotonic()
     terminal_statuses = {"completed", "failed", "cancelled"}
@@ -694,9 +727,7 @@ def crash_recovery_test(corpus_dir=None, config=None, poll_interval=2.0,
 
         job.refresh_from_db()
         if job.status in ("processing", "assembling"):
-            pages_done = PageResult.objects.filter(
-                job=job, status="completed"
-            ).count()
+            pages_done = PageResult.objects.filter(job=job, status="completed").count()
             print(f"\n  Job is {job.status} ({pages_done} pages done)")
             print("  *** NOW: Kill a worker with 'docker kill <worker_container>' ***")
             print("  Monitoring for completion/retry...")
@@ -711,11 +742,12 @@ def crash_recovery_test(corpus_dir=None, config=None, poll_interval=2.0,
             break
 
         job.refresh_from_db()
-        pages_done = PageResult.objects.filter(
-            job=job, status="completed"
-        ).count()
-        print(f"\r  [{elapsed:.0f}s] Status: {job.status}, "
-              f"Pages: {pages_done}/100", end="", flush=True)
+        pages_done = PageResult.objects.filter(job=job, status="completed").count()
+        print(
+            f"\r  [{elapsed:.0f}s] Status: {job.status}, "  f"Pages: {pages_done}/100",
+            end="",
+            flush=True,
+        )
 
         if job.status in terminal_statuses:
             break
@@ -735,8 +767,7 @@ def crash_recovery_test(corpus_dir=None, config=None, poll_interval=2.0,
         print(f"  PASS: Job completed with {result.pages_processed}/100 pages")
     else:
         result.failed_jobs = 1
-        result.error_summary = {"final_status": job.status,
-                                "error": job.error_message}
+        result.error_summary = {"final_status": job.status, "error": job.error_message}
         print(f"  RESULT: Job ended with status '{job.status}'")
 
     return result
@@ -745,6 +776,7 @@ def crash_recovery_test(corpus_dir=None, config=None, poll_interval=2.0,
 # ---------------------------------------------------------------------------
 # Results persistence
 # ---------------------------------------------------------------------------
+
 
 def save_results(result, results_dir=None):
     """Save a ScaleTestResult to JSON.
@@ -813,6 +845,7 @@ def find_latest_result(results_dir=None):
 # Report generation
 # ---------------------------------------------------------------------------
 
+
 def generate_report(result):
     """Generate a human-readable text report from a ScaleTestResult.
 
@@ -852,13 +885,15 @@ def generate_report(result):
 
     # Corpus info
     if result.corpus_info:
-        lines.extend([
-            "",
-            "  Corpus:",
-            f"    Documents:      {result.corpus_info.get('total_documents', 'N/A')}",
-            f"    Total Pages:    {result.corpus_info.get('total_pages', 'N/A')}",
-            f"    Avg Pages/Doc:  {result.corpus_info.get('avg_pages_per_doc', 0):.1f}",
-        ])
+        lines.extend(
+            [
+                "",
+                "  Corpus:",
+                f"    Documents:      {result.corpus_info.get('total_documents', 'N/A')}",
+                f"    Total Pages:    {result.corpus_info.get('total_pages', 'N/A')}",
+                f"    Avg Pages/Doc:  {result.corpus_info.get('avg_pages_per_doc', 0):.1f}",
+            ]
+        )
         if "fanout_count" in result.corpus_info:
             lines.append(
                 f"    Fan-out Jobs:   {result.corpus_info['fanout_count']} "
@@ -920,22 +955,35 @@ def compare_runs(path1, path2):
     ]
 
     rows = [
-        ("Total Jobs", r1.total_jobs,
-         str(r2.total_jobs)),
-        ("Completed Jobs", r1.completed_jobs,
-         str(r2.completed_jobs)),
-        ("Failed Jobs", r1.failed_jobs,
-         str(r2.failed_jobs)),
-        ("Total Pages", r1.total_pages,
-         str(r2.total_pages)),
-        ("Fleet PPM", r1.fleet_ppm,
-         _delta(r1.fleet_ppm, r2.fleet_ppm, "", higher_is_better=True)),
-        ("Avg Job Duration (s)", r1.avg_job_duration_seconds,
-         _delta(r1.avg_job_duration_seconds, r2.avg_job_duration_seconds, "s",
-                higher_is_better=False)),
-        ("P95 Job Duration (s)", r1.p95_job_duration_seconds,
-         _delta(r1.p95_job_duration_seconds, r2.p95_job_duration_seconds, "s",
-                higher_is_better=False)),
+        ("Total Jobs", r1.total_jobs, str(r2.total_jobs)),
+        ("Completed Jobs", r1.completed_jobs, str(r2.completed_jobs)),
+        ("Failed Jobs", r1.failed_jobs, str(r2.failed_jobs)),
+        ("Total Pages", r1.total_pages, str(r2.total_pages)),
+        (
+            "Fleet PPM",
+            r1.fleet_ppm,
+            _delta(r1.fleet_ppm, r2.fleet_ppm, "", higher_is_better=True),
+        ),
+        (
+            "Avg Job Duration (s)",
+            r1.avg_job_duration_seconds,
+            _delta(
+                r1.avg_job_duration_seconds,
+                r2.avg_job_duration_seconds,
+                "s",
+                higher_is_better=False,
+            ),
+        ),
+        (
+            "P95 Job Duration (s)",
+            r1.p95_job_duration_seconds,
+            _delta(
+                r1.p95_job_duration_seconds,
+                r2.p95_job_duration_seconds,
+                "s",
+                higher_is_better=False,
+            ),
+        ),
     ]
 
     for label, baseline_val, current_str in rows:
@@ -968,11 +1016,14 @@ def generate_all_reports(results_dir=None):
     if not os.path.isdir(results_dir):
         return "No results directory found."
 
-    files = sorted([
-        os.path.join(results_dir, f)
-        for f in os.listdir(results_dir)
-        if f.startswith("scale_") and f.endswith(".json")
-    ], key=os.path.getmtime)
+    files = sorted(
+        [
+            os.path.join(results_dir, f)
+            for f in os.listdir(results_dir)
+            if f.startswith("scale_") and f.endswith(".json")
+        ],
+        key=os.path.getmtime,
+    )
 
     if not files:
         return "No scale test results found."
@@ -1004,8 +1055,15 @@ def generate_all_reports(results_dir=None):
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def run_scale_test(mode="simulate", num_jobs=20, num_workers=1, config=None,
-                   seed=None, results_dir=None):
+
+def run_scale_test(
+    mode="simulate",
+    num_jobs=20,
+    num_workers=1,
+    config=None,
+    seed=None,
+    results_dir=None,
+):
     """Main entry point for running a scale test.
 
     Args:
@@ -1023,17 +1081,23 @@ def run_scale_test(mode="simulate", num_jobs=20, num_workers=1, config=None,
 
     if mode == "simulate":
         result = simulate_distributed(
-            num_jobs=num_jobs, num_workers=num_workers,
-            config=config, seed=seed,
+            num_jobs=num_jobs,
+            num_workers=num_workers,
+            config=config,
+            seed=seed,
         )
     elif mode == "live":
         result = live_distributed(
-            num_jobs=num_jobs, config=config, seed=seed,
+            num_jobs=num_jobs,
+            config=config,
+            seed=seed,
         )
     elif mode == "crash-recovery":
         result = crash_recovery_test(config=config)
     else:
-        raise ValueError(f"Unknown mode: {mode}. Use 'simulate', 'live', or 'crash-recovery'.")
+        raise ValueError(
+            f"Unknown mode: {mode}. Use 'simulate', 'live', or 'crash-recovery'."
+        )
 
     filepath = save_results(result, results_dir=results_dir)
     print(f"\nResults saved to: {filepath}")
@@ -1047,38 +1111,52 @@ def run_scale_test(mode="simulate", num_jobs=20, num_workers=1, config=None,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="EDCOCR Distributed Pipeline Scale Testing",
+        description="OCR_LOCAL Distributed Pipeline Scale Testing",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument(
-        "--mode", choices=["simulate", "live", "crash-recovery"],
+        "--mode",
+        choices=["simulate", "live", "crash-recovery"],
         default="simulate",
         help="Test mode: simulate (no stack), live (real coordinator), "
-             "crash-recovery (worker kill test)",
+        "crash-recovery (worker kill test)",
     )
     parser.add_argument(
-        "--jobs", type=int, default=20,
+        "--jobs",
+        type=int,
+        default=20,
         help="Number of jobs to submit (default: 20)",
     )
     parser.add_argument(
-        "--workers", type=int, default=1,
+        "--workers",
+        type=int,
+        default=1,
         help="Number of simulated workers (simulate mode only, default: 1)",
     )
     parser.add_argument(
-        "--seed", type=int, default=None,
+        "--seed",
+        type=int,
+        default=None,
         help="Random seed for reproducible tests",
     )
     parser.add_argument(
-        "--report", nargs="?", const="all", default=None,
+        "--report",
+        nargs="?",
+        const="all",
+        default=None,
         help="Display report. Use 'latest' for most recent run.",
     )
     parser.add_argument(
-        "--compare", nargs=2, metavar=("RUN1", "RUN2"),
+        "--compare",
+        nargs=2,
+        metavar=("RUN1", "RUN2"),
         help="Compare two scale test result files",
     )
     parser.add_argument(
-        "--results-dir", type=str, default=SCALE_TEST_DIR,
+        "--results-dir",
+        type=str,
+        default=SCALE_TEST_DIR,
         help="Directory for test results",
     )
 

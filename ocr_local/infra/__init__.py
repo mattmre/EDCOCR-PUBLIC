@@ -6,7 +6,7 @@ imported through the standard Python machinery::
     from ocr_local.infra import engine_selection
     import ocr_local.infra.page_cache as cache
 
- Phase 2 is complete: every infra module has been physically
+maintenance review Phase 2 is complete: every infra module has been physically
 migrated into this package, so no PEP-562 ``__getattr__`` lazy-loader is
 required.  ``_INFRA_MODULES`` is retained as an empty tuple so that
 legacy introspection (``from ocr_local.infra import _INFRA_MODULES``)

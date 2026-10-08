@@ -3,7 +3,7 @@ import { cn } from "@/lib/cn";
 
 /**
  * Tailwind-only loading shimmer. Uses `animate-pulse` (built into Tailwind)
- * so we avoid pulling in a motion library for .
+ * so we avoid pulling in a motion library for Wave 1.
  */
 export function Skeleton({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (

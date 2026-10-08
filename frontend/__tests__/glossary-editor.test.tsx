@@ -34,7 +34,7 @@ function entry(partial: Partial<GlossaryEntry> = {}): GlossaryEntry {
   };
 }
 
-describe("<GlossaryEditor />", => {
+describe("<GlossaryEditor />", () => {
   beforeEach(() => {
     setApiKey("test-key");
   });
@@ -43,7 +43,7 @@ describe("<GlossaryEditor />", => {
     vi.restoreAllMocks();
   });
 
-  it("renders existing entries from the API", async => {
+  it("renders existing entries from the API", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input);
       if (url.includes("/translation/tenants/acme/glossary")) {
@@ -68,7 +68,7 @@ describe("<GlossaryEditor />", => {
     expect(screen.getByTestId("glossary-summary")).toHaveTextContent("2 of 2");
   });
 
-  it("optimistically updates the row on inline edit and persists via PATCH", async => {
+  it("optimistically updates the row on inline edit and persists via PATCH", async () => {
     let patchBody: unknown = null;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input);
@@ -116,7 +116,7 @@ describe("<GlossaryEditor />", => {
     });
   });
 
-  it("removes a row on delete and rolls back on failure", async => {
+  it("removes a row on delete and rolls back on failure", async () => {
     let deleteAttempted = false;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input);
@@ -158,7 +158,7 @@ describe("<GlossaryEditor />", => {
     expect(screen.getByTestId("glossary-error")).toBeInTheDocument();
   });
 
-  it("creates entries from imported CSV (parsing happy-path)", async => {
+  it("creates entries from imported CSV (parsing happy-path)", async () => {
     const created: unknown[] = [];
     let listCallCount = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
@@ -226,7 +226,7 @@ describe("<GlossaryEditor />", => {
     );
   });
 
-  it("creates a new entry via the modal", async => {
+  it("creates a new entry via the modal", async () => {
     let postBody: unknown = null;
     let listCount = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {

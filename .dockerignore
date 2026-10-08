@@ -32,8 +32,9 @@ docs/
 *.md
 !README.md
 
-# -- AI assistant config ------------------------------------------------------
-.ai-assistant/
+# -- Claude / AI assistant config --------------------------------------------
+.claude/
+CLAUDE.md
 
 # -- Windows launchers --------------------------------------------------------
 *.bat
@@ -47,7 +48,12 @@ ocr_source/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+**/__pycache__/
+**/.pytest_cache/
+**/tests/
+**/failover_drill_results/
 tmp/
+coordinator/_test_nfs_root/
 
 # -- Deployment & infrastructure (not needed inside containers) ---------------
 helm/
@@ -58,12 +64,22 @@ playwright.config.js
 legacy/
 
 # -- Development tooling ------------------------------------------------------
-scripts/
+# Keep only the build-time CPU runtime hardener in the root context.
+scripts/*
+!scripts/harden_processing_worker_runtime.py
+!scripts/verify_processing_model_bundle.py
 sdk/
 benchmark_results/
+.venv*/
+venv/
+.hypothesis/
+out/
+models/
+frontend/
 
 # -- Node / dashboard (separate build context) --------------------------------
 node_modules/
+**/node_modules/
 package.json
 package-lock.json
 dashboard/
@@ -76,6 +92,8 @@ dashboard/
 
 # -- Secrets / environment ----------------------------------------------------
 .env
+.env*
+**/.env*
 coordinator/.env
 
 # -- Stale implementation-note text files (not production code) ----------------
@@ -117,3 +135,9 @@ docs_architect_orchestrator.py
 CODEOWNERS
 LICENSE
 SECURITY.md
+
+# Reviewed inference-only mitigation for the upstream imgaug advisory.
+!scripts/harden_imgaug_runtime.py
+
+# Standalone API uploads are separate from the watched-folder input.
+ocr_api_source/

@@ -6,18 +6,26 @@ and CLI argument handling for the multi-GPU Docker Compose generator.
 
 import importlib
 import os
+import subprocess
 import sys
+from pathlib import Path
+
+import pytest
+import yaml
 
 # ---------------------------------------------------------------------------
 # Import the script under test via importlib (it lives in scripts/)
 # ---------------------------------------------------------------------------
-_SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+_SCRIPTS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"
+)
 sys.path.insert(0, _SCRIPTS_DIR)
 
 _mod = importlib.import_module("generate_multi_gpu_compose")
 recommended_concurrency = _mod.recommended_concurrency
 generate_compose_yaml = _mod.generate_compose_yaml
 main = _mod.main
+ROOT = Path(__file__).resolve().parents[1]
 
 
 # ===========================================================================
@@ -79,6 +87,7 @@ class TestGenerateComposeYaml:
             output_filename="test.yml",
         )
         assert "ocr-worker-gpu0:" in yaml_content
+        assert "dockerfile: coordinator/Dockerfile.worker.gpu" in yaml_content
         assert 'CUDA_VISIBLE_DEVICES: "0"' in yaml_content
         # Should NOT contain gpu1
         assert "ocr-worker-gpu1:" not in yaml_content
@@ -139,7 +148,7 @@ class TestGenerateComposeYaml:
             output_filename="test.yml",
         )
         assert "custom_queue" in yaml_content
-        assert "WORKER_QUEUES: ${WORKER_QUEUES:-custom_queue}" in yaml_content
+        assert 'WORKER_QUEUES: "custom_queue"' in yaml_content
 
 
 # ===========================================================================
@@ -217,6 +226,46 @@ class TestPerGpuQueues:
         )
         assert "ENABLE_PER_GPU_QUEUES" not in yaml_content
 
+    def test_per_gpu_queues_rejects_missing_shared_ocr_queue(self):
+        with pytest.raises(ValueError, match="requires ocr_gpu"):
+            generate_compose_yaml(
+                gpu_count=2,
+                concurrency=4,
+                concurrency_source="test",
+                queues="cpu_general",
+                max_tasks_per_child=50,
+                output_filename="test.yml",
+                per_gpu_queues=True,
+            )
+
+    def test_cutover_runbook_command_executes_from_coordinator(self, tmp_path):
+        runbook = (
+            ROOT / "docs" / "operations" / "production-cutover-runbook.md"
+        ).read_text(encoding="utf-8")
+        assert "python ../scripts/generate_multi_gpu_compose.py" in runbook
+        assert "--gpus 4 --per-gpu-queues" in runbook
+        output = tmp_path / "docker-compose.multi-gpu.generated.yml"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "../scripts/generate_multi_gpu_compose.py",
+                "--gpus",
+                "4",
+                "--per-gpu-queues",
+                "--output",
+                str(output),
+            ],
+            cwd=ROOT / "coordinator",
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        rendered = output.read_text(encoding="utf-8")
+        assert "ocr-worker-gpu3:" in rendered
+        assert "dockerfile: coordinator/Dockerfile.worker.gpu" in rendered
+
     def test_per_gpu_queues_four_gpus(self):
         """With 4 GPUs, each gets its own ocr_gpu_{idx} queue."""
         yaml_content = generate_compose_yaml(
@@ -244,8 +293,77 @@ class TestPerGpuQueues:
             output_filename="test.yml",
             per_gpu_queues=True,
         )
-        # ocr_gpu should be replaced with ocr_gpu_0 in the queues
-        assert "ocr_gpu_0,cpu_general" in yaml_content
+        # Durable outbox rows publish to shared ocr_gpu; the generated worker
+        # also consumes its affinity queue so neither producer can black-hole.
+        assert "ocr_gpu,ocr_gpu_0,cpu_general" in yaml_content
+        assert 'OCR_PER_GPU_STRICT: "true"' in yaml_content
+
+    def test_per_gpu_queues_configures_all_durable_producers(self):
+        yaml_content = generate_compose_yaml(
+            gpu_count=3,
+            concurrency=4,
+            concurrency_source="test",
+            queues="ocr_gpu,cpu_general",
+            max_tasks_per_child=50,
+            output_filename="test.yml",
+            per_gpu_queues=True,
+        )
+        for service in ("django", "celery-coordinator", "celery-beat"):
+            assert f"  {service}:\n" in yaml_content
+        assert yaml_content.count('OCR_PER_GPU_STRICT: "true"') == 6
+
+    def test_per_gpu_quorum_contract_reaches_every_producer_and_consumer(self):
+        """Strict affinity must not mix quorum producers with classic workers."""
+        rendered = yaml.safe_load(
+            generate_compose_yaml(
+                gpu_count=3,
+                concurrency=4,
+                concurrency_source="test",
+                queues="ocr_gpu,cpu_general",
+                max_tasks_per_child=50,
+                output_filename="test.yml",
+                per_gpu_queues=True,
+            )
+        )
+        services = rendered["services"]
+        contract_services = (
+            "django",
+            "celery-coordinator",
+            "celery-beat",
+            "ocr-worker-gpu0",
+            "ocr-worker-gpu1",
+            "ocr-worker-gpu2",
+        )
+        for service in contract_services:
+            env = services[service]["environment"]
+            assert env["CELERY_USE_QUORUM_QUEUES"] == "true", service
+            assert env["ENABLE_PER_GPU_QUEUES"] == "true", service
+            assert env["GPU_COUNT"] == "3", service
+            assert env["OCR_PER_GPU_STRICT"] == "true", service
+        for idx in range(3):
+            service = services[f"ocr-worker-gpu{idx}"]
+            queues = service["environment"]["WORKER_QUEUES"]
+            assert queues == f"ocr_gpu,ocr_gpu_{idx},cpu_general"
+            assert f"-Q ocr_gpu,ocr_gpu_{idx},cpu_general" in service["command"]
+
+    def test_host_worker_queues_cannot_erase_dedicated_subscriptions(self, monkeypatch):
+        monkeypatch.setenv("WORKER_QUEUES", "ocr_gpu,cpu_general")
+        rendered = yaml.safe_load(
+            generate_compose_yaml(
+                gpu_count=2,
+                concurrency=4,
+                concurrency_source="test",
+                queues="ocr_gpu,cpu_general",
+                max_tasks_per_child=50,
+                output_filename="test.yml",
+                per_gpu_queues=True,
+            )
+        )
+        for idx in range(2):
+            service = rendered["services"][f"ocr-worker-gpu{idx}"]
+            expected = f"ocr_gpu,ocr_gpu_{idx},cpu_general"
+            assert service["environment"]["WORKER_QUEUES"] == expected
+            assert f"-Q {expected}" in service["command"]
 
 
 # ===========================================================================
@@ -280,3 +398,19 @@ class TestMainCli:
         assert "ocr_gpu_0" in captured.out
         assert "ocr_gpu_1" in captured.out
         assert 'ENABLE_PER_GPU_QUEUES: "true"' in captured.out
+
+    def test_cli_per_gpu_queues_rejects_missing_shared_ocr_queue(self, capsys):
+        result = main(
+            [
+                "--gpus",
+                "2",
+                "--per-gpu-queues",
+                "--queues",
+                "cpu_general",
+                "--concurrency",
+                "4",
+            ]
+        )
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "ERROR: --per-gpu-queues requires ocr_gpu in --queues" in captured.err

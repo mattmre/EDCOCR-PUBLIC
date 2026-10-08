@@ -1,0 +1,145 @@
+{{- if .Values.ocrStagedPage.enabled }}
+{{- if not .Values.tesseractWorker.enabled }}
+{{- fail "ocrStagedPage requires tesseractWorker.enabled for bounded cross-engine fallback" }}
+{{- end }}
+{{- range $stage := list "render" "finalize" }}
+{{- $profile := index $.Values.ocrStagedPage $stage }}
+{{- $queue := printf "ocr_%s" $stage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Release.Name }}-{{ $queue | replace "_" "-" }}
+  labels:
+    {{- include "ocr-local.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $queue | replace "_" "-" }}
+spec:
+  {{- if not $profile.autoscaling.enabled }}
+  replicas: {{ $profile.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $queue | replace "_" "-" }}
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $queue | replace "_" "-" }}
+      {{- if $.Values.workerSecurity.mTLS.enabled }}
+      annotations:
+        {{ $.Values.workerSecurity.mTLS.annotation }}: {{ $.Values.workerSecurity.mTLS.annotationValue | quote }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ocr-local.serviceAccountName" $ }}
+      {{- include "ocr-local.imagePullSecrets" $ | nindent 6 }}
+      terminationGracePeriodSeconds: {{ $.Values.workerTerminationGracePeriodSeconds | default 360 }}
+      {{- include "ocr-local.haScheduling" (dict "root" $ "component" ($queue | replace "_" "-")) | nindent 6 }}
+      securityContext:
+        {{- toYaml $.Values.cpuOcrWorker.podSecurityContext | nindent 8 }}
+      {{- with $profile.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $profile.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: staging-volume
+          {{- if eq $.Values.workerSecurity.stagingVolume.type "emptyDir" }}
+          emptyDir:
+            medium: {{ $.Values.workerSecurity.stagingVolume.emptyDir.medium }}
+            sizeLimit: {{ $.Values.workerSecurity.stagingVolume.emptyDir.sizeLimit }}
+          {{- else }}
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                storageClassName: {{ $.Values.workerSecurity.stagingVolume.pvc.storageClass | quote }}
+                resources:
+                  requests:
+                    storage: {{ $.Values.workerSecurity.stagingVolume.pvc.size }}
+          {{- end }}
+        {{- if and (eq $.Values.storage.backend "nfs") $.Values.storage.nfs.persistence.enabled }}
+        - name: nfs-data
+          persistentVolumeClaim:
+            claimName: {{ $.Release.Name }}-nfs-data
+        {{- end }}
+        {{- include "ocr-local.tlsCaVolume" $ | nindent 8 }}
+      initContainers:
+        {{- include "ocr-local.schemaReadinessInit" (dict "root" $ "envKind" "worker" "securityContext" $.Values.cpuOcrWorker.containerSecurityContext) | nindent 8 }}
+      containers:
+        - name: {{ $queue | replace "_" "-" }}
+          image: {{ include "ocr-local.tesseractWorkerImage" $ }}
+          imagePullPolicy: {{ $.Values.image.tesseractWorker.pullPolicy | default "IfNotPresent" }}
+          command:
+            - /usr/bin/tini
+            - -g
+            - --
+            - celery
+            - -A
+            - coordinator.coordinator
+            - worker
+            - --loglevel=info
+            - --queues={{ $queue }}
+            - --concurrency={{ $profile.concurrency }}
+            - --prefetch-multiplier=1
+            - --max-tasks-per-child={{ $.Values.cpuOcrWorker.maxTasksPerChild }}
+            - --hostname={{ $queue }}@%h
+          volumeMounts:
+            - name: staging-volume
+              mountPath: {{ $.Values.workerSecurity.stagingVolume.mountPath }}
+            {{- if and (eq $.Values.storage.backend "nfs") $.Values.storage.nfs.persistence.enabled }}
+            - name: nfs-data
+              mountPath: {{ $.Values.storage.nfs.mountPath | default "/shared" }}
+            {{- end }}
+            {{- include "ocr-local.tlsCaVolumeMount" $ | nindent 12 }}
+          {{- include "ocr-local.workerEnvFrom" $ | nindent 10 }}
+          env:
+            {{- include "ocr-local.workerSecretEnv" $ | nindent 12 }}
+            - name: WORKER_QUEUES
+              value: {{ $queue | quote }}
+            - name: WORKER_CONCURRENCY
+              value: {{ $profile.concurrency | quote }}
+            - name: OMP_NUM_THREADS
+              value: "1"
+            - name: OPENBLAS_NUM_THREADS
+              value: "1"
+            - name: OCR_NATIVE_THREADS_PER_PREDICTOR
+              value: "1"
+            - name: OCR_WORKER_CAPABILITY
+              value: "tesseract"
+            - name: OCR_SEPARATE_TESSERACT_LANE
+              value: "true"
+          startupProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import celery, fitz, PIL, pytesseract; assert pytesseract.get_tesseract_version().major == 5"
+            failureThreshold: 10
+            periodSeconds: 5
+            timeoutSeconds: 30
+          readinessProbe:
+            exec:
+              command:
+                - python3
+                - /app/coordinator/worker_healthcheck.py
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - python3
+                - /app/coordinator/worker_healthcheck.py
+            periodSeconds: 60
+            timeoutSeconds: 15
+          resources:
+            {{- toYaml $profile.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $.Values.cpuOcrWorker.containerSecurityContext | nindent 12 }}
+{{- end }}
+{{- end }}

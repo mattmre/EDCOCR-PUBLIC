@@ -62,7 +62,7 @@ class TestOpenAPISpec:
         assert r.status_code == 200
         schema = r.json()
         assert "openapi" in schema
-        assert schema["info"]["title"] == "EDCOCR API"
+        assert schema["info"]["title"] == "Industrial Adaptive OCR API"
 
     def test_security_schemes_present(self, client):
         """Security schemes include ApiKeyAuth and BearerAuth."""

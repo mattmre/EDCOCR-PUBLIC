@@ -39,14 +39,17 @@ logger = logging.getLogger(__name__)
 # Environment configuration
 # ---------------------------------------------------------------------------
 
-_DEFAULT_METHOD = os.environ.get(
-    "LAYOUTLM_SUMMARIZATION_METHOD", "combined"
-).lower().strip()
-
-_DEFAULT_MAX_SENTENCES = max(
-    1,
-    int(os.environ.get("LAYOUTLM_SUMMARY_MAX_SENTENCES", "5")),
+_DEFAULT_METHOD = (
+    os.environ.get("LAYOUTLM_SUMMARIZATION_METHOD", "combined").lower().strip()
 )
+
+try:
+    _raw_max_sentences = int(
+        os.environ.get("LAYOUTLM_SUMMARY_MAX_SENTENCES", "5") or "5"
+    )
+except (TypeError, ValueError):
+    _raw_max_sentences = 5
+_DEFAULT_MAX_SENTENCES = max(1, min(1_000, _raw_max_sentences))
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +155,7 @@ def _split_sentences(text: str) -> list:
         return []
 
     # Split on sentence-ending punctuation followed by space/newline/end
-    parts = re.split(r'(?<=[.!?])(?:\s+|\Z)', text.strip())
+    parts = re.split(r"(?<=[.!?])(?:\s+|\Z)", text.strip())
     sentences = [s.strip() for s in parts if s.strip()]
     return sentences
 
@@ -164,7 +167,7 @@ def _split_sentences(text: str) -> list:
 
 def _word_set(sentence: str) -> set:
     """Extract a set of lowercased words from a sentence."""
-    return set(re.findall(r'[a-zA-Z0-9]+', sentence.lower()))
+    return set(re.findall(r"[a-zA-Z0-9]+", sentence.lower()))
 
 
 def _sentence_similarity(s1: str, s2: str) -> float:
@@ -350,7 +353,9 @@ def _layout_position_scores(
     raw_scores = []
     for idx, sent in enumerate(sentences):
         score = 0.0
-        page_num, pos_in_page = page_indices[idx] if idx < len(page_indices) else (0, 0.5)
+        page_num, pos_in_page = (
+            page_indices[idx] if idx < len(page_indices) else (0, 0.5)
+        )
 
         # First page bonus (0-indexed)
         if page_num == 0:
@@ -419,7 +424,10 @@ def _combined_scores(
     tr_scores = _textrank_scores(sentences)
     ed_scores = _entity_density_scores(sentences, entities)
     lp_scores = _layout_position_scores(
-        sentences, page_indices, total_pages, layout_regions,
+        sentences,
+        page_indices,
+        total_pages,
+        layout_regions,
     )
 
     combined = []
@@ -542,18 +550,29 @@ def summarize_document(
         scores = _entity_density_scores(all_sentences, entities)
     elif method == SummarizationMethod.LAYOUT_POSITION:
         scores = _layout_position_scores(
-            all_sentences, page_indices, total_pages, layout_regions,
+            all_sentences,
+            page_indices,
+            total_pages,
+            layout_regions,
         )
     elif method == SummarizationMethod.COMBINED:
         scores = _combined_scores(
-            all_sentences, entities, page_indices, total_pages,
-            layout_regions, config,
+            all_sentences,
+            entities,
+            page_indices,
+            total_pages,
+            layout_regions,
+            config,
         )
     else:
         # Fallback to combined
         scores = _combined_scores(
-            all_sentences, entities, page_indices, total_pages,
-            layout_regions, config,
+            all_sentences,
+            entities,
+            page_indices,
+            total_pages,
+            layout_regions,
+            config,
         )
         method_label = "combined"
 
@@ -561,18 +580,20 @@ def summarize_document(
     scored_sentences = []
     for i, (sent, score) in enumerate(zip(all_sentences, scores)):
         page_num, pos_in_page = page_indices[i]
-        scored_sentences.append(SummarySentence(
-            text=sent,
-            page_num=page_num,
-            score=round(score, 6),
-            method=method_label,
-            bbox=None,
-            position_in_page=round(pos_in_page, 4),
-        ))
+        scored_sentences.append(
+            SummarySentence(
+                text=sent,
+                page_num=page_num,
+                score=round(score, 6),
+                method=method_label,
+                bbox=None,
+                position_in_page=round(pos_in_page, 4),
+            )
+        )
 
     # Sort by score descending, pick top N
     scored_sentences.sort(key=lambda s: s.score, reverse=True)
-    selected = scored_sentences[:config.max_sentences]
+    selected = scored_sentences[: config.max_sentences]
 
     # Re-sort selected sentences by document order (page, then position)
     selected.sort(key=lambda s: (s.page_num, s.position_in_page))
@@ -636,8 +657,7 @@ def summarize_from_files(
     elif os.path.isdir(text_dir):
         # Directory mode: each .txt file is a page
         txt_files = sorted(
-            f for f in os.listdir(text_dir)
-            if f.lower().endswith(".txt")
+            f for f in os.listdir(text_dir) if f.lower().endswith(".txt")
         )
         for fname in txt_files:
             fpath = os.path.join(text_dir, fname)
@@ -662,7 +682,9 @@ def summarize_from_files(
                 entities = data.get("entities", [])
         except Exception as exc:
             logger.warning(
-                "Failed to load entities from %s: %s", entities_path, exc,
+                "Failed to load entities from %s: %s",
+                entities_path,
+                exc,
             )
 
     # Load layout regions
@@ -682,7 +704,9 @@ def summarize_from_files(
                 layout_regions = data
         except Exception as exc:
             logger.warning(
-                "Failed to load structure from %s: %s", structure_path, exc,
+                "Failed to load structure from %s: %s",
+                structure_path,
+                exc,
             )
 
     # Derive document_id from directory/file name

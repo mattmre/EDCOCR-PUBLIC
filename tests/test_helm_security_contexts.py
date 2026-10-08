@@ -1,4 +1,4 @@
-"""Tests for Helm chart container security contexts.
+"""Tests for Helm chart container security contexts (maintenance review).
 
 Validates that all services in values.yaml have hardened containerSecurityContext
 with capabilities.drop=[ALL] and seccompProfile.type=RuntimeDefault per CIS
@@ -17,11 +17,14 @@ VALUES_PATH = os.path.join(
 # All service keys that have containerSecurityContext in values.yaml
 ALL_SERVICE_KEYS = [
     "coordinator",
+    "api",
+    "frontend",
     "celeryCoordinator",
     "celeryBeat",
     "flower",
     "gpuWorker",
     "cpuOcrWorker",
+    "tesseractWorker",
     "layoutCpuWorker",
     "nlpGpuWorker",
     "layoutlmWorker",
@@ -48,7 +51,9 @@ def values():
 @pytest.mark.parametrize("service_key", ALL_SERVICE_KEYS)
 def test_service_has_container_security_context(values, service_key):
     """Each service must define a containerSecurityContext block."""
-    assert service_key in values, f"Service key '{service_key}' missing from values.yaml"
+    assert service_key in values, (
+        f"Service key '{service_key}' missing from values.yaml"
+    )
     svc = values[service_key]
     assert "containerSecurityContext" in svc, (
         f"{service_key} missing containerSecurityContext"
@@ -112,7 +117,8 @@ def test_all_known_services_covered(values):
     """Verify our service key list matches what is in values.yaml."""
     # Find all top-level keys that have containerSecurityContext
     found = [
-        k for k, v in values.items()
+        k
+        for k, v in values.items()
         if isinstance(v, dict) and "containerSecurityContext" in v
     ]
     missing_from_list = set(found) - set(ALL_SERVICE_KEYS)
@@ -128,9 +134,8 @@ def test_all_known_services_covered(values):
 def test_total_container_security_context_count(values):
     """Verify the expected number of containerSecurityContext blocks."""
     count = sum(
-        1 for v in values.values()
+        1
+        for v in values.values()
         if isinstance(v, dict) and "containerSecurityContext" in v
     )
-    assert count == 13, (
-        f"Expected 13 containerSecurityContext blocks, found {count}"
-    )
+    assert count == 16, f"Expected 16 containerSecurityContext blocks, found {count}"

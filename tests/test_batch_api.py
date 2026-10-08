@@ -27,6 +27,15 @@ def client(tmp_path):
     with (
         patch("api.config.SOURCE_FOLDER", str(source)),
         patch("api.config.OUTPUT_FOLDER", str(output)),
+        patch("api.config.EVENT_STORE_PATH", str(output / "event_store.db")),
+        patch("api.config.OCR_API_KEY", ""),
+        patch("api.auth.OCR_API_KEY", ""),
+        patch("api.config.ALLOW_UNAUTHENTICATED", True),
+        patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+        # Mutation tests need an explicit operator identity.  The repository
+        # default is intentionally anonymous viewer (read-only).
+        patch("api.config.ANONYMOUS_ROLE", "operator"),
+        patch("api.auth.ANONYMOUS_ROLE", "operator"),
         patch("api.job_manager.config") as mock_config,
         patch("api.job_manager.JobManager._run_pipeline"),
     ):
@@ -42,9 +51,19 @@ def client(tmp_path):
         from api.main import create_app
 
         app = create_app()
+        from api import event_store
+        from api import limits as api_limits
+        from api import main as api_main
+
+        event_store.reset_event_store()
+        api_limits.limiter.enabled = False
+        api_main.limiter.enabled = False
         app.state.limiter.enabled = False
         app.state.limiter.reset()
-        yield TestClient(app)
+        try:
+            yield TestClient(app)
+        finally:
+            event_store.reset_event_store()
 
 
 @pytest.fixture()
@@ -156,8 +175,9 @@ class TestBatchSubmission:
         )
         assert resp.status_code == 400
 
-    def test_submit_batch_with_priority(self, client, sample_pdf):
+    def test_submit_batch_with_priority(self, client, sample_pdf, monkeypatch):
         """Batch respects the priority field."""
+        monkeypatch.setenv("OCR_ALLOW_CLIENT_URGENT", "true")
         with open(sample_pdf, "rb") as f:
             resp = client.post(
                 "/api/v1/jobs/batch",
@@ -178,7 +198,7 @@ class TestBatchSubmission:
         assert resp.status_code == 422
 
     def test_submit_batch_exceeds_max_size(self, client, sample_pdf):
-        """Submitting more files than MAX_BATCH_SIZE returns 413."""
+        """Submitting more files than MAX_BATCH_SIZE returns 413 (maintenance review)."""
         with patch("api.config.MAX_BATCH_SIZE", 1):
             with open(sample_pdf, "rb") as f1:
                 content = f1.read()
@@ -228,7 +248,9 @@ class TestBatchSubmission:
         assert data["total_jobs"] == 1
         assert data["jobs"][0]["source_file"] == "batch-input.pdf"
 
-    def test_submit_batch_rejects_source_paths_outside_ingest_root(self, client, sample_pdf, tmp_path):
+    def test_submit_batch_rejects_source_paths_outside_ingest_root(
+        self, client, sample_pdf, tmp_path
+    ):
         """Batch submission rejects source_paths outside SOURCE_FOLDER."""
         outside = tmp_path / "outside" / "batch-input.pdf"
         outside.parent.mkdir(exist_ok=True)
@@ -281,9 +303,15 @@ class TestBatchStatus:
     def test_batch_progress_info(self, client):
         """Batch progress reflects child job statuses."""
         _insert_batch("batch_aaaaaaaaaaaa", status="processing", total_jobs=3)
-        _insert_job("job_aaaaaaaaaaaa", status="completed", batch_id="batch_aaaaaaaaaaaa")
-        _insert_job("job_bbbbbbbbbbbb", status="processing", batch_id="batch_aaaaaaaaaaaa")
-        _insert_job("job_cccccccccccc", status="submitted", batch_id="batch_aaaaaaaaaaaa")
+        _insert_job(
+            "job_aaaaaaaaaaaa", status="completed", batch_id="batch_aaaaaaaaaaaa"
+        )
+        _insert_job(
+            "job_bbbbbbbbbbbb", status="processing", batch_id="batch_aaaaaaaaaaaa"
+        )
+        _insert_job(
+            "job_cccccccccccc", status="submitted", batch_id="batch_aaaaaaaaaaaa"
+        )
 
         resp = client.get("/api/v1/jobs/batch/batch_aaaaaaaaaaaa")
         assert resp.status_code == 200
@@ -461,8 +489,12 @@ class TestListBatches:
     def test_list_batches_includes_job_progress(self, client):
         """Each batch in the list includes progress info."""
         _insert_batch("batch_aaaaaaaaaaaa", total_jobs=2)
-        _insert_job("job_aaaaaaaaaaaa", status="completed", batch_id="batch_aaaaaaaaaaaa")
-        _insert_job("job_bbbbbbbbbbbb", status="processing", batch_id="batch_aaaaaaaaaaaa")
+        _insert_job(
+            "job_aaaaaaaaaaaa", status="completed", batch_id="batch_aaaaaaaaaaaa"
+        )
+        _insert_job(
+            "job_bbbbbbbbbbbb", status="processing", batch_id="batch_aaaaaaaaaaaa"
+        )
 
         resp = client.get("/api/v1/jobs/batch")
         data = resp.json()
@@ -575,11 +607,24 @@ class TestBatchAuth:
             assert submit.status_code == 403
 
             _insert_batch("batch_aaaaaaaaaaaa", status="submitted", total_jobs=1)
-            _insert_job("job_aaaaaaaaaaaa", status="failed", batch_id="batch_aaaaaaaaaaaa")
+            _insert_job(
+                "job_aaaaaaaaaaaa", status="failed", batch_id="batch_aaaaaaaaaaaa"
+            )
 
-            assert test_client.get("/api/v1/jobs/batch/batch_aaaaaaaaaaaa").status_code == 200
-            assert test_client.delete("/api/v1/jobs/batch/batch_aaaaaaaaaaaa").status_code == 403
-            assert test_client.post("/api/v1/jobs/batch/batch_aaaaaaaaaaaa/retry").status_code == 403
+            assert (
+                test_client.get("/api/v1/jobs/batch/batch_aaaaaaaaaaaa").status_code
+                == 200
+            )
+            assert (
+                test_client.delete("/api/v1/jobs/batch/batch_aaaaaaaaaaaa").status_code
+                == 403
+            )
+            assert (
+                test_client.post(
+                    "/api/v1/jobs/batch/batch_aaaaaaaaaaaa/retry"
+                ).status_code
+                == 403
+            )
 
         reset_engine()
         db_file = str(tmp_path / "test_auth.db")
@@ -651,59 +696,71 @@ class _FakeJob:
 class TestDeriveBatchStatus:
     def test_empty_returns_submitted(self):
         from api.batch_manager import derive_batch_status
+
         assert derive_batch_status([]) == "submitted"
 
     def test_all_completed(self):
         from api.batch_manager import derive_batch_status
+
         jobs = [_FakeJob("completed"), _FakeJob("completed"), _FakeJob("completed")]
         assert derive_batch_status(jobs) == "completed"
 
     def test_all_failed(self):
         from api.batch_manager import derive_batch_status
+
         jobs = [_FakeJob("failed"), _FakeJob("failed")]
         assert derive_batch_status(jobs) == "failed"
 
     def test_all_cancelled(self):
         from api.batch_manager import derive_batch_status
+
         jobs = [_FakeJob("cancelled"), _FakeJob("cancelled")]
         assert derive_batch_status(jobs) == "cancelled"
 
     def test_mixed_terminal_returns_partial_failure(self):
         from api.batch_manager import derive_batch_status
+
         jobs = [_FakeJob("completed"), _FakeJob("failed")]
         assert derive_batch_status(jobs) == "partial_failure"
 
     def test_completed_and_cancelled_returns_partial_failure(self):
         from api.batch_manager import derive_batch_status
+
         jobs = [_FakeJob("completed"), _FakeJob("cancelled")]
         assert derive_batch_status(jobs) == "partial_failure"
 
     def test_three_way_terminal_mix(self):
         from api.batch_manager import derive_batch_status
+
         jobs = [_FakeJob("completed"), _FakeJob("failed"), _FakeJob("cancelled")]
         assert derive_batch_status(jobs) == "partial_failure"
 
     def test_processing_in_progress(self):
         from api.batch_manager import derive_batch_status
+
         jobs = [_FakeJob("processing"), _FakeJob("completed")]
         assert derive_batch_status(jobs) == "processing"
 
     def test_all_submitted(self):
         from api.batch_manager import derive_batch_status
+
         jobs = [_FakeJob("submitted"), _FakeJob("submitted")]
         assert derive_batch_status(jobs) == "submitted"
 
     def test_submitted_and_completed_returns_submitted(self):
         from api.batch_manager import derive_batch_status
+
         jobs = [_FakeJob("submitted"), _FakeJob("completed")]
         assert derive_batch_status(jobs) == "submitted"
 
     def test_single_completed(self):
         from api.batch_manager import derive_batch_status
+
         assert derive_batch_status([_FakeJob("completed")]) == "completed"
 
     def test_single_failed(self):
         from api.batch_manager import derive_batch_status
+
         assert derive_batch_status([_FakeJob("failed")]) == "failed"
 
 
@@ -821,6 +878,7 @@ class TestBatchEdgeCases:
 class TestBatchModels:
     def test_batch_submit_request_defaults(self):
         from api.batch_models import BatchSubmitRequest
+
         req = BatchSubmitRequest()
         assert req.priority == "normal"
         assert req.enable_docintel is False
@@ -830,12 +888,14 @@ class TestBatchModels:
 
     def test_batch_progress_info_defaults(self):
         from api.batch_models import BatchProgressInfo
+
         info = BatchProgressInfo()
         assert info.submitted == 0
         assert info.percent_complete == 0.0
 
     def test_batch_list_response_shape(self):
         from api.batch_models import BatchListResponse
+
         resp = BatchListResponse(batches=[], total=0, limit=50, offset=0)
         assert resp.total == 0
         assert resp.batches == []
@@ -844,7 +904,10 @@ class TestBatchModels:
 
     def test_batch_list_response_legacy_fields(self):
         from api.batch_models import BatchListResponse
-        resp = BatchListResponse(batches=[], total=0, limit=20, offset=0, page=1, per_page=20)
+
+        resp = BatchListResponse(
+            batches=[], total=0, limit=20, offset=0, page=1, per_page=20
+        )
         assert resp.page == 1
         assert resp.per_page == 20
 
@@ -857,18 +920,21 @@ class TestBatchModels:
 class TestBatchManagerUnit:
     def test_get_batch_returns_none_for_missing(self):
         from api.batch_manager import BatchManager
+
         factory = get_session_factory()
         mgr = BatchManager(factory)
         assert mgr.get_batch("batch_nonexistent0") is None
 
     def test_get_batch_jobs_returns_empty_for_missing(self):
         from api.batch_manager import BatchManager
+
         factory = get_session_factory()
         mgr = BatchManager(factory)
         assert mgr.get_batch_jobs("batch_nonexistent0") == []
 
     def test_list_batches_empty(self):
         from api.batch_manager import BatchManager
+
         factory = get_session_factory()
         mgr = BatchManager(factory)
         batches, total = mgr.list_batches()
@@ -877,6 +943,7 @@ class TestBatchManagerUnit:
 
     def test_list_batches_with_status_filter(self):
         from api.batch_manager import BatchManager
+
         _insert_batch("batch_aaaaaaaaaaaa", status="submitted", total_jobs=1)
         _insert_batch("batch_bbbbbbbbbbbb", status="completed", total_jobs=2)
 
@@ -888,6 +955,7 @@ class TestBatchManagerUnit:
 
     def test_list_batches_pagination(self):
         from api.batch_manager import BatchManager
+
         _insert_batch("batch_aaaaaaaaaaaa", total_jobs=1)
         _insert_batch("batch_bbbbbbbbbbbb", total_jobs=1)
         _insert_batch("batch_cccccccccccc", total_jobs=1)
@@ -900,6 +968,7 @@ class TestBatchManagerUnit:
 
     def test_list_batches_pagination_legacy(self):
         from api.batch_manager import BatchManager
+
         _insert_batch("batch_aaaaaaaaaaaa", total_jobs=1)
         _insert_batch("batch_bbbbbbbbbbbb", total_jobs=1)
         _insert_batch("batch_cccccccccccc", total_jobs=1)
@@ -912,6 +981,7 @@ class TestBatchManagerUnit:
 
     def test_check_batch_completion_noop_for_missing(self):
         from api.batch_manager import BatchManager
+
         factory = get_session_factory()
         mgr = BatchManager(factory)
         # Should not raise

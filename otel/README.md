@@ -1,7 +1,11 @@
-# OpenTelemetry Collector for EDCOCR
+# OpenTelemetry Collector for OCR_LOCAL
 
-Production-ready OpenTelemetry Collector configuration for distributed tracing,
-metrics bridging, and log collection in the EDCOCR pipeline.
+**Lab / opt-in only** OpenTelemetry Collector configuration for distributed tracing,
+metrics bridging, and log collection in the OCR_LOCAL pipeline.
+
+**R3-RC-07 honesty:** This stack is **not** production-ready as-shipped. Host
+ports bind loopback only; `OTEL_ENABLED` defaults **false**; pprof/zpages are
+not enabled by default; TLS/auth for a public collector are operator-owned.
 
 ## Architecture
 
@@ -64,7 +68,7 @@ docker compose \
 | Jaeger UI          | 16686 | Trace visualization              |
 | Prometheus metrics | 8889  | Scraped by Prometheus            |
 | Health check       | 13133 | Collector liveness probe         |
-| zpages             | 55679 | Collector internal diagnostics   |
+| zpages             | (disabled) | Not in default service extensions |
 
 ## Environment Variables
 
@@ -83,7 +87,7 @@ docker compose \
 
 | Variable                      | Default           | Description                       |
 |-------------------------------|-------------------|-----------------------------------|
-| `OTEL_ENABLED`                | `true`            | Enable/disable tracing            |
+| `OTEL_ENABLED`                | `false`           | Enable/disable tracing (opt-in)   |
 | `OTEL_SERVICE_NAME`           | `ocr-pipeline`    | Service name in traces            |
 | `OTEL_EXPORTER`               | `console`         | Exporter type: console/otlp       |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317`  | Collector gRPC endpoint           |

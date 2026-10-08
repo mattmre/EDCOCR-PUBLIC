@@ -1,6 +1,6 @@
 """Tests for the PaddleOCR engine fallback logic in worker_thread's get_engine().
 
-When both the primary language engine AND the English fallback engine
+maintenance review: When both the primary language engine AND the English fallback engine
 fail to load, the failure is cached as None so subsequent pages skip the
 model-load retry and immediately fall through to Tesseract/ImageOnly.
 """

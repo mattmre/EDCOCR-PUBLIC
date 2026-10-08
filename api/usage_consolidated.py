@@ -14,6 +14,10 @@ be used directly by their respective subsystems.  Instead it wraps them into
 a unified read-only query API so that API endpoints can serve a single
 combined report rather than requiring callers to hit three different
 endpoints.
+
+**Claim status (wire-or-hide):** HIDE until mounted.
+Library/helper only unless a production router exposes it with E2E proof.
+See ``docs/analysis/dead-code-20260729/WIRE-OR-HIDE-TRIAGE.md``.
 """
 
 from __future__ import annotations
@@ -167,9 +171,7 @@ def _get_db_cost_data(
             "period": getattr(usage, "period", period),
             "jobs_submitted": int(getattr(usage, "jobs_submitted", 0) or 0),
             "pages_processed": int(getattr(usage, "pages_processed", 0) or 0),
-            "storage_bytes_used": int(
-                getattr(usage, "storage_bytes_used", 0) or 0
-            ),
+            "storage_bytes_used": int(getattr(usage, "storage_bytes_used", 0) or 0),
             "api_calls": int(getattr(usage, "api_calls", 0) or 0),
             "processing_seconds": float(
                 getattr(usage, "processing_seconds", 0.0) or 0.0
@@ -195,9 +197,7 @@ def _get_db_slo_data(
         return None
 
     try:
-        snapshot = build_tenant_slo_snapshot(
-            tenant_id, window_hours=window_hours
-        )
+        snapshot = build_tenant_slo_snapshot(tenant_id, window_hours=window_hours)
         # Convert datetime objects to ISO strings for JSON serialization
         for key in ("window_start", "window_end"):
             val = snapshot.get(key)

@@ -1177,7 +1177,7 @@ data:
           },
           "targets": [
             {
-              "expr": "sum(rate(ocr_pages_processed_total{engine!=\"\"}[$__rate_interval])) by (engine) * on group_left ocr_gpu_workers_available > 0 or sum(rate(ocr_pages_processed_total{engine!=\"\"}[$__rate_interval]))",
+              "expr": "sum(rate(ocr_pages_processed_total{engine!=\"\"}[$__rate_interval])) by (engine) * on() group_left ocr_gpu_workers_available > 0 or sum(rate(ocr_pages_processed_total{engine!=\"\"}[$__rate_interval]))",
               "legendFormat": "GPU Throughput"
             },
             {

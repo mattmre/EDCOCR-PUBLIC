@@ -1,4 +1,4 @@
-"""Tests for SQLite database files must not be world-readable.
+"""Tests for maintenance review: SQLite database files must not be world-readable.
 
 The ``api.db_security.set_db_permissions`` helper restricts SQLite
 database files to owner read/write only (mode 0o600). These tests
@@ -179,7 +179,7 @@ def test_default_sqlite_file_would_be_world_readable(tmp_path):
 
     This test documents why the fix is necessary -- a fresh SQLite
     database file created on POSIX inherits the process umask, which is
-    typically 0o022 and yields 0o644 (world-readable).  tightens
+    typically 0o022 and yields 0o644 (world-readable). maintenance review tightens
     that to 0o600.
     """
     import sqlite3

@@ -27,12 +27,33 @@ is opt-in and controlled by ``ENABLE_RELATIONSHIP_EXTRACTION``.
 """
 
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass, field
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _bounded_float_env(name, default, minimum, maximum):
+    """Read a finite relationship threshold with safe bounds."""
+    try:
+        value = float(os.environ.get(name, str(default)) or str(default))
+    except (TypeError, ValueError):
+        value = default
+    if not math.isfinite(value):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _bounded_int_env(name, default, minimum, maximum):
+    try:
+        value = int(os.environ.get(name, str(default)) or str(default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -44,10 +65,12 @@ ENABLE_RELATIONSHIP_EXTRACTION = os.environ.get(
 
 # Maximum character distance between two entity mentions for proximity-based
 # relationship detection.  Tunable via environment variable.
-_MAX_PROXIMITY_CHARS = int(os.environ.get("RELATIONSHIP_PROXIMITY_CHARS", "150"))
+_MAX_PROXIMITY_CHARS = _bounded_int_env(
+    "RELATIONSHIP_PROXIMITY_CHARS", 150, 0, 1_000_000
+)
 
 # Minimum confidence threshold for emitted relationships.
-_MIN_CONFIDENCE = float(os.environ.get("RELATIONSHIP_MIN_CONFIDENCE", "0.4"))
+_MIN_CONFIDENCE = _bounded_float_env("RELATIONSHIP_MIN_CONFIDENCE", 0.4, 0.0, 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -506,12 +529,8 @@ def _kv_linkage_relationships(
             for j in range(i + 1, len(kvs)):
                 kv_b = kvs[j]
 
-                ent_a = entity_lookup.get(
-                    (kv_a.get("value", "").strip().lower(), pg)
-                )
-                ent_b = entity_lookup.get(
-                    (kv_b.get("value", "").strip().lower(), pg)
-                )
+                ent_a = entity_lookup.get((kv_a.get("value", "").strip().lower(), pg))
+                ent_b = entity_lookup.get((kv_b.get("value", "").strip().lower(), pg))
 
                 if ent_a is None or ent_b is None:
                     continue
@@ -536,9 +555,7 @@ def _infer_kv_relation(
     ca = _canonical_type(ent_a.get("type", ""))
     cb = _canonical_type(ent_b.get("type", ""))
 
-    avg_conf = (
-        kv_a.get("confidence", 0.0) + kv_b.get("confidence", 0.0)
-    ) / 2.0
+    avg_conf = (kv_a.get("confidence", 0.0) + kv_b.get("confidence", 0.0)) / 2.0
 
     evidence = f"{kv_a.get('key', '')}: {kv_a.get('value', '')} | {kv_b.get('key', '')}: {kv_b.get('value', '')}"
 
@@ -654,7 +671,9 @@ def _pattern_relationships(
         # --- works_for patterns ---
         relationships.extend(
             _scan_pattern_pair(
-                text, ents, pg,
+                text,
+                ents,
+                pg,
                 _WORKS_FOR_PATTERNS,
                 source_filter=_is_person,
                 target_filter=_is_org,
@@ -666,7 +685,9 @@ def _pattern_relationships(
         # --- located_at patterns ---
         relationships.extend(
             _scan_pattern_pair(
-                text, ents, pg,
+                text,
+                ents,
+                pg,
                 _LOCATED_AT_PATTERNS,
                 source_filter=lambda e: _is_person(e) or _is_org(e),
                 target_filter=_is_location,
@@ -681,20 +702,22 @@ def _pattern_relationships(
                 span_start = m.start()
                 span_end = m.end()
                 persons = [
-                    e for e in ents
-                    if _is_person(e)
-                    and _entity_in_span(e, text, span_start, span_end)
+                    e
+                    for e in ents
+                    if _is_person(e) and _entity_in_span(e, text, span_start, span_end)
                 ]
                 for person in persons:
-                    relationships.append(EntityRelationship(
-                        source_id=person["id"],
-                        target_id="document",
-                        relation_type="signed_by",
-                        confidence=0.70,
-                        evidence=_extract_evidence(text, span_start, span_end),
-                        page=pg,
-                        metadata={"method": "pattern"},
-                    ))
+                    relationships.append(
+                        EntityRelationship(
+                            source_id=person["id"],
+                            target_id="document",
+                            relation_type="signed_by",
+                            confidence=0.70,
+                            evidence=_extract_evidence(text, span_start, span_end),
+                            page=pg,
+                            metadata={"method": "pattern"},
+                        )
+                    )
 
         # --- sent_to patterns ---
         for pat in _CORRESPONDENCE_TO_PATTERNS:
@@ -702,37 +725,40 @@ def _pattern_relationships(
                 span_start = m.start()
                 span_end = m.end()
                 persons = [
-                    e for e in ents
-                    if _is_person(e)
-                    and _entity_in_span(e, text, span_start, span_end)
+                    e
+                    for e in ents
+                    if _is_person(e) and _entity_in_span(e, text, span_start, span_end)
                 ]
                 for person in persons:
                     # Find a "from" person on the same page
                     from_persons = [
-                        e for e in ents
-                        if _is_person(e) and e["id"] != person["id"]
+                        e for e in ents if _is_person(e) and e["id"] != person["id"]
                     ]
                     if from_persons:
-                        relationships.append(EntityRelationship(
-                            source_id=from_persons[0]["id"],
-                            target_id=person["id"],
-                            relation_type="sent_to",
-                            confidence=0.65,
-                            evidence=_extract_evidence(text, span_start, span_end),
-                            page=pg,
-                            metadata={"method": "pattern"},
-                        ))
+                        relationships.append(
+                            EntityRelationship(
+                                source_id=from_persons[0]["id"],
+                                target_id=person["id"],
+                                relation_type="sent_to",
+                                confidence=0.65,
+                                evidence=_extract_evidence(text, span_start, span_end),
+                                page=pg,
+                                metadata={"method": "pattern"},
+                            )
+                        )
                     else:
                         # No "from" person found, still record the addressee
-                        relationships.append(EntityRelationship(
-                            source_id="document",
-                            target_id=person["id"],
-                            relation_type="sent_to",
-                            confidence=0.60,
-                            evidence=_extract_evidence(text, span_start, span_end),
-                            page=pg,
-                            metadata={"method": "pattern"},
-                        ))
+                        relationships.append(
+                            EntityRelationship(
+                                source_id="document",
+                                target_id=person["id"],
+                                relation_type="sent_to",
+                                confidence=0.60,
+                                evidence=_extract_evidence(text, span_start, span_end),
+                                page=pg,
+                                metadata={"method": "pattern"},
+                            )
+                        )
 
         # --- sent_from patterns ---
         for pat in _CORRESPONDENCE_FROM_PATTERNS:
@@ -740,20 +766,22 @@ def _pattern_relationships(
                 span_start = m.start()
                 span_end = m.end()
                 persons = [
-                    e for e in ents
-                    if _is_person(e)
-                    and _entity_in_span(e, text, span_start, span_end)
+                    e
+                    for e in ents
+                    if _is_person(e) and _entity_in_span(e, text, span_start, span_end)
                 ]
                 for person in persons:
-                    relationships.append(EntityRelationship(
-                        source_id=person["id"],
-                        target_id="document",
-                        relation_type="sent_from",
-                        confidence=0.65,
-                        evidence=_extract_evidence(text, span_start, span_end),
-                        page=pg,
-                        metadata={"method": "pattern"},
-                    ))
+                    relationships.append(
+                        EntityRelationship(
+                            source_id=person["id"],
+                            target_id="document",
+                            relation_type="sent_from",
+                            confidence=0.65,
+                            evidence=_extract_evidence(text, span_start, span_end),
+                            page=pg,
+                            metadata={"method": "pattern"},
+                        )
+                    )
 
         # --- references patterns ---
         for pat in _REFERENCE_PATTERNS:
@@ -761,20 +789,23 @@ def _pattern_relationships(
                 span_start = m.start()
                 span_end = m.end()
                 refs = [
-                    e for e in ents
+                    e
+                    for e in ents
                     if _is_case_or_exhibit(e)
                     and _entity_in_span(e, text, span_start, span_end)
                 ]
                 for ref_ent in refs:
-                    relationships.append(EntityRelationship(
-                        source_id=ref_ent["id"],
-                        target_id="document",
-                        relation_type="references",
-                        confidence=0.80,
-                        evidence=_extract_evidence(text, span_start, span_end),
-                        page=pg,
-                        metadata={"method": "pattern"},
-                    ))
+                    relationships.append(
+                        EntityRelationship(
+                            source_id=ref_ent["id"],
+                            target_id="document",
+                            relation_type="references",
+                            confidence=0.80,
+                            evidence=_extract_evidence(text, span_start, span_end),
+                            page=pg,
+                            metadata={"method": "pattern"},
+                        )
+                    )
 
     return relationships
 
@@ -820,55 +851,59 @@ def _scan_pattern_pair(
 
             # Find source entities in left span, target in right span
             sources = [
-                e for e in entities
-                if source_filter(e)
-                and _entity_in_span(e, text, left_start, left_end)
+                e
+                for e in entities
+                if source_filter(e) and _entity_in_span(e, text, left_start, left_end)
             ]
             targets = [
-                e for e in entities
-                if target_filter(e)
-                and _entity_in_span(e, text, right_start, right_end)
+                e
+                for e in entities
+                if target_filter(e) and _entity_in_span(e, text, right_start, right_end)
             ]
 
             for src in sources:
                 for tgt in targets:
                     if src["id"] == tgt["id"]:
                         continue
-                    rels.append(EntityRelationship(
-                        source_id=src["id"],
-                        target_id=tgt["id"],
-                        relation_type=relation_type,
-                        confidence=base_confidence,
-                        evidence=_extract_evidence(text, span_start, span_end),
-                        page=page,
-                        metadata={"method": "pattern"},
-                    ))
+                    rels.append(
+                        EntityRelationship(
+                            source_id=src["id"],
+                            target_id=tgt["id"],
+                            relation_type=relation_type,
+                            confidence=base_confidence,
+                            evidence=_extract_evidence(text, span_start, span_end),
+                            page=page,
+                            metadata={"method": "pattern"},
+                        )
+                    )
 
             # Also try reversed: source in right, target in left
             sources_r = [
-                e for e in entities
-                if source_filter(e)
-                and _entity_in_span(e, text, right_start, right_end)
+                e
+                for e in entities
+                if source_filter(e) and _entity_in_span(e, text, right_start, right_end)
             ]
             targets_r = [
-                e for e in entities
-                if target_filter(e)
-                and _entity_in_span(e, text, left_start, left_end)
+                e
+                for e in entities
+                if target_filter(e) and _entity_in_span(e, text, left_start, left_end)
             ]
 
             for src in sources_r:
                 for tgt in targets_r:
                     if src["id"] == tgt["id"]:
                         continue
-                    rels.append(EntityRelationship(
-                        source_id=src["id"],
-                        target_id=tgt["id"],
-                        relation_type=relation_type,
-                        confidence=base_confidence,
-                        evidence=_extract_evidence(text, span_start, span_end),
-                        page=page,
-                        metadata={"method": "pattern"},
-                    ))
+                    rels.append(
+                        EntityRelationship(
+                            source_id=src["id"],
+                            target_id=tgt["id"],
+                            relation_type=relation_type,
+                            confidence=base_confidence,
+                            evidence=_extract_evidence(text, span_start, span_end),
+                            page=page,
+                            metadata={"method": "pattern"},
+                        )
+                    )
 
     return rels
 
@@ -931,15 +966,24 @@ class RelationshipExtractor:
         max_proximity_chars: Optional[int] = None,
         min_confidence: Optional[float] = None,
     ):
-        self._max_proximity = (
-            max_proximity_chars
-            if max_proximity_chars is not None
-            else _MAX_PROXIMITY_CHARS
+        self._max_proximity = max(
+            0,
+            min(
+                1_000_000,
+                int(
+                    _MAX_PROXIMITY_CHARS
+                    if max_proximity_chars is None
+                    else max_proximity_chars
+                ),
+            ),
+        )
+        confidence = (
+            _MIN_CONFIDENCE if min_confidence is None else float(min_confidence)
         )
         self._min_confidence = (
-            min_confidence
-            if min_confidence is not None
-            else _MIN_CONFIDENCE
+            _MIN_CONFIDENCE
+            if not math.isfinite(confidence)
+            else max(0.0, min(1.0, confidence))
         )
 
     def extract_relationships(
@@ -969,14 +1013,10 @@ class RelationshipExtractor:
             all_rels.extend(
                 _proximity_relationships(entities, page_texts, self._max_proximity)
             )
-            all_rels.extend(
-                _pattern_relationships(entities, page_texts)
-            )
+            all_rels.extend(_pattern_relationships(entities, page_texts))
 
         if kv_pairs:
-            all_rels.extend(
-                _kv_linkage_relationships(entities, kv_pairs)
-            )
+            all_rels.extend(_kv_linkage_relationships(entities, kv_pairs))
 
         # Deduplicate and filter
         deduped = deduplicate_relationships(all_rels)
@@ -1037,6 +1077,8 @@ def extract_and_attach_relationships(
     rel_type_counts = {}
     for r in rels:
         rel_type_counts[r.relation_type] = rel_type_counts.get(r.relation_type, 0) + 1
-    consolidated["summary"]["relationship_types"] = dict(sorted(rel_type_counts.items()))
+    consolidated["summary"]["relationship_types"] = dict(
+        sorted(rel_type_counts.items())
+    )
 
     return consolidated

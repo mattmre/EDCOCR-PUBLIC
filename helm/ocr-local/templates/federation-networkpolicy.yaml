@@ -1,6 +1,6 @@
 {{- if and .Values.federation.enabled .Values.federation.networkPolicy.enabled }}
 # =============================================================================
-# Federation NetworkPolicy
+# Federation NetworkPolicy (Plan C Phase 1)
 #
 # Allows AMQPS egress from this cluster's RabbitMQ pod(s) to peer-cluster
 # RabbitMQ endpoints listed in `federation.networkPolicy.peerCidrs`.

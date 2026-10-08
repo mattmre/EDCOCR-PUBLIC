@@ -1,5 +1,5 @@
 /**
- * TypeScript interfaces for the EDCOCR API.
+ * TypeScript interfaces for the OCR_LOCAL API.
  *
  * These types mirror the Pydantic models defined in `api/models.py`
  * and provide compile-time safety for SDK consumers.
@@ -173,7 +173,7 @@ export interface ErrorResponse {
 // ---------------------------------------------------------------------------
 
 /**
- * Configuration options for the EDCOCR SDK client.
+ * Configuration options for the OCR_LOCAL SDK client.
  */
 export interface ClientConfig {
   /** Root URL of the OCR API (e.g. `http://localhost:8000`). */

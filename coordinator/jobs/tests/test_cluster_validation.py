@@ -31,25 +31,49 @@ _PROJECT_ROOT = os.path.abspath(
 CHART_PATH = os.path.join(_PROJECT_ROOT, "helm", "ocr-local")
 
 _REQUIRED_SETS = [
-    "--set", "secrets.djangoSecretKey=test",
-    "--set", "secrets.postgresPassword=test",
-    "--set", "secrets.rabbitmqPassword=test",
-    "--set", "secrets.redisPassword=test",
-    "--set", "secrets.flowerPassword=test-flower-password",
+    "--set",
+    "secrets.djangoSecretKey=test",
+    "--set",
+    "secrets.apiKey=test-api-key",
+    "--set",
+    "secrets.postgresPassword=test",
+    "--set",
+    "secrets.rabbitmqPassword=test",
+    "--set",
+    "secrets.redisPassword=test",
+    "--set",
+    "secrets.flowerPassword=test-flower-password",
+    "--set",
+    "secrets.webhookSecretKey=test-webhook-key",
+    "--set",
+    "secrets.piiEncryptionKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "--set",
+    "secrets.celeryTaskSigningKey=test-signing-key",
 ]
 
 _HA_SETS = [
-    "--set", "rabbitmq.replicas=3",
-    "--set", "redis.sentinel.enabled=true",
-    "--set", "redis.sentinel.quorum=3",
-    "--set", "postgresql.backup.enabled=true",
-    "--set", "prometheus.enabled=true",
-    "--set", "prometheus.serviceMonitor.enabled=true",
-    "--set", "prometheus.rules.enabled=true",
-    "--set", "prometheus.grafana.enabled=true",
-    "--set", "secrets.metricsApiKey=test-key",
-    "--set", "coordinator.replicas=2",
-    "--set", "gpuWorker.replicas=4",
+    "--set",
+    "rabbitmq.replicas=3",
+    "--set",
+    "redis.sentinel.enabled=true",
+    "--set",
+    "redis.sentinel.quorum=3",
+    "--set",
+    "postgresql.backup.enabled=true",
+    "--set",
+    "prometheus.enabled=true",
+    "--set",
+    "prometheus.serviceMonitor.enabled=true",
+    "--set",
+    "prometheus.rules.enabled=true",
+    "--set",
+    "prometheus.grafana.enabled=true",
+    "--set",
+    "secrets.metricsApiKey=test-key",
+    "--set",
+    "coordinator.replicas=2",
+    "--set",
+    "gpuWorker.replicas=4",
 ]
 
 HELM_AVAILABLE = shutil.which("helm") is not None
@@ -57,9 +81,16 @@ HELM_AVAILABLE = shutil.which("helm") is not None
 
 def _helm_template_ha():
     """Run helm template with all HA flags and return parsed YAML documents."""
-    cmd = [
-        "helm", "template", "ha-test", CHART_PATH,
-    ] + list(_REQUIRED_SETS) + list(_HA_SETS)
+    cmd = (
+        [
+            "helm",
+            "template",
+            "ha-test",
+            CHART_PATH,
+        ]
+        + list(_REQUIRED_SETS)
+        + list(_HA_SETS)
+    )
     result = subprocess.run(
         cmd,
         capture_output=True,
@@ -109,8 +140,9 @@ class TestMultiReplicaHelmRendering(unittest.TestCase):
     def test_full_ha_renders_without_errors(self):
         """All HA flags enabled, helm template exits 0 and produces docs."""
         self.assertGreater(
-            len(self.docs), 0,
-            "helm template with all HA flags must produce at least one resource"
+            len(self.docs),
+            0,
+            "helm template with all HA flags must produce at least one resource",
         )
 
     # ------------------------------------------------------------------
@@ -120,13 +152,18 @@ class TestMultiReplicaHelmRendering(unittest.TestCase):
         """All expected Kubernetes resource kinds should be rendered."""
         rendered_kinds = {doc["kind"] for doc in self.docs if doc}
         expected_kinds = {
-            "Deployment", "StatefulSet", "Service", "Secret",
-            "ConfigMap", "PodDisruptionBudget",
+            "Deployment",
+            "StatefulSet",
+            "Service",
+            "Secret",
+            "ConfigMap",
+            "PodDisruptionBudget",
         }
         missing = expected_kinds - rendered_kinds
         self.assertEqual(
-            missing, set(),
-            f"Expected resource kinds missing from rendered chart: {missing}"
+            missing,
+            set(),
+            f"Expected resource kinds missing from rendered chart: {missing}",
         )
 
     # ------------------------------------------------------------------
@@ -137,17 +174,20 @@ class TestMultiReplicaHelmRendering(unittest.TestCase):
         sts_list = _find_resources(self.docs, "StatefulSet", "rabbitmq")
         # Filter to the main RabbitMQ StatefulSet (not sentinel-related)
         rabbitmq_sts = [
-            s for s in sts_list
+            s
+            for s in sts_list
             if "sentinel" not in s["metadata"]["name"]
             and "replica" not in s["metadata"]["name"]
         ]
         self.assertEqual(
-            len(rabbitmq_sts), 1,
-            f"Expected exactly 1 rabbitmq StatefulSet, found {len(rabbitmq_sts)}"
+            len(rabbitmq_sts),
+            1,
+            f"Expected exactly 1 rabbitmq StatefulSet, found {len(rabbitmq_sts)}",
         )
         self.assertEqual(
-            rabbitmq_sts[0]["spec"]["replicas"], 3,
-            "RabbitMQ StatefulSet should have replicas=3"
+            rabbitmq_sts[0]["spec"]["replicas"],
+            3,
+            "RabbitMQ StatefulSet should have replicas=3",
         )
 
     # ------------------------------------------------------------------
@@ -157,12 +197,14 @@ class TestMultiReplicaHelmRendering(unittest.TestCase):
         """Redis Sentinel StatefulSet exists with replicas=3."""
         sentinel_sts = _find_resources(self.docs, "StatefulSet", "redis-sentinel")
         self.assertGreaterEqual(
-            len(sentinel_sts), 1,
-            "At least one redis-sentinel StatefulSet should be rendered"
+            len(sentinel_sts),
+            1,
+            "At least one redis-sentinel StatefulSet should be rendered",
         )
         self.assertEqual(
-            sentinel_sts[0]["spec"]["replicas"], 3,
-            "Redis Sentinel StatefulSet should have replicas=3 (sentinelReplicas default)"
+            sentinel_sts[0]["spec"]["replicas"],
+            3,
+            "Redis Sentinel StatefulSet should have replicas=3 (sentinelReplicas default)",
         )
 
     # ------------------------------------------------------------------
@@ -172,8 +214,9 @@ class TestMultiReplicaHelmRendering(unittest.TestCase):
         """Redis Replica StatefulSet exists."""
         replica_sts = _find_resources(self.docs, "StatefulSet", "redis-replica")
         self.assertEqual(
-            len(replica_sts), 1,
-            "Exactly one redis-replica StatefulSet should be rendered"
+            len(replica_sts),
+            1,
+            "Exactly one redis-replica StatefulSet should be rendered",
         )
 
     # ------------------------------------------------------------------
@@ -183,8 +226,7 @@ class TestMultiReplicaHelmRendering(unittest.TestCase):
         """CronJob for postgres backup exists."""
         cronjobs = _find_resources(self.docs, "CronJob", "postgres-backup")
         self.assertEqual(
-            len(cronjobs), 1,
-            "Exactly one postgres-backup CronJob should be rendered"
+            len(cronjobs), 1, "Exactly one postgres-backup CronJob should be rendered"
         )
         self.assertEqual(cronjobs[0]["apiVersion"], "batch/v1")
 
@@ -195,20 +237,19 @@ class TestMultiReplicaHelmRendering(unittest.TestCase):
         """ServiceMonitor + PrometheusRule + Grafana ConfigMap all present."""
         service_monitors = _find_resources(self.docs, "ServiceMonitor")
         self.assertGreaterEqual(
-            len(service_monitors), 1,
-            "At least one ServiceMonitor should be rendered"
+            len(service_monitors), 1, "At least one ServiceMonitor should be rendered"
         )
 
         prom_rules = _find_resources(self.docs, "PrometheusRule")
         self.assertGreaterEqual(
-            len(prom_rules), 1,
-            "At least one PrometheusRule should be rendered"
+            len(prom_rules), 1, "At least one PrometheusRule should be rendered"
         )
 
         grafana_cms = _find_resources(self.docs, "ConfigMap", "grafana-dashboard")
         self.assertGreaterEqual(
-            len(grafana_cms), 1,
-            "At least one Grafana dashboard ConfigMap should be rendered"
+            len(grafana_cms),
+            1,
+            "At least one Grafana dashboard ConfigMap should be rendered",
         )
 
     # ------------------------------------------------------------------
@@ -219,17 +260,18 @@ class TestMultiReplicaHelmRendering(unittest.TestCase):
         deployments = _find_resources(self.docs, "Deployment", "coordinator")
         # Filter to the main coordinator Deployment (not celery-coordinator)
         coord_deps = [
-            d for d in deployments
-            if d["metadata"]["name"] == "ha-test-coordinator"
+            d for d in deployments if d["metadata"]["name"] == "ha-test-coordinator"
         ]
         self.assertEqual(
-            len(coord_deps), 1,
+            len(coord_deps),
+            1,
             f"Expected exactly 1 coordinator Deployment named 'ha-test-coordinator', "
-            f"found: {[d['metadata']['name'] for d in deployments]}"
+            f"found: {[d['metadata']['name'] for d in deployments]}",
         )
         self.assertEqual(
-            coord_deps[0]["spec"]["replicas"], 2,
-            "Coordinator Deployment should have replicas=2"
+            coord_deps[0]["spec"]["replicas"],
+            2,
+            "Coordinator Deployment should have replicas=2",
         )
 
     # ------------------------------------------------------------------
@@ -239,12 +281,12 @@ class TestMultiReplicaHelmRendering(unittest.TestCase):
         """GPU Worker Deployment has replicas=4."""
         gpu_deps = _find_resources(self.docs, "Deployment", "gpu-worker")
         self.assertEqual(
-            len(gpu_deps), 1,
-            "Exactly one gpu-worker Deployment should be rendered"
+            len(gpu_deps), 1, "Exactly one gpu-worker Deployment should be rendered"
         )
         self.assertEqual(
-            gpu_deps[0]["spec"]["replicas"], 4,
-            "GPU Worker Deployment should have replicas=4"
+            gpu_deps[0]["spec"]["replicas"],
+            4,
+            "GPU Worker Deployment should have replicas=4",
         )
 
     # ------------------------------------------------------------------
@@ -255,18 +297,26 @@ class TestMultiReplicaHelmRendering(unittest.TestCase):
         pdbs = _find_resources(self.docs, "PodDisruptionBudget")
         pdb_names = {p["metadata"]["name"] for p in pdbs}
 
-        expected_substrings = ["gpu-worker", "coordinator", "postgres", "rabbitmq", "redis"]
+        expected_substrings = [
+            "gpu-worker",
+            "coordinator",
+            "postgres",
+            "rabbitmq",
+            "redis",
+        ]
         for substr in expected_substrings:
             matches = [n for n in pdb_names if substr in n]
             self.assertGreaterEqual(
-                len(matches), 1,
+                len(matches),
+                1,
                 f"Expected a PDB containing '{substr}' in its name. "
-                f"Found PDBs: {sorted(pdb_names)}"
+                f"Found PDBs: {sorted(pdb_names)}",
             )
 
         self.assertGreaterEqual(
-            len(pdbs), 5,
-            f"Expected at least 5 PDBs, got {len(pdbs)}: {sorted(pdb_names)}"
+            len(pdbs),
+            5,
+            f"Expected at least 5 PDBs, got {len(pdbs)}: {sorted(pdb_names)}",
         )
 
     # ------------------------------------------------------------------
@@ -276,25 +326,25 @@ class TestMultiReplicaHelmRendering(unittest.TestCase):
         """All Services have matching selector labels that include
         the common selectorLabels (name + instance)."""
         services = _find_resources(self.docs, "Service")
-        self.assertGreater(
-            len(services), 0,
-            "At least one Service should be rendered"
-        )
+        self.assertGreater(len(services), 0, "At least one Service should be rendered")
         for svc in services:
             svc_name = svc["metadata"]["name"]
             selector = svc.get("spec", {}).get("selector", {})
             self.assertIn(
-                "app.kubernetes.io/name", selector,
-                f"Service '{svc_name}' selector must include app.kubernetes.io/name"
+                "app.kubernetes.io/name",
+                selector,
+                f"Service '{svc_name}' selector must include app.kubernetes.io/name",
             )
             self.assertIn(
-                "app.kubernetes.io/instance", selector,
-                f"Service '{svc_name}' selector must include app.kubernetes.io/instance"
+                "app.kubernetes.io/instance",
+                selector,
+                f"Service '{svc_name}' selector must include app.kubernetes.io/instance",
             )
             # The instance label should match our release name
             self.assertEqual(
-                selector["app.kubernetes.io/instance"], "ha-test",
-                f"Service '{svc_name}' selector instance must be 'ha-test'"
+                selector["app.kubernetes.io/instance"],
+                "ha-test",
+                f"Service '{svc_name}' selector instance must be 'ha-test'",
             )
 
 
@@ -318,8 +368,7 @@ class TestConfigurationConsistency(unittest.TestCase):
         """The rendered Secret contains all required keys."""
         secrets = _find_resources(self.docs, "Secret")
         self.assertGreaterEqual(
-            len(secrets), 1,
-            "At least one Secret should be rendered"
+            len(secrets), 1, "At least one Secret should be rendered"
         )
 
         # Find the main secret (ha-test-secret)
@@ -331,7 +380,7 @@ class TestConfigurationConsistency(unittest.TestCase):
         self.assertIsNotNone(
             main_secret,
             f"Secret 'ha-test-secret' not found. Secrets: "
-            f"{[s['metadata']['name'] for s in secrets]}"
+            f"{[s['metadata']['name'] for s in secrets]}",
         )
 
         required_keys = [
@@ -344,14 +393,20 @@ class TestConfigurationConsistency(unittest.TestCase):
             "REDIS_PASSWORD",
             "REDIS_URL",
             "CELERY_RESULT_BACKEND",
-            "FLOWER_PASSWORD",
             "METRICS_API_KEY",
         ]
+        if any(
+            d.get("kind") == "Deployment"
+            and d.get("metadata", {}).get("name") == "ha-test-flower"
+            for d in self.docs
+        ):
+            required_keys.append("FLOWER_PASSWORD")
         data_keys = set(main_secret.get("data", {}).keys())
         for key in required_keys:
             self.assertIn(
-                key, data_keys,
-                f"Secret must contain key '{key}'. Found keys: {sorted(data_keys)}"
+                key,
+                data_keys,
+                f"Secret must contain key '{key}'. Found keys: {sorted(data_keys)}",
             )
 
     # ------------------------------------------------------------------
@@ -366,11 +421,11 @@ class TestConfigurationConsistency(unittest.TestCase):
                 coord_dep = d
                 break
         self.assertIsNotNone(
-            coord_dep,
-            "Coordinator Deployment 'ha-test-coordinator' not found"
+            coord_dep, "Coordinator Deployment 'ha-test-coordinator' not found"
         )
 
-        # Check containers for secretRef
+        # Check containers for either the legacy full-secret envFrom or the
+        # default least-secret explicit secretKeyRef contract.
         containers = coord_dep["spec"]["template"]["spec"]["containers"]
         found_secret_ref = False
         for container in containers:
@@ -380,9 +435,17 @@ class TestConfigurationConsistency(unittest.TestCase):
                 if secret_ref.get("name") == "ha-test-secret":
                     found_secret_ref = True
                     break
+            if any(
+                env.get("valueFrom", {}).get("secretKeyRef", {}).get("name")
+                == "ha-test-secret"
+                for env in container.get("env", [])
+            ):
+                found_secret_ref = True
 
-        # Also check initContainers
-        init_containers = coord_dep["spec"]["template"]["spec"].get("initContainers", [])
+        # Also check initContainers.
+        init_containers = coord_dep["spec"]["template"]["spec"].get(
+            "initContainers", []
+        )
         for container in init_containers:
             env_from = container.get("envFrom", [])
             for ef in env_from:
@@ -390,14 +453,20 @@ class TestConfigurationConsistency(unittest.TestCase):
                 if secret_ref.get("name") == "ha-test-secret":
                     found_secret_ref = True
                     break
+            if any(
+                env.get("valueFrom", {}).get("secretKeyRef", {}).get("name")
+                == "ha-test-secret"
+                for env in container.get("env", [])
+            ):
+                found_secret_ref = True
 
         self.assertTrue(
             found_secret_ref,
-            "Coordinator Deployment must reference 'ha-test-secret' via envFrom.secretRef"
+            "Coordinator Deployment must reference 'ha-test-secret' via envFrom.secretRef",
         )
 
-    def test_coordinator_probes_use_metrics_api_key_when_configured(self):
-        """Coordinator probes should use the configured metrics API key."""
+    def test_coordinator_probes_use_the_db_health_endpoint(self):
+        """Liveness is anonymous; readiness uses the detailed DB/broker check."""
         deployments = _find_resources(self.docs, "Deployment")
         coord_dep = next(
             (d for d in deployments if d["metadata"]["name"] == "ha-test-coordinator"),
@@ -406,13 +475,19 @@ class TestConfigurationConsistency(unittest.TestCase):
         self.assertIsNotNone(coord_dep)
 
         container = coord_dep["spec"]["template"]["spec"]["containers"][0]
-        for probe_name in ("livenessProbe", "readinessProbe", "startupProbe"):
+        for probe_name in ("livenessProbe", "startupProbe"):
             probe = container[probe_name]["httpGet"]
+            self.assertEqual(probe["path"], "/api/v1/health")
+            self.assertEqual(probe["port"], 8000)
             self.assertEqual(
-                probe["httpHeaders"],
-                [{"name": "X-Api-Key", "value": "test-key"}],
-                f"{probe_name} must use the configured metrics API key",
+                {header["name"]: header["value"] for header in probe["httpHeaders"]},
+                {"Host": "localhost"},
             )
+
+        readiness = container["readinessProbe"]["exec"]["command"]
+        self.assertIn("/api/v1/health/detailed", readiness[-1])
+        self.assertIn("OCR_COORDINATOR_API_KEY", readiness[-1])
+        self.assertIn("OCR_COORDINATOR_HEALTH_TENANT_ID", readiness[-1])
 
     # ------------------------------------------------------------------
     # 14. Celery workers share same secret
@@ -442,10 +517,18 @@ class TestConfigurationConsistency(unittest.TestCase):
                         break
 
         for dep_name, found in expected_components.items():
+            if not found:
+                dep = next(d for d in deployments if d["metadata"]["name"] == dep_name)
+                found = any(
+                    env.get("valueFrom", {}).get("secretKeyRef", {}).get("name")
+                    == "ha-test-secret"
+                    for container in dep["spec"]["template"]["spec"]["containers"]
+                    for env in container.get("env", [])
+                )
             self.assertTrue(
                 found,
                 f"Deployment '{dep_name}' must reference 'ha-test-secret' via "
-                f"envFrom.secretRef"
+                f"envFrom.secretRef or an explicit secretKeyRef",
             )
 
 
@@ -484,9 +567,10 @@ class TestFailoverResilience(TestCase):
         ).count()
 
         self.assertEqual(
-            gpu_available_count, 1,
+            gpu_available_count,
+            1,
             "Only online/busy workers with gpu_available=True should be counted. "
-            "Offline workers must be excluded."
+            "Offline workers must be excluded.",
         )
 
     # ------------------------------------------------------------------
@@ -582,9 +666,10 @@ class TestFailoverResilience(TestCase):
         # retry/reassignment via Celery chord errback, not by changing
         # job status when a worker goes offline.
         self.assertEqual(
-            job.status, Job.Status.PROCESSING,
+            job.status,
+            Job.Status.PROCESSING,
             "Job status must remain 'processing' when its worker goes offline. "
-            "The coordinator handles retry via chord errback."
+            "The coordinator handles retry via chord errback.",
         )
         self.assertEqual(job.assigned_worker, "gpu-worker-doomed")
         self.assertEqual(job.pages_completed, 3)

@@ -1,0 +1,15 @@
+**
+!frontend/
+!frontend/src/
+!frontend/src/**
+!frontend/public/
+!frontend/public/**
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/tsconfig.json
+!frontend/next.config.mjs
+!frontend/postcss.config.mjs
+!frontend/tailwind.config.ts
+!frontend/.eslintrc.json
+frontend/**/.env*
+frontend/**/.npmrc

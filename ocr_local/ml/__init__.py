@@ -6,7 +6,7 @@ through the standard Python machinery::
     from ocr_local.ml import layoutlm_labels
     import ocr_local.ml.layoutlm_finetune as ft
 
- Phase 2 is complete: every ML module has been physically
+maintenance review Phase 2 is complete: every ML module has been physically
 migrated into this package, so no PEP-562 ``__getattr__`` lazy-loader is
 required.  ``_ML_MODULES`` is retained as an empty tuple so that legacy
 introspection (``from ocr_local.ml import _ML_MODULES``) continues to

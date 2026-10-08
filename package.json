@@ -10,12 +10,13 @@
     "pw:test:feature-flags": "npx playwright test --project=feature-flags-api",
     "pw:test:ops": "npx playwright test --project=ops-api",
     "pw:test:browser": "npx playwright test --project=browser-api-docs --project=browser-admin",
+    "pw:test:operator-console": "npx playwright test --project=operator-console",
     "pw:summary": "python scripts/summarize_playwright_run.py",
     "pw:report": "npx playwright show-report",
     "pw:codegen": "npx playwright codegen"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.11.3",
-    "@playwright/test": "^1.60.0"
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.61.1"
   }
 }

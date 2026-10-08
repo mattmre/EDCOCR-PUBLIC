@@ -14,10 +14,11 @@ function configuredApiKey() {
   return raw.trim() || null;
 }
 
-test.describe("OCR job websocket coverage", => {
+test.describe("OCR job websocket coverage", () => {
   test.skip(
     !hasEnv("PLAYWRIGHT_API_BASE_URL"),
-    "Set PLAYWRIGHT_API_BASE_URL to run browser WebSocket coverage.");
+    "Set PLAYWRIGHT_API_BASE_URL to run browser WebSocket coverage.",
+  );
 
   test("@smoke websocket connects to a submitted job and handles ping/pong", async ({ page, request, baseURL }) => {
     const submitResponse = await submitJobUpload(request, baseURL);
@@ -38,7 +39,9 @@ test.describe("OCR job websocket coverage", => {
     expect(messages[0].status).toMatch(/submitted|processing|completed|failed|cancelled/);
     expect(
       messages.some((message) =>
-        ["pong", "completed", "failed", "cancelled"].includes(message.type))).toBeTruthy();
+        ["pong", "completed", "failed", "cancelled"].includes(message.type),
+      ),
+    ).toBeTruthy();
   });
 
   test("@smoke websocket returns a structured error for missing jobs", async ({ page, baseURL }) => {

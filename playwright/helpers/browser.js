@@ -38,7 +38,8 @@ function trackConsoleErrors(page, options = {}) {
 async function expectNoUnexpectedConsoleErrors(tracker) {
   expect(
     tracker.errors,
-    `Unexpected browser console errors:\n${tracker.errors.join("\n")}`).toEqual([]);
+    `Unexpected browser console errors:\n${tracker.errors.join("\n")}`,
+  ).toEqual([]);
 }
 
 module.exports = {

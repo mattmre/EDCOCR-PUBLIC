@@ -1,10 +1,7 @@
-import { getApiKey } from "./auth";
-import { apiClient, get } from "./api-client";
+import { handleUnauthorized } from "./api-client";
+import { getApiKey, getAuthRequestCredentials } from "./auth";
+import { UnauthorizedError, buildUrl, createTimeoutSignal, get } from "./api-client";
 import type { BatchListResponse, BatchStatusResponse, BatchSubmitResponse } from "./types";
-
-function buildUrl(path: string): string {
-  return `${apiClient.baseUrl.replace(/\/+$/, "")}${path}`;
-}
 
 function authHeaders(): Headers {
   const headers = new Headers({ Accept: "application/json" });
@@ -28,20 +25,32 @@ export async function submitBatch(files: File[], priority = "normal"): Promise<B
   }
   body.set("priority", priority);
 
-  const response = await fetch(buildUrl("/api/v1/jobs/batch"), {
-    method: "POST",
-    headers: authHeaders(),
-    body,
-  });
+  const { signal, cleanup } = createTimeoutSignal();
+  try {
+    const response = await fetch(buildUrl("/api/v1/jobs/batch"), {
+      method: "POST",
+      headers: authHeaders(),
+      credentials: getAuthRequestCredentials(),
+      body,
+      signal,
+    });
 
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null);
-    const detail =
-      payload && typeof payload === "object" && "detail" in payload
-        ? JSON.stringify(payload.detail)
-        : `Batch submit failed with status ${response.status}`;
-    throw new Error(detail);
+    if (response.status === 401) {
+      handleUnauthorized();
+      throw new UnauthorizedError(response.status, null);
+    }
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      const detail =
+        payload && typeof payload === "object" && "detail" in payload
+          ? JSON.stringify(payload.detail)
+          : `Batch submit failed with status ${response.status}`;
+      throw new Error(detail);
+    }
+
+    return (await response.json()) as BatchSubmitResponse;
+  } finally {
+    cleanup();
   }
-
-  return response.json() as Promise<BatchSubmitResponse>;
 }

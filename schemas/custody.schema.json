@@ -7,6 +7,7 @@
   "properties": {
     "document_id": {
       "type": "string",
+      "minLength": 1,
       "description": "Unique document identifier (typically SHA-256 hash prefix)."
     },
     "event_type": {
@@ -15,6 +16,8 @@
       "enum": [
         "file_ingested",
         "page_extracted",
+        "text_extracted_natively",
+        "pages_extracted",
         "ocr_primary",
         "ocr_fallback",
         "ocr_image_only",
@@ -22,31 +25,84 @@
         "language_reprocess",
         "docintel_analysis",
         "assembly_complete",
+        "assembly_failed",
         "compression_complete",
+        "compression_skipped",
+        "processing_resumed",
+        "compression_failed",
         "dpi_escalation",
         "processing_failed",
         "temp_files_purged",
         "pii_purged",
         "tenant_purged",
         "output_cleaned",
-        "audit_logs_rotated"
+        "audit_logs_rotated",
+        "transform_start",
+        "transform_complete",
+        "transform_failed",
+        "stamp_start",
+        "stamp_complete",
+        "stamp_failed",
+        "ENGINE_PROVENANCE",
+        "LICENSE_BLOCKED",
+        "LANE_BOUNDARY_ENFORCED",
+        "LANGUAGE_DETECTED",
+        "LANGUAGE_MIXED_SCRIPT",
+        "LANGUAGE_REDETECT_PREPARED",
+        "LANGUAGE_REDETECTED",
+        "TRANSLATION_APPLIED",
+        "TRANSLATION_REJECTED",
+        "QUALITY_BELOW_THRESHOLD",
+        "TRANSLATION_FALLBACK",
+        "TRANSLATION_REVIEWED",
+        "GLOSSARY_APPLIED",
+        "TRANSLATION_SKIPPED",
+        "TRANSLATION_MODEL_CACHE",
+        "TRANSLATION_QUALITY_ESTIMATED",
+        "TRANSLATION_COMPLETED",
+        "CUSTODY_TSA_WARNING",
+        "TENANT_ENGINE_SELECTED",
+        "TENANT_ENGINE_NO_CANDIDATES",
+        "TENANT_POLICY_HYDRATED",
+        "BATCH_SUBMITTED",
+        "BATCH_FAN_OUT",
+        "BATCH_INPUT_COMPLETED",
+        "BATCH_INPUT_FAILED",
+        "BATCH_CANCELLED",
+        "BATCH_COMPLETED",
+        "BATCH_REJECTED_CERTIFIED",
+        "PLUGIN_REGISTERED",
+        "PLUGIN_REJECTED"
       ]
     },
     "timestamp": {
       "type": "string",
       "format": "date-time",
-      "description": "ISO 8601 timestamp with millisecond precision."
+      "minLength": 1,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+      "description": "Canonical custody timestamp: YYYY-MM-DDTHH:MM:SS with optional fractional seconds and either uppercase Z or numeric +/-HH:MM offset (hours 00-23, minutes/seconds 00-59). Application-generated UTC uses +00:00. Pattern rejects space separators, week dates, lowercase z, naive values, leap seconds, and out-of-range clock/offset fields. format=date-time plus rfc3339-validator (declared runtime dependency) enforces real calendar day validity in Draft7 FormatChecker; runtime _validate_timestamp enforces the same calendar semantics independently."
     },
     "data": {
       "type": "object",
       "description": "Stage-specific metadata dictionary."
     },
     "prev_hash": {
-      "type": ["string", "null"],
-      "description": "SHA-256 hash of the previous event in the chain. Null for the genesis event."
+      "description": "SHA-256 hash of the previous event in the chain. Null for the genesis event.",
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "minLength": 64,
+          "maxLength": 64
+        }
+      ]
     },
     "hash": {
       "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "minLength": 64,
+      "maxLength": 64,
       "description": "SHA-256 hash of this event (computed from all other fields)."
     }
   },

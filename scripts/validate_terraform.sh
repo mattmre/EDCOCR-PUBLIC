@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
 # Terraform Validation Script
-# EDCOCR -- Cloud-Native Deployment
+# Industrial Adaptive OCR -- Cloud-Native Deployment
 #
 # Runs terraform fmt -check and terraform validate across all modules.
 # Exit code 0 = all pass, non-zero = one or more failures.

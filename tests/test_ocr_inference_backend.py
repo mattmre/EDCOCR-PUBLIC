@@ -19,6 +19,8 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestGetBackend:
     """Tests for backend resolution logic."""
@@ -138,6 +140,52 @@ class TestDetectBestBackend:
 class TestCreateOcrEngine:
     """Tests for engine creation with backend selection."""
 
+    def test_independent_native_threads_and_recognizer_crop_batch(self):
+        import ocr_inference_backend
+
+        mock_paddle = MagicMock()
+        with (
+            patch.dict(sys.modules, {"paddleocr": mock_paddle}),
+            patch.dict(
+                os.environ,
+                {
+                    "OCR_NATIVE_THREADS_PER_PREDICTOR": "3",
+                    "OCR_RECOGNIZER_BATCH_SIZE": "12",
+                },
+            ),
+        ):
+            ocr_inference_backend.create_ocr_engine("en", "cpu")
+        kwargs = mock_paddle.PaddleOCR.call_args.kwargs
+        assert kwargs["cpu_threads"] == 3
+        assert kwargs["rec_batch_num"] == 12
+        assert kwargs["use_gpu"] is False
+
+    def test_explicit_gpu_binding_requires_one_visible_device(self):
+        import ocr_inference_backend
+
+        mock_paddle = MagicMock()
+        with (
+            patch.dict(sys.modules, {"paddleocr": mock_paddle}),
+            patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "GPU-test-uuid"}),
+        ):
+            ocr_inference_backend.create_ocr_engine("en", "gpu:0")
+        assert mock_paddle.PaddleOCR.call_args.kwargs["gpu_id"] == 0
+        assert mock_paddle.PaddleOCR.call_args.kwargs["use_gpu"] is True
+        with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1"}):
+            with pytest.raises(RuntimeError, match="exactly one"):
+                ocr_inference_backend.get_gpu_device_configuration("gpu:0")
+        with patch.dict(
+            os.environ,
+            {"CUDA_VISIBLE_DEVICES": "", "NVIDIA_VISIBLE_DEVICES": "GPU-test-uuid"},
+        ):
+            with pytest.raises(RuntimeError, match="exactly one"):
+                ocr_inference_backend.get_gpu_device_configuration("gpu:0")
+        with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "-1"}):
+            with pytest.raises(RuntimeError, match="exactly one"):
+                ocr_inference_backend.get_gpu_device_configuration("gpu:0")
+        with pytest.raises(ValueError, match="local gpu:0"):
+            ocr_inference_backend.get_gpu_device_configuration("gpu:1")
+
     def test_creates_paddle_engine(self):
         """Paddle backend creates engine without use_onnx kwarg (native paddle)."""
         import ocr_inference_backend
@@ -151,7 +199,29 @@ class TestCreateOcrEngine:
                 call_kwargs = mock_paddle_mod.PaddleOCR.call_args[1]
                 assert call_kwargs["lang"] == "en"
                 assert call_kwargs["use_gpu"] is False
+                assert call_kwargs["det_limit_side_len"] == 1536
                 assert "use_onnx" not in call_kwargs
+
+    def test_detection_limit_can_be_overridden(self):
+        """Operators can tune detector resolution within bounded limits."""
+        import ocr_inference_backend
+
+        mock_paddle_mod = MagicMock()
+        with (
+            patch.dict(os.environ, {"OCR_DET_LIMIT_SIDE_LEN": "2048"}),
+            patch.object(ocr_inference_backend, "get_backend", return_value="paddle"),
+            patch.dict("sys.modules", {"paddleocr": mock_paddle_mod}),
+        ):
+            ocr_inference_backend.create_ocr_engine("en", "cpu")
+        assert mock_paddle_mod.PaddleOCR.call_args.kwargs["det_limit_side_len"] == 2048
+
+    def test_invalid_detection_limit_falls_back(self):
+        """Malformed and unsafe detector limits cannot escape the qualified bound."""
+        import ocr_inference_backend
+
+        for value in ("invalid", "959", "4097"):
+            with patch.dict(os.environ, {"OCR_DET_LIMIT_SIDE_LEN": value}):
+                assert ocr_inference_backend.get_detection_limit_side_len() == 1536
 
     def test_creates_onnx_engine_on_cpu(self):
         """ONNX backend sets use_onnx=True when device is cpu."""
@@ -231,6 +301,33 @@ class TestCreateOcrEngine:
                 ocr_inference_backend.create_ocr_engine("en", "cpu")
                 fallback_kwargs = mock_paddle_mod.PaddleOCR.call_args_list[1][1]
                 assert fallback_kwargs["use_onnx"] is True
+                assert fallback_kwargs["drop_score"] == 0.0
+
+    def test_type_error_fallback_drops_unsupported_onnx(self):
+        """A legacy constructor without use_onnx falls back to native Paddle."""
+        import ocr_inference_backend
+
+        calls = []
+
+        def legacy_constructor(**kwargs):
+            calls.append(kwargs)
+            if "show_log" in kwargs or "det_limit_side_len" in kwargs:
+                raise TypeError("unexpected compatibility kwargs")
+            if "use_onnx" in kwargs:
+                raise TypeError("unexpected keyword argument 'use_onnx'")
+            return MagicMock()
+
+        mock_paddle_mod = MagicMock()
+        mock_paddle_mod.PaddleOCR.side_effect = legacy_constructor
+        with patch.object(ocr_inference_backend, "get_backend", return_value="onnx"):
+            with patch.dict("sys.modules", {"paddleocr": mock_paddle_mod}):
+                engine = ocr_inference_backend.create_ocr_engine("en", "cpu")
+
+        assert engine is not None
+        assert len(calls) == 3
+        assert calls[1]["use_onnx"] is True
+        assert all(call["drop_score"] == 0.0 for call in calls)
+        assert "use_onnx" not in calls[2]
 
     def test_shared_base_config(self):
         """All backends share the same base configuration keys."""
@@ -245,6 +342,7 @@ class TestCreateOcrEngine:
                 assert call_kwargs["show_log"] is False
                 assert call_kwargs["lang"] == "ch"
                 assert call_kwargs["use_gpu"] is True
+                assert call_kwargs["drop_score"] == 0.0
 
 
 class TestGetBackendInfo:
@@ -257,6 +355,7 @@ class TestGetBackendInfo:
         info = ocr_inference_backend.get_backend_info()
         assert "backend" in info
         assert "configured" in info
+        assert info["det_limit_side_len"] == 1536
         assert "onnx_available" in info
         assert "openvino_available" in info
 

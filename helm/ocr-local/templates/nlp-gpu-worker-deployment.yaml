@@ -25,6 +25,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      {{- include "ocr-local.imagePullSecrets" . | nindent 6 }}
       terminationGracePeriodSeconds: {{ .Values.workerTerminationGracePeriodSeconds | default 360 }}
       {{- with .Values.nlpGpuWorker.podSecurityContext }}
       securityContext:
@@ -58,11 +59,22 @@ spec:
                   requests:
                     storage: {{ .Values.workerSecurity.stagingVolume.pvc.size }}
           {{- end }}
+        {{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+        - name: nfs-data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-nfs-data
+        {{- end }}
+        {{- include "ocr-local.tlsCaVolume" . | nindent 8 }}
+      initContainers:
+        {{- include "ocr-local.schemaReadinessInit" (dict "root" . "envKind" "worker" "securityContext" .Values.nlpGpuWorker.containerSecurityContext) | nindent 8 }}
       containers:
         - name: nlp-gpu-worker
           image: {{ include "ocr-local.nlpWorkerImage" . }}
           imagePullPolicy: {{ .Values.image.nlpWorker.pullPolicy | default "IfNotPresent" }}
           command:
+            - /usr/bin/tini
+            - -g
+            - --
             - celery
             - -A
             - coordinator.coordinator
@@ -77,12 +89,14 @@ spec:
               mountPath: /dev/shm
             - name: staging-volume
               mountPath: {{ .Values.workerSecurity.stagingVolume.mountPath }}
-          envFrom:
-            - configMapRef:
-                name: {{ .Release.Name }}-config
-            - secretRef:
-                name: {{ .Release.Name }}-secret
+            {{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+            - name: nfs-data
+              mountPath: {{ .Values.storage.nfs.mountPath | default "/shared" }}
+            {{- end }}
+            {{- include "ocr-local.tlsCaVolumeMount" . | nindent 12 }}
+          {{- include "ocr-local.workerEnvFrom" . | nindent 10 }}
           env:
+            {{- include "ocr-local.workerSecretEnv" . | nindent 12 }}
             - name: WORKER_QUEUES
               value: {{ .Values.nlpGpuWorker.queues | quote }}
             - name: WORKER_CONCURRENCY
@@ -101,15 +115,20 @@ spec:
                 - "import torch"
             failureThreshold: 30
             periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - python3
+                - /app/coordinator/worker_healthcheck.py
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 15
           livenessProbe:
             exec:
               command:
-                - celery
-                - -A
-                - coordinator.coordinator
-                - inspect
-                - ping
-                - --timeout=10
+                - python3
+                - /app/coordinator/worker_healthcheck.py
             periodSeconds: 60
           resources:
             {{- toYaml .Values.nlpGpuWorker.resources | nindent 12 }}

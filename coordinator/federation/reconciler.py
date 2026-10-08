@@ -31,6 +31,14 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
+from ocr_distributed.text_io import read_text_bounded
+
+from .http import (
+    DEFAULT_MAX_RESPONSE_BYTES,
+    open_federation_request,
+    read_response_bounded,
+)
+
 # ---------------------------------------------------------------------------
 # Optional dependencies -- imports are guarded so unit tests can run on a
 # minimal interpreter and the reconciler can fail loudly (but cleanly) when
@@ -165,9 +173,7 @@ class Registry:
             unhealthy_threshold_seconds=int(
                 data.get("unhealthy_threshold_seconds", 120)
             ),
-            clusters=[
-                PeerCluster.from_dict(c) for c in (data.get("clusters") or [])
-            ],
+            clusters=[PeerCluster.from_dict(c) for c in (data.get("clusters") or [])],
         )
 
 
@@ -183,6 +189,7 @@ class PeerHealth:
 
     healthy: bool = True
     last_success_ts: float | None = None
+    first_failure_ts: float | None = None
     last_check_ts: float = 0.0
     consecutive_failures: int = 0
 
@@ -209,11 +216,14 @@ def _probe_management_api(
     url = f"{base}/api/aliveness-test/%2F"
     request = urllib.request.Request(url, method="GET")
     request.add_header("Accept", "application/json")
-    open_fn = opener if opener is not None else urllib.request.urlopen
+    open_fn = opener if opener is not None else open_federation_request
     try:
         with open_fn(request, timeout=timeout) as response:  # type: ignore[arg-type]
             status = getattr(response, "status", None) or response.getcode()
-            body = response.read()
+            body = read_response_bounded(
+                response,
+                max_bytes=DEFAULT_MAX_RESPONSE_BYTES,
+            )
         if 200 <= int(status) < 300:
             try:
                 payload = json.loads(body.decode("utf-8"))
@@ -221,7 +231,7 @@ def _probe_management_api(
                 payload = {}
             return True, payload
         return False, {}
-    except (urllib.error.URLError, OSError, TimeoutError):
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError):
         return False, {}
 
 
@@ -240,17 +250,20 @@ def _probe_queue_metrics(
     url = f"{base}/api/queues/%2F/{encoded}"
     request = urllib.request.Request(url, method="GET")
     request.add_header("Accept", "application/json")
-    open_fn = opener if opener is not None else urllib.request.urlopen
+    open_fn = opener if opener is not None else open_federation_request
     try:
         with open_fn(request, timeout=timeout) as response:  # type: ignore[arg-type]
             status = getattr(response, "status", None) or response.getcode()
-            body = response.read()
+            body = read_response_bounded(
+                response,
+                max_bytes=DEFAULT_MAX_RESPONSE_BYTES,
+            )
         if 200 <= int(status) < 300:
             try:
                 return json.loads(body.decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
                 return {}
-    except (urllib.error.URLError, OSError, TimeoutError):
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError):
         return {}
     return {}
 
@@ -409,24 +422,25 @@ class Reconciler:
             if healthy:
                 health.healthy = True
                 health.last_success_ts = ts
+                health.first_failure_ts = None
                 health.consecutive_failures = 0
                 self.metrics.peer_up.labels(cluster=peer.name).set(1)
                 self._sync_queue_metrics(peer)
                 self._ensure_policies(peer)
             else:
                 health.consecutive_failures += 1
+                if health.first_failure_ts is None:
+                    health.first_failure_ts = ts
                 self.metrics.peer_up.labels(cluster=peer.name).set(0)
-                threshold = max(
-                    1, int(self.registry.unhealthy_threshold_seconds)
-                )
+                threshold = max(1, int(self.registry.unhealthy_threshold_seconds))
                 # If we have never observed a healthy probe, treat the
                 # current cycle as the start of the unhealthy window.
-                last_ok = (
+                failure_started = (
                     health.last_success_ts
                     if health.last_success_ts is not None
-                    else ts
+                    else health.first_failure_ts
                 )
-                if (ts - last_ok) >= threshold:
+                if failure_started is not None and (ts - failure_started) >= threshold:
                     health.healthy = False
                     self._remove_policies(peer)
             _log(
@@ -502,15 +516,19 @@ class Reconciler:
                 lag = float(unacked)
             except (TypeError, ValueError):
                 lag = 0.0
-            self.metrics.lag_seconds.labels(
-                cluster=peer.name, queue=queue_class
-            ).set(lag)
-            messages_in = payload.get("message_stats", {}).get(
-                "publish_in", 0
-            ) if isinstance(payload.get("message_stats"), dict) else 0
-            messages_out = payload.get("message_stats", {}).get(
-                "publish_out", 0
-            ) if isinstance(payload.get("message_stats"), dict) else 0
+            self.metrics.lag_seconds.labels(cluster=peer.name, queue=queue_class).set(
+                lag
+            )
+            messages_in = (
+                payload.get("message_stats", {}).get("publish_in", 0)
+                if isinstance(payload.get("message_stats"), dict)
+                else 0
+            )
+            messages_out = (
+                payload.get("message_stats", {}).get("publish_out", 0)
+                if isinstance(payload.get("message_stats"), dict)
+                else 0
+            )
             if messages_in:
                 self.metrics.messages_in_total.labels(
                     cluster=peer.name, queue=queue_class
@@ -605,8 +623,8 @@ class Reconciler:
 # ---------------------------------------------------------------------------
 def load_registry_from_path(path: str) -> Registry:
     """Read the cluster-registry JSON document mounted into the pod."""
-    with open(path, "r", encoding="utf-8") as f:
-        return Registry.from_json(f.read())
+    text = read_text_bounded(path, max_bytes=DEFAULT_MAX_RESPONSE_BYTES)
+    return Registry.from_json(text)
 
 
 # ---------------------------------------------------------------------------
@@ -636,7 +654,11 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin glue
     registry_path = os.environ.get(
         "FEDERATION_REGISTRY_PATH", "/etc/federation/clusters.json"
     )
-    metrics_port = int(os.environ.get("FEDERATION_METRICS_PORT", "9100"))
+    try:
+        metrics_port = int(os.environ.get("FEDERATION_METRICS_PORT", "9100"))
+    except (TypeError, ValueError):
+        metrics_port = 9100
+    metrics_port = max(1, min(65_535, metrics_port))
     namespace = os.environ.get("FEDERATION_NAMESPACE", "default")
     release = os.environ.get("FEDERATION_RELEASE", "ocr-local")
 
@@ -650,7 +672,11 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin glue
         start_http_server(metrics_port)
         _log(logging.INFO, "metrics.server.started", port=metrics_port)
     else:
-        _log(logging.WARNING, "metrics.server.disabled", reason="prometheus_client_missing")
+        _log(
+            logging.WARNING,
+            "metrics.server.disabled",
+            reason="prometheus_client_missing",
+        )
 
     api = _build_kubernetes_api()
     reconciler = Reconciler(

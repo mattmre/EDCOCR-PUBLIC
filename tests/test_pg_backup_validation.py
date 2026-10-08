@@ -31,6 +31,7 @@ from pg_backup_validation import (
     mask_database_url,
     parse_backup_timestamp,
     parse_database_url,
+    restore_test,
     run_command,
     trigger_backup,
     verify_backup_file,
@@ -109,6 +110,62 @@ class TestParseDatabaseUrl:
     def test_no_password(self):
         parts = parse_database_url(SAMPLE_DB_URL_NO_PASS)
         assert parts["password"] == ""
+
+    def test_encoded_credentials_and_tls_session_options_are_preserved(self):
+        parts = parse_database_url(
+            "postgresql://ocr%2Duser:pass%40word@db/ocr%2Ddb"
+            "?sslmode=verify-full&sslrootcert=%2Fcerts%2Fca.crt&options=-c%20search_path%3Docr_processing"
+        )
+        assert parts["user"] == "ocr-user"
+        assert parts["password"] == "pass@word"
+        assert parts["dbname"] == "ocr-db"
+        assert parts["connection_env"] == {
+            "PGSSLMODE": "verify-full", "PGSSLROOTCERT": "/certs/ca.crt",
+            "PGOPTIONS": "-c search_path=ocr_processing",
+        }
+
+    @pytest.mark.parametrize("query", ["sslmode=", "sslmode=verify-full&sslmode=disable", "unhandled=value"])
+    def test_unsupported_connection_options_are_not_silently_dropped(self, query):
+        with pytest.raises(ValueError):
+            parse_database_url(f"postgresql://ocr@db/ocr?{query}")
+
+
+def test_restore_preserves_transport_and_targets_configured_schema(tmp_path, monkeypatch):
+    _create_fake_backup(str(tmp_path), "ocr-coordinator-20261008-120000.sql.gz")
+    commands = []
+
+    def record(command, **kwargs):
+        commands.append((command, kwargs))
+        return 0, "3\n" if "SELECT count(*)" in command[-1] else "", ""
+
+    monkeypatch.setenv("DATABASE_SCHEMA", "ocr_processing")
+    with patch("pg_backup_validation.run_command", side_effect=record):
+        ok, checks, errors = restore_test(
+            "postgresql://ocr:pass%40word@db/ocr?sslmode=verify-full&sslrootcert=%2Fcerts%2Fca.crt",
+            str(tmp_path),
+        )
+    assert ok and not errors
+    assert all(kwargs["env"] == {
+        "PGPASSWORD": "pass@word", "PGSSLMODE": "verify-full", "PGSSLROOTCERT": "/certs/ca.crt",
+    } for _, kwargs in commands)
+    counts = [command[-1] for command, _ in commands if "SELECT count(*)" in command[-1]]
+    assert len(counts) == 2 * len(EXPECTED_TABLES)
+    assert all('FROM "ocr_processing"."jobs_' in query for query in counts)
+
+
+def test_restore_does_not_drop_database_after_failed_create(tmp_path):
+    _create_fake_backup(str(tmp_path), "ocr-coordinator-20261008-120000.sql.gz")
+    with patch("pg_backup_validation.run_command", return_value=(1, "", "create denied")) as run:
+        ok, _, errors = restore_test(SAMPLE_DB_URL, str(tmp_path))
+    assert not ok and errors
+    assert run.call_count == 1
+
+
+def test_restore_rejects_empty_counts_even_when_commands_return_zero(tmp_path):
+    _create_fake_backup(str(tmp_path), "ocr-coordinator-20261008-120000.sql.gz")
+    with patch("pg_backup_validation.run_command", return_value=(0, "", "")):
+        ok, _, errors = restore_test(SAMPLE_DB_URL, str(tmp_path))
+    assert not ok and errors
 
 
 # ===========================================================================

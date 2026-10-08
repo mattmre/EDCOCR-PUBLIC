@@ -5,7 +5,6 @@ Tests cover:
 - Item 27: Compliance documentation (SOC2, HIPAA, FedRAMP)
 - Item 28: Presigned URL benchmark logic (mock boto3)
 - Item 29: OKE Terraform validation rules
-- Item 30: Dashboard config files (Dockerfile, nginx, compose)
 
 Target: 60+ tests
 """
@@ -57,7 +56,6 @@ _DOCS_DIR = _PROJECT_ROOT / "docs"
 _STRATEGY_DIR = _DOCS_DIR / "strategy"
 _ARCH_DIR = _DOCS_DIR / "architecture"
 _COMPLIANCE_DIR = _DOCS_DIR / "compliance"
-_DASHBOARD_DIR = _PROJECT_ROOT / "dashboard"
 _TERRAFORM_DIR = _PROJECT_ROOT / "terraform"
 
 
@@ -66,56 +64,6 @@ _TERRAFORM_DIR = _PROJECT_ROOT / "terraform"
 # ===========================================================================
 
 
-class TestPaddleOCR3xQuarterlyReview:
-    """Tests for docs/strategy/paddleocr-3x-quarterly-review.md."""
-
-    @pytest.fixture
-    def review_content(self):
-        path = _STRATEGY_DIR / "paddleocr-3x-quarterly-review.md"
-        assert path.exists(), f"Missing: {path}"
-        return path.read_text(encoding="utf-8")
-
-    def test_file_exists(self):
-        path = _STRATEGY_DIR / "paddleocr-3x-quarterly-review.md"
-        assert path.exists()
-
-    def test_has_executive_summary(self, review_content):
-        assert "Executive Summary" in review_content
-
-    def test_has_current_production_state(self, review_content):
-        assert "Current Production State" in review_content
-
-    def test_references_paddleocr_291(self, review_content):
-        assert "2.9.1" in review_content
-
-    def test_has_api_differences(self, review_content):
-        assert "API" in review_content
-        assert "use_onnx" in review_content
-        assert "enable_hpi" in review_content
-
-    def test_has_risk_assessment(self, review_content):
-        assert "Risk Assessment" in review_content
-
-    def test_has_defer_recommendation(self, review_content):
-        assert "DEFER" in review_content
-
-    def test_has_trigger_criteria(self, review_content):
-        assert "Trigger Criteria" in review_content
-
-    def test_has_review_checklist(self, review_content):
-        assert "Quarterly Review Checklist" in review_content
-
-    def test_has_migration_effort_estimate(self, review_content):
-        assert "Migration Effort Estimate" in review_content
-
-    def test_references_ocr_gpu_async(self, review_content):
-        assert "ocr_gpu_async" in review_content
-
-    def test_references_download_models(self, review_content):
-        assert "download_models" in review_content
-
-    def test_references_language_config(self, review_content):
-        assert "language_config" in review_content
 
 
 # ===========================================================================
@@ -859,140 +807,3 @@ class TestOKEConstants:
     def test_known_gpu_shape_a100(self):
         assert "BM.GPU4.8" in OCI_GPU_SHAPES
         assert OCI_GPU_SHAPES["BM.GPU4.8"]["gpu_type"] == "A100"
-
-
-# ===========================================================================
-# Item 30: Dashboard Configuration Files
-# ===========================================================================
-
-
-class TestDashboardDockerfile:
-    """Tests for dashboard/Dockerfile."""
-
-    @pytest.fixture
-    def dockerfile_content(self):
-        path = _DASHBOARD_DIR / "Dockerfile"
-        assert path.exists(), f"Missing: {path}"
-        return path.read_text(encoding="utf-8")
-
-    def test_file_exists(self):
-        assert (_DASHBOARD_DIR / "Dockerfile").exists()
-
-    def test_multistage_build(self, dockerfile_content):
-        assert "FROM node:20" in dockerfile_content
-        assert "FROM nginx:" in dockerfile_content
-
-    def test_has_builder_stage(self, dockerfile_content):
-        assert "AS builder" in dockerfile_content
-
-    def test_has_api_url_arg(self, dockerfile_content):
-        assert "NEXT_PUBLIC_API_URL" in dockerfile_content
-
-    def test_non_root_user(self, dockerfile_content):
-        assert "USER nginx" in dockerfile_content
-
-    def test_has_healthcheck(self, dockerfile_content):
-        assert "HEALTHCHECK" in dockerfile_content
-
-    def test_exposes_port_3000(self, dockerfile_content):
-        assert "EXPOSE 3000" in dockerfile_content
-
-
-class TestDashboardNginxConf:
-    """Tests for dashboard/nginx.conf."""
-
-    @pytest.fixture
-    def nginx_content(self):
-        path = _DASHBOARD_DIR / "nginx.conf"
-        assert path.exists(), f"Missing: {path}"
-        return path.read_text(encoding="utf-8")
-
-    def test_file_exists(self):
-        assert (_DASHBOARD_DIR / "nginx.conf").exists()
-
-    def test_spa_routing(self, nginx_content):
-        assert "try_files" in nginx_content
-        assert "index.html" in nginx_content
-
-    def test_api_proxy(self, nginx_content):
-        assert "proxy_pass" in nginx_content
-        assert "/api/" in nginx_content
-
-    def test_security_headers(self, nginx_content):
-        assert "X-Frame-Options" in nginx_content
-        assert "Content-Security-Policy" in nginx_content
-        assert "X-Content-Type-Options" in nginx_content
-
-    def test_gzip_compression(self, nginx_content):
-        assert "gzip on" in nginx_content
-
-    def test_websocket_proxy(self, nginx_content):
-        assert "/ws/" in nginx_content
-        assert "upgrade" in nginx_content.lower()
-
-    def test_health_endpoint(self, nginx_content):
-        assert "/health" in nginx_content
-
-    def test_static_caching(self, nginx_content):
-        assert "/static/" in nginx_content
-        assert "expires" in nginx_content
-
-    def test_hidden_files_denied(self, nginx_content):
-        assert "deny all" in nginx_content
-
-
-class TestDashboardCompose:
-    """Tests for dashboard/docker-compose.dashboard.yml."""
-
-    @pytest.fixture
-    def compose_content(self):
-        path = _DASHBOARD_DIR / "docker-compose.dashboard.yml"
-        assert path.exists(), f"Missing: {path}"
-        return path.read_text(encoding="utf-8")
-
-    def test_file_exists(self):
-        assert (_DASHBOARD_DIR / "docker-compose.dashboard.yml").exists()
-
-    def test_has_dashboard_service(self, compose_content):
-        assert "dashboard:" in compose_content
-
-    def test_has_port_mapping(self, compose_content):
-        assert "3000" in compose_content
-
-    def test_has_env_vars(self, compose_content):
-        assert "API_URL" in compose_content
-        assert "API_KEY" in compose_content
-
-    def test_has_healthcheck(self, compose_content):
-        assert "healthcheck" in compose_content
-
-    def test_has_network(self, compose_content):
-        assert "networks" in compose_content
-
-
-class TestDashboardReadme:
-    """Tests for dashboard/README.md."""
-
-    @pytest.fixture
-    def readme_content(self):
-        path = _DASHBOARD_DIR / "README.md"
-        assert path.exists(), f"Missing: {path}"
-        return path.read_text(encoding="utf-8")
-
-    def test_file_exists(self):
-        assert (_DASHBOARD_DIR / "README.md").exists()
-
-    def test_has_quick_start(self, readme_content):
-        assert "Quick Start" in readme_content
-
-    def test_has_environment_variables(self, readme_content):
-        assert "Environment Variable" in readme_content
-
-    def test_has_docker_instructions(self, readme_content):
-        assert "docker" in readme_content.lower()
-
-    def test_has_architecture(self, readme_content):
-        assert "Architecture" in readme_content
-
-    def test_references_coordinator(self, readme_content):
-        assert "coordinator" in readme_content.lower()

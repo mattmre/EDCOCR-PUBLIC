@@ -14,11 +14,16 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from api.config import ENABLE_MULTITENANCY
 from api.database import TenantApiKey, get_session_factory
-from api.slo import build_tenant_slo_snapshot
+from api.limits import get_default_rate, limiter
+from api.slo import (
+    MAX_SLO_WINDOW_HOURS,
+    SloScopeTooLargeError,
+    build_tenant_slo_snapshot,
+)
 from api.tenant_manager import (
     activate_tenant,
     build_cost_tracking_bridge,
@@ -31,6 +36,7 @@ from api.tenant_manager import (
     revoke_api_key,
     suspend_tenant,
     update_tenant,
+    validate_api_key_permissions,
 )
 from api.usage import build_cost_summary, get_usage
 
@@ -54,8 +60,25 @@ class CreateTenantRequest(BaseModel):
     max_concurrent_jobs: int = Field(4, ge=1, le=100)
     max_pages_per_month: int = Field(10000, ge=100, le=10_000_000)
     max_storage_bytes: int = Field(10 * 1024**3, ge=1024**2)
-    allowed_features: list[str] = Field(default_factory=list)
+    allowed_features: list[str] = Field(
+        default_factory=list,
+        min_length=0,
+        max_length=32,
+    )
     admin_email: Optional[str] = Field(None, max_length=256)
+
+    @field_validator("allowed_features")
+    @classmethod
+    def validate_allowed_features(cls, value: list[str]) -> list[str]:
+        if any(
+            not isinstance(feature, str) or not feature.strip() for feature in value
+        ):
+            raise ValueError("allowed_features must contain non-empty strings")
+        if any(len(feature) > 64 for feature in value):
+            raise ValueError("allowed_features entries are too long")
+        if len(set(value)) != len(value):
+            raise ValueError("allowed_features must not contain duplicates")
+        return value
 
 
 class UpdateTenantRequest(BaseModel):
@@ -65,14 +88,38 @@ class UpdateTenantRequest(BaseModel):
     max_concurrent_jobs: Optional[int] = Field(None, ge=1, le=100)
     max_pages_per_month: Optional[int] = Field(None, ge=100, le=10_000_000)
     max_storage_bytes: Optional[int] = Field(None, ge=1024**2)
-    allowed_features: Optional[list[str]] = None
+    allowed_features: Optional[list[str]] = Field(None, max_length=32)
     admin_email: Optional[str] = Field(None, max_length=256)
+
+    @field_validator("allowed_features")
+    @classmethod
+    def validate_allowed_features(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        if any(
+            not isinstance(feature, str) or not feature.strip() for feature in value
+        ):
+            raise ValueError("allowed_features must contain non-empty strings")
+        if any(len(feature) > 64 for feature in value):
+            raise ValueError("allowed_features entries are too long")
+        if len(set(value)) != len(value):
+            raise ValueError("allowed_features must not contain duplicates")
+        return value
 
 
 class CreateApiKeyRequest(BaseModel):
     name: Optional[str] = Field(None, max_length=256)
-    permissions: list[str] = Field(default_factory=lambda: ["submit", "read"])
+    permissions: list[str] = Field(
+        default_factory=lambda: ["submit", "read"],
+        min_length=1,
+        max_length=4,
+    )
     expires_at: Optional[datetime] = None
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, value: list[str]) -> list[str]:
+        return validate_api_key_permissions(value)
 
 
 class TenantResponse(BaseModel):
@@ -175,8 +222,17 @@ class ErrorResponse(BaseModel):
 
 class TenantPurgeDeletedCounts(BaseModel):
     jobs: int = 0
+    batches: int = 0
     usage_records: int = 0
     api_keys: int = 0
+    rate_limits: int = 0
+    webhook_dlq_entries: int = 0
+    fs_dirs: int = 0
+    event_store_events: int = 0
+    entity_index_records: int = 0
+    review_queue_records: int = 0
+    analytics_records: int = 0
+    dashboard_records: int = 0
 
 
 class TenantPurgeResponse(BaseModel):
@@ -195,23 +251,40 @@ def _require_admin(
     target_tenant_id: Optional[str] = None,
     require_platform_admin: bool = False,
 ) -> Optional[str]:
-    """Verify admin permission and enforce tenant scope when applicable."""
+    """Verify admin permission and enforce tenant scope when applicable.
+
+    Fail-closed when ``tenant_permissions`` is unset (OAuth / anonymous must
+    not inherit platform scope). Legacy ``OCR_API_KEY`` under multitenancy
+    attaches explicit platform permissions in ``api.auth`` middleware.
+    """
     if not ENABLE_MULTITENANCY:
         raise HTTPException(status_code=404, detail="Multi-tenancy is not enabled")
 
+    from api.authz import is_platform_admin as _authz_is_platform_admin
+
     permissions = getattr(request.state, "tenant_permissions", None)
     if permissions is None:
-        return None  # Legacy OCR_API_KEY acts as platform admin.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "forbidden",
+                "message": (
+                    "Admin API requires a tenant API key with admin permission "
+                    "(or the configured OCR_API_KEY break-glass under multitenancy). "
+                    "OAuth and unauthenticated principals are not platform admins."
+                ),
+            },
+        )
 
-    if "admin" not in permissions:
+    if "admin" not in permissions and "platform_admin" not in permissions:
         raise HTTPException(
             status_code=403,
             detail={"error": "forbidden", "message": "Admin permission required"},
         )
 
     caller_tenant_id = getattr(request.state, "tenant_id", None)
-    is_platform_admin = "platform_admin" in permissions
-    if require_platform_admin and not is_platform_admin:
+    is_platform = _authz_is_platform_admin(request)
+    if require_platform_admin and not is_platform:
         raise HTTPException(
             status_code=403,
             detail={
@@ -222,7 +295,7 @@ def _require_admin(
 
     if (
         target_tenant_id is not None
-        and not is_platform_admin
+        and not is_platform
         and caller_tenant_id != target_tenant_id
     ):
         raise HTTPException(
@@ -233,7 +306,7 @@ def _require_admin(
             },
         )
 
-    return None if is_platform_admin else caller_tenant_id
+    return None if is_platform else caller_tenant_id
 
 
 def _tenant_to_response(tenant) -> TenantResponse:
@@ -272,6 +345,7 @@ def _tenant_to_response(tenant) -> TenantResponse:
     status_code=201,
     responses={403: {"model": ErrorResponse}},
 )
+@limiter.limit(get_default_rate())
 async def admin_create_tenant(request: Request, body: CreateTenantRequest):
     """Create a new tenant."""
     _require_admin(request, require_platform_admin=True)
@@ -298,19 +372,31 @@ async def admin_create_tenant(request: Request, body: CreateTenantRequest):
     response_model=list[TenantResponse],
     responses={403: {"model": ErrorResponse}},
 )
+@limiter.limit(get_default_rate())
 async def admin_list_tenants(
     request: Request,
-    status: Optional[str] = None,
+    status: Optional[str] = Query(default=None, max_length=20),
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0, le=1_000_000),
 ):
-    """List all tenants, optionally filtered by status."""
+    """List a bounded page of tenants, optionally filtered by status."""
     caller_tenant_id = _require_admin(request)
     session = get_session_factory()()
     try:
         if caller_tenant_id is not None:
             tenant = get_tenant(caller_tenant_id, session=session)
-            tenants = [tenant] if tenant and (status is None or tenant.status == status) else []
+            tenants = (
+                [tenant]
+                if tenant and (status is None or tenant.status == status)
+                else []
+            )
         else:
-            tenants = list_tenants(status_filter=status, session=session)
+            tenants = list_tenants(
+                status_filter=status,
+                limit=limit,
+                offset=offset,
+                session=session,
+            )
         return [_tenant_to_response(t) for t in tenants]
     finally:
         session.close()
@@ -321,10 +407,16 @@ async def admin_list_tenants(
     response_model=TenantDetailResponse,
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
+@limiter.limit(get_default_rate())
 async def admin_get_tenant(request: Request, tenant_id: str):
     """Get tenant details including current usage."""
     if not _TENANT_ID_RE.match(tenant_id):
         raise HTTPException(status_code=400, detail="Invalid tenant_id format")
+
+    # Authorize before probing the tenant table.  Otherwise a scoped admin
+    # can distinguish a foreign existing tenant (403) from a nonexistent one
+    # (404), creating an avoidable tenant-ID enumeration oracle.
+    _require_admin(request, target_tenant_id=tenant_id)
 
     session = get_session_factory()()
     try:
@@ -332,10 +424,11 @@ async def admin_get_tenant(request: Request, tenant_id: str):
         if not tenant:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": f"Tenant {tenant_id} not found"},
+                detail={
+                    "error": "not_found",
+                    "message": f"Tenant {tenant_id} not found",
+                },
             )
-        _require_admin(request, target_tenant_id=tenant_id)
-
         resp = _tenant_to_response(tenant)
         usage = get_usage(tenant_id, session=session)
         usage_dict = None
@@ -364,7 +457,10 @@ async def admin_get_tenant(request: Request, tenant_id: str):
     response_model=TenantResponse,
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-async def admin_update_tenant(request: Request, tenant_id: str, body: UpdateTenantRequest):
+@limiter.limit(get_default_rate())
+async def admin_update_tenant(
+    request: Request, tenant_id: str, body: UpdateTenantRequest
+):
     """Update tenant configuration."""
     if not _TENANT_ID_RE.match(tenant_id):
         raise HTTPException(status_code=400, detail="Invalid tenant_id format")
@@ -376,11 +472,34 @@ async def admin_update_tenant(request: Request, tenant_id: str, body: UpdateTena
         if not updates:
             raise HTTPException(status_code=400, detail="No fields to update")
 
+        # Quotas, tier, storage, and feature entitlements are commercial or
+        # shared-capacity controls.  A tenant-scoped admin may edit identity
+        # metadata for its own tenant, but cannot self-escalate those limits.
+        sensitive_updates = {
+            "tier",
+            "max_concurrent_jobs",
+            "max_pages_per_month",
+            "max_storage_bytes",
+            "allowed_features",
+        }
+        if sensitive_updates.intersection(updates):
+            from api.authz import is_platform_admin
+
+            if not is_platform_admin(request):
+                _require_admin(
+                    request,
+                    target_tenant_id=tenant_id,
+                    require_platform_admin=True,
+                )
+
         tenant = update_tenant(tenant_id, session=session, **updates)
         if not tenant:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": f"Tenant {tenant_id} not found"},
+                detail={
+                    "error": "not_found",
+                    "message": f"Tenant {tenant_id} not found",
+                },
             )
         return _tenant_to_response(tenant)
     finally:
@@ -392,6 +511,7 @@ async def admin_update_tenant(request: Request, tenant_id: str, body: UpdateTena
     response_model=TenantResponse,
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
+@limiter.limit(get_default_rate())
 async def admin_suspend_tenant(request: Request, tenant_id: str):
     """Suspend a tenant (all API keys become inactive)."""
     if not _TENANT_ID_RE.match(tenant_id):
@@ -404,7 +524,10 @@ async def admin_suspend_tenant(request: Request, tenant_id: str):
         if not tenant:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": f"Tenant {tenant_id} not found"},
+                detail={
+                    "error": "not_found",
+                    "message": f"Tenant {tenant_id} not found",
+                },
             )
         return _tenant_to_response(tenant)
     finally:
@@ -416,6 +539,7 @@ async def admin_suspend_tenant(request: Request, tenant_id: str):
     response_model=TenantResponse,
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
+@limiter.limit(get_default_rate())
 async def admin_activate_tenant(request: Request, tenant_id: str):
     """Re-activate a suspended tenant."""
     if not _TENANT_ID_RE.match(tenant_id):
@@ -424,11 +548,23 @@ async def admin_activate_tenant(request: Request, tenant_id: str):
 
     session = get_session_factory()()
     try:
-        tenant = activate_tenant(tenant_id, session=session)
+        try:
+            tenant = activate_tenant(tenant_id, session=session)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "purge_recovery_required",
+                    "message": str(exc),
+                },
+            ) from exc
         if not tenant:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": f"Tenant {tenant_id} not found"},
+                detail={
+                    "error": "not_found",
+                    "message": f"Tenant {tenant_id} not found",
+                },
             )
         return _tenant_to_response(tenant)
     finally:
@@ -440,6 +576,7 @@ async def admin_activate_tenant(request: Request, tenant_id: str):
     response_model=TenantResponse,
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
+@limiter.limit(get_default_rate())
 async def admin_delete_tenant(request: Request, tenant_id: str):
     """Soft-delete a tenant: marks status as 'deleted' and revokes all API keys.
 
@@ -455,7 +592,10 @@ async def admin_delete_tenant(request: Request, tenant_id: str):
         if not tenant:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": f"Tenant {tenant_id} not found"},
+                detail={
+                    "error": "not_found",
+                    "message": f"Tenant {tenant_id} not found",
+                },
             )
         logger.info("Tenant %s soft-deleted via admin API", tenant_id)
         return _tenant_to_response(tenant)
@@ -472,11 +612,14 @@ async def admin_delete_tenant(request: Request, tenant_id: str):
         409: {"model": ErrorResponse},
     },
 )
+@limiter.limit(get_default_rate())
 async def admin_purge_tenant(request: Request, tenant_id: str):
-    """Hard-delete a tenant and all associated data (cascading cleanup).
+    """Hard-delete API-plane tenant data and its local artifacts.
 
-    Permanently removes the tenant record along with all Jobs, UsageRecords,
-    and TenantApiKeys.  Returns counts of deleted rows.
+    Permanently removes the API database tenant record, API Jobs, batches,
+    usage/key/rate-limit rows, webhook DLQ entries, auxiliary API stores, and
+    local filesystem artifacts. Coordinator Django/PostgreSQL rows are a
+    separate purge operation and are not included in this response.
 
     Blocked when ``LITIGATION_HOLD`` environment variable is set to a truthy
     value (``1``, ``true``, or ``yes``).
@@ -500,11 +643,25 @@ async def admin_purge_tenant(request: Request, tenant_id: str):
 
     session = get_session_factory()()
     try:
-        result = purge_tenant_data(tenant_id, session=session)
+        try:
+            result = purge_tenant_data(tenant_id, session=session)
+        except RuntimeError as exc:
+            if "purge already in progress" not in str(exc).lower():
+                raise
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "purge_in_progress",
+                    "message": f"Tenant {tenant_id} is already being purged",
+                },
+            ) from exc
         if result is None:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": f"Tenant {tenant_id} not found"},
+                detail={
+                    "error": "not_found",
+                    "message": f"Tenant {tenant_id} not found",
+                },
             )
         logger.info(
             "Tenant %s purged via admin API: %s",
@@ -523,6 +680,7 @@ async def admin_purge_tenant(request: Request, tenant_id: str):
     "/tenants/{tenant_id}/cost-bridge",
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
+@limiter.limit(get_default_rate())
 async def admin_get_cost_bridge(request: Request, tenant_id: str):
     """Return a cost report compatible with the standalone cost_tracking.py schema.
 
@@ -539,7 +697,10 @@ async def admin_get_cost_bridge(request: Request, tenant_id: str):
         if not tenant:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": f"Tenant {tenant_id} not found"},
+                detail={
+                    "error": "not_found",
+                    "message": f"Tenant {tenant_id} not found",
+                },
             )
 
         report = build_cost_tracking_bridge(tenant_id, session=session)
@@ -578,16 +739,21 @@ async def admin_get_cost_bridge(request: Request, tenant_id: str):
     status_code=201,
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
-async def admin_create_api_key(request: Request, tenant_id: str, body: CreateApiKeyRequest):
+@limiter.limit(get_default_rate())
+async def admin_create_api_key(
+    request: Request, tenant_id: str, body: CreateApiKeyRequest
+):
     """Create a new API key for a tenant. The raw key is returned only once."""
     if not _TENANT_ID_RE.match(tenant_id):
         raise HTTPException(status_code=400, detail="Invalid tenant_id format")
     _require_admin(request, target_tenant_id=tenant_id)
 
-    caller_permissions = getattr(request.state, "tenant_permissions", None)
+    # Always require explicit platform_admin on the caller — never skip when
+    # permissions is None (that allowed OAuth/anonymous to mint durable
+    # platform_admin keys — R4-RC-12).
+    caller_permissions = getattr(request.state, "tenant_permissions", None) or []
     if (
-        caller_permissions is not None
-        and "platform_admin" in body.permissions
+        "platform_admin" in (body.permissions or [])
         and "platform_admin" not in caller_permissions
     ):
         raise HTTPException(
@@ -608,10 +774,13 @@ async def admin_create_api_key(request: Request, tenant_id: str, body: CreateApi
                 expires_at=body.expires_at,
                 session=session,
             )
-        except ValueError as exc:
+        except ValueError:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": str(exc)},
+                detail={
+                    "error": "not_found",
+                    "message": "Tenant or key target not found.",
+                },
             )
 
         key_record = session.get(TenantApiKey, key_id)
@@ -621,7 +790,9 @@ async def admin_create_api_key(request: Request, tenant_id: str, body: CreateApi
             api_key=raw_key,
             name=body.name,
             permissions=body.permissions,
-            created_at=key_record.created_at if key_record else datetime.now(timezone.utc).replace(tzinfo=None),
+            created_at=key_record.created_at
+            if key_record
+            else datetime.now(timezone.utc).replace(tzinfo=None),
             expires_at=body.expires_at,
         )
     finally:
@@ -633,6 +804,7 @@ async def admin_create_api_key(request: Request, tenant_id: str, body: CreateApi
     status_code=204,
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
+@limiter.limit(get_default_rate())
 async def admin_revoke_api_key(request: Request, tenant_id: str, key_id: str):
     """Revoke an API key."""
     if not _TENANT_ID_RE.match(tenant_id):
@@ -665,6 +837,7 @@ async def admin_revoke_api_key(request: Request, tenant_id: str, key_id: str):
     response_model=UsageResponse,
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
+@limiter.limit(get_default_rate())
 async def admin_get_usage(
     request: Request,
     tenant_id: str,
@@ -681,7 +854,10 @@ async def admin_get_usage(
         if not tenant:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": f"Tenant {tenant_id} not found"},
+                detail={
+                    "error": "not_found",
+                    "message": f"Tenant {tenant_id} not found",
+                },
             )
 
         usage = get_usage(tenant_id, period=period, session=session)
@@ -690,9 +866,7 @@ async def admin_get_usage(
             return UsageResponse(
                 tenant_id=tenant_id,
                 period=period or datetime.now(timezone.utc).strftime("%Y-%m"),
-                estimated_costs=UsageCostSummaryResponse(
-                    **build_cost_summary(None)
-                ),
+                estimated_costs=UsageCostSummaryResponse(**build_cost_summary(None)),
             )
 
         return UsageResponse(
@@ -703,9 +877,7 @@ async def admin_get_usage(
             storage_bytes_used=usage.storage_bytes_used,
             api_calls=usage.api_calls,
             processing_seconds=usage.processing_seconds,
-            estimated_costs=UsageCostSummaryResponse(
-                **build_cost_summary(usage)
-            ),
+            estimated_costs=UsageCostSummaryResponse(**build_cost_summary(usage)),
         )
     finally:
         session.close()
@@ -716,10 +888,16 @@ async def admin_get_usage(
     response_model=TenantSloResponse,
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
+@limiter.limit(get_default_rate())
 async def admin_get_slo(
     request: Request,
     tenant_id: str,
-    window_hours: Optional[int] = Query(None, ge=1),
+    window_hours: Optional[int] = Query(
+        None,
+        ge=1,
+        le=MAX_SLO_WINDOW_HOURS,
+        description=("Rolling window size in hours "  f"(1-{MAX_SLO_WINDOW_HOURS})."),
+    ),
 ):
     """Get a rolling tenant SLO snapshot."""
     if not _TENANT_ID_RE.match(tenant_id):
@@ -732,14 +910,26 @@ async def admin_get_slo(
         if not tenant:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": f"Tenant {tenant_id} not found"},
+                detail={
+                    "error": "not_found",
+                    "message": f"Tenant {tenant_id} not found",
+                },
             )
 
-        snapshot = build_tenant_slo_snapshot(
-            tenant_id,
-            window_hours=window_hours,
-            session=session,
-        )
+        try:
+            snapshot = build_tenant_slo_snapshot(
+                tenant_id,
+                window_hours=window_hours,
+                session=session,
+            )
+        except SloScopeTooLargeError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "slo_scope_too_large",
+                    "message": str(exc),
+                },
+            ) from exc
         return TenantSloResponse(**snapshot)
     finally:
         session.close()
@@ -774,6 +964,7 @@ class TenantRateLimitResponse(BaseModel):
         404: {"model": ErrorResponse},
     },
 )
+@limiter.limit(get_default_rate())
 async def admin_set_tenant_rate_limit(
     request: Request,
     tenant_id: str,
@@ -786,7 +977,11 @@ async def admin_set_tenant_rate_limit(
     """
     if not _TENANT_ID_RE.match(tenant_id):
         raise HTTPException(status_code=400, detail="Invalid tenant_id format")
-    _require_admin(request, target_tenant_id=tenant_id)
+    _require_admin(
+        request,
+        target_tenant_id=tenant_id,
+        require_platform_admin=True,
+    )
 
     session = get_session_factory()()
     try:
@@ -794,7 +989,10 @@ async def admin_set_tenant_rate_limit(
         if not tenant:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": f"Tenant {tenant_id} not found"},
+                detail={
+                    "error": "not_found",
+                    "message": f"Tenant {tenant_id} not found",
+                },
             )
     finally:
         session.close()
@@ -803,10 +1001,13 @@ async def admin_set_tenant_rate_limit(
 
     try:
         set_tenant_rate_limit(tenant_id, body.rate_limit)
-    except ValueError as exc:
+    except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": "invalid_rate_limit", "message": str(exc)},
+            detail={
+                "error": "invalid_rate_limit",
+                "message": "Invalid tenant rate limit.",
+            },
         )
 
     logger.info("Rate limit set for tenant %s: %s", tenant_id, body.rate_limit)
@@ -821,6 +1022,7 @@ async def admin_set_tenant_rate_limit(
         404: {"model": ErrorResponse},
     },
 )
+@limiter.limit(get_default_rate())
 async def admin_get_tenant_rate_limit(
     request: Request,
     tenant_id: str,
@@ -836,7 +1038,10 @@ async def admin_get_tenant_rate_limit(
         if not tenant:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": f"Tenant {tenant_id} not found"},
+                detail={
+                    "error": "not_found",
+                    "message": f"Tenant {tenant_id} not found",
+                },
             )
     finally:
         session.close()
@@ -855,6 +1060,7 @@ async def admin_get_tenant_rate_limit(
         404: {"model": ErrorResponse},
     },
 )
+@limiter.limit(get_default_rate())
 async def admin_delete_tenant_rate_limit(
     request: Request,
     tenant_id: str,
@@ -862,7 +1068,11 @@ async def admin_delete_tenant_rate_limit(
     """Remove a per-tenant rate limit override (reverts to global default)."""
     if not _TENANT_ID_RE.match(tenant_id):
         raise HTTPException(status_code=400, detail="Invalid tenant_id format")
-    _require_admin(request, target_tenant_id=tenant_id)
+    _require_admin(
+        request,
+        target_tenant_id=tenant_id,
+        require_platform_admin=True,
+    )
 
     session = get_session_factory()()
     try:
@@ -870,7 +1080,10 @@ async def admin_delete_tenant_rate_limit(
         if not tenant:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "not_found", "message": f"Tenant {tenant_id} not found"},
+                detail={
+                    "error": "not_found",
+                    "message": f"Tenant {tenant_id} not found",
+                },
             )
     finally:
         session.close()

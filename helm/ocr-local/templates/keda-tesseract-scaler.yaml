@@ -1,0 +1,27 @@
+{{- if and .Values.tesseractWorker.enabled .Values.tesseractWorker.autoscaling.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Release.Name }}-tesseract-worker-scaler
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tesseract-worker
+spec:
+  scaleTargetRef:
+    name: {{ .Release.Name }}-tesseract-worker
+  minReplicaCount: {{ .Values.tesseractWorker.autoscaling.minReplicas }}
+  maxReplicaCount: {{ min .Values.tesseractWorker.autoscaling.maxReplicas (.Values.keda.maxReplicaCount | default 50) }}
+  pollingInterval: {{ .Values.tesseractWorker.autoscaling.pollingInterval }}
+  cooldownPeriod: {{ .Values.tesseractWorker.autoscaling.cooldownPeriod }}
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: http
+        queueName: ocr_tesseract
+        vhostName: "/"
+        mode: QueueLength
+        value: {{ .Values.tesseractWorker.autoscaling.queueTarget | quote }}
+        excludeUnacknowledged: "false"
+      authenticationRef:
+        name: {{ .Release.Name }}-rabbitmq-auth
+{{- end }}

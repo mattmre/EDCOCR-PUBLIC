@@ -51,9 +51,9 @@ logger = logging.getLogger(__name__)
 # Feature gate
 # ---------------------------------------------------------------------------
 
-ENABLE_SLA_MONITORING = os.environ.get(
-    "ENABLE_SLA_MONITORING", "false"
-).lower() == "true"
+ENABLE_SLA_MONITORING = (
+    os.environ.get("ENABLE_SLA_MONITORING", "false").lower() == "true"
+)
 
 # ---------------------------------------------------------------------------
 # Default SLO targets (configurable via environment)
@@ -95,12 +95,8 @@ class SLATargets:
 
     version: str = field(default=SLA_FORMULA_VERSION)
     uptime_target: float = field(default=DEFAULT_AVAILABILITY_TARGET / 100.0)
-    p95_latency_ms: float = field(
-        default=DEFAULT_P95_LATENCY_TARGET * 1000.0
-    )
-    error_rate_target: float = field(
-        default=DEFAULT_ERROR_RATE_BUDGET / 100.0
-    )
+    p95_latency_ms: float = field(default=DEFAULT_P95_LATENCY_TARGET * 1000.0)
+    error_rate_target: float = field(default=DEFAULT_ERROR_RATE_BUDGET / 100.0)
     throughput_ppm_target: float = field(default=DEFAULT_THROUGHPUT_TARGET)
     recovery_time_seconds: float = field(default=DEFAULT_RECOVERY_TIME_TARGET)
 
@@ -133,15 +129,11 @@ def validate_sla_targets(targets: SLATargets) -> list[str]:
 
     # Uptime must be in (0, 1]
     if not (0.0 < targets.uptime_target <= 1.0):
-        errors.append(
-            f"uptime_target must be in (0, 1], got {targets.uptime_target}"
-        )
+        errors.append(f"uptime_target must be in (0, 1], got {targets.uptime_target}")
 
     # P95 latency must be positive
     if targets.p95_latency_ms <= 0:
-        errors.append(
-            f"p95_latency_ms must be positive, got {targets.p95_latency_ms}"
-        )
+        errors.append(f"p95_latency_ms must be positive, got {targets.p95_latency_ms}")
 
     # Error rate must be in [0, 1)
     if not (0.0 <= targets.error_rate_target < 1.0):
@@ -323,9 +315,7 @@ class SLAMonitor:
             if tenant_id not in self._windows:
                 self._windows[tenant_id] = {}
             if metric not in self._windows[tenant_id]:
-                self._windows[tenant_id][metric] = MetricsWindow(
-                    self._window_seconds
-                )
+                self._windows[tenant_id][metric] = MetricsWindow(self._window_seconds)
             return self._windows[tenant_id][metric]
 
     # -- SLO definitions ----------------------------------------------------
@@ -378,23 +368,15 @@ class SLAMonitor:
     def get_tenant_slos(self, tenant_id: str) -> list[SLODefinition]:
         """Return tenant-specific SLOs, falling back to defaults."""
         with self._lock:
-            return list(
-                self._tenant_slos.get(tenant_id, self.get_default_slos())
-            )
+            return list(self._tenant_slos.get(tenant_id, self.get_default_slos()))
 
     # -- recording methods --------------------------------------------------
 
-    def record_request(
-        self, tenant_id: str, success: bool, latency_seconds: float
-    ):
+    def record_request(self, tenant_id: str, success: bool, latency_seconds: float):
         """Record a completed request (success/failure + latency)."""
-        self._get_window(tenant_id, "availability").add_sample(
-            1.0 if success else 0.0
-        )
+        self._get_window(tenant_id, "availability").add_sample(1.0 if success else 0.0)
         self._get_window(tenant_id, "latency").add_sample(latency_seconds)
-        self._get_window("system", "availability").add_sample(
-            1.0 if success else 0.0
-        )
+        self._get_window("system", "availability").add_sample(1.0 if success else 0.0)
         self._get_window("system", "latency").add_sample(latency_seconds)
 
     def record_throughput(self, tenant_id: str, pages_per_minute: float):
@@ -414,12 +396,8 @@ class SLAMonitor:
 
     def record_recovery(self, tenant_id: str, recovery_seconds: float):
         """Record a recovery-time measurement."""
-        self._get_window(tenant_id, "recovery_time").add_sample(
-            recovery_seconds
-        )
-        self._get_window("system", "recovery_time").add_sample(
-            recovery_seconds
-        )
+        self._get_window(tenant_id, "recovery_time").add_sample(recovery_seconds)
+        self._get_window("system", "recovery_time").add_sample(recovery_seconds)
 
     # -- evaluation ---------------------------------------------------------
 
@@ -432,16 +410,19 @@ class SLAMonitor:
         now = datetime.now(timezone.utc)
         window_start = now - timedelta(hours=self._window_hours)
 
+        # S2-11 / S2-20: no-data must not greenwash compliance.
+        # Use a sentinel that fails gte targets and fails lte-as-healthy rates.
+        _NO_DATA = None
+
         if slo.metric == "availability":
             window = self._get_window(tenant_id, "availability")
             current = window.rate(0.5)
             if current is None:
-                current = 100.0  # no data = assume healthy
+                current = _NO_DATA
         elif slo.metric == "throughput":
             window = self._get_window(tenant_id, "throughput")
             avg = window.average()
-            # No data = assume at target (no evidence of violation)
-            current = avg if avg is not None else slo.target
+            current = avg if avg is not None else _NO_DATA
         elif slo.metric == "error_rate":
             window = self._get_window(tenant_id, "error_rate")
             samples = window.get_samples()
@@ -449,22 +430,31 @@ class SLAMonitor:
                 errors = sum(1 for _, v in samples if v > 0.5)
                 current = (errors / len(samples)) * 100.0
             else:
-                current = 0.0
+                current = _NO_DATA
         elif slo.metric == "p95_latency":
             window = self._get_window(tenant_id, "latency")
             p95 = window.percentile(95)
-            current = p95 if p95 is not None else 0.0
+            current = p95 if p95 is not None else _NO_DATA
         elif slo.metric == "recovery_time":
             window = self._get_window(tenant_id, "recovery_time")
             p95 = window.percentile(95)
-            current = p95 if p95 is not None else 0.0
+            current = p95 if p95 is not None else _NO_DATA
         else:
             window = self._get_window(tenant_id, slo.metric)
             avg = window.average()
-            if avg is None:
-                current = slo.target if slo.comparison == "gte" else 0.0
-            else:
-                current = avg
+            current = avg if avg is not None else _NO_DATA
+
+        if current is None:
+            # No samples → not compliant (unknown), margin 0, value NaN-like -1 flag
+            return SLOStatus(
+                definition=slo,
+                current_value=-1.0,
+                compliant=False,
+                margin=0.0,
+                window_start=window_start.isoformat(),
+                window_end=now.isoformat(),
+                sample_count=window.count(),
+            )
 
         if slo.comparison == "gte":
             compliant = current >= slo.target
@@ -533,11 +523,7 @@ class SLAMonitor:
         """Return recent violation records, optionally filtered by tenant."""
         with self._lock:
             if tenant_id:
-                filtered = [
-                    v
-                    for v in self._violations
-                    if v["tenant_id"] == tenant_id
-                ]
+                filtered = [v for v in self._violations if v["tenant_id"] == tenant_id]
                 return filtered[-limit:]
             return self._violations[-limit:]
 
@@ -559,9 +545,7 @@ class SLAMonitor:
 
         # Sanitize filename: strip traversal sequences, path separators,
         # and any residual non-alphanumeric-only artifacts.
-        safe_name = (
-            filename.replace("..", "").replace("/", "_").replace("\\", "_")
-        )
+        safe_name = filename.replace("..", "").replace("/", "_").replace("\\", "_")
         safe_name = safe_name.strip("_. ")
         if not safe_name or safe_name == ".json":
             safe_name = "sla-report.json"

@@ -14,6 +14,8 @@ from fastapi.testclient import TestClient
 from api.audit import (
     _compute_event_hash,
     _extract_job_id,
+    build_api_audit_event,
+    record_api_audit_event,
     reset_chain_state,
     verify_audit_chain,
 )
@@ -33,6 +35,27 @@ def _read_audit_lines(audit_path: Path) -> list[dict]:
     """Read JSONL audit records from disk."""
     with open(audit_path, "r", encoding="utf-8") as handle:
         return [json.loads(line) for line in handle if line.strip()]
+
+
+def _minimal_request():
+    """Build a small Starlette request for direct audit-chain tests."""
+    from starlette.requests import Request
+
+    return Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/api/v1/jobs/job_aaaaaaaaaaaa",
+            "raw_path": b"/api/v1/jobs/job_aaaaaaaaaaaa",
+            "query_string": b"",
+            "headers": [],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+        }
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -314,6 +337,47 @@ class TestAuditHashChain:
         assert is_valid is True
         assert "Empty audit chain" in message
 
+    def test_failed_write_does_not_advance_chain_head(self, tmp_path):
+        """A transient append failure must not poison the next event."""
+        import api.audit as audit
+
+        audit_path = tmp_path / "api-audit.jsonl"
+        with (
+            patch.object(audit.config, "API_AUDIT_LOG_ENABLED", True),
+            patch.object(audit.config, "API_AUDIT_LOG_PATH", str(audit_path)),
+        ):
+            first = build_api_audit_event(_minimal_request(), 200, 1.0)
+            with patch("api.audit.open", side_effect=OSError("disk full"), create=True):
+                with pytest.raises(OSError):
+                    record_api_audit_event(first)
+
+            second = build_api_audit_event(_minimal_request(), 201, 2.0)
+            record_api_audit_event(second)
+
+        events = _read_audit_lines(audit_path)
+        assert len(events) == 1
+        assert events[0]["status_code"] == 201
+        assert events[0]["prev_hash"] is None
+        assert verify_audit_chain(str(audit_path))[0] is True
+
+    def test_chain_resumes_after_process_state_reset(self, tmp_path):
+        """A new process must append to the existing chain, not fork it."""
+        import api.audit as audit
+
+        audit_path = tmp_path / "api-audit.jsonl"
+        with (
+            patch.object(audit.config, "API_AUDIT_LOG_ENABLED", True),
+            patch.object(audit.config, "API_AUDIT_LOG_PATH", str(audit_path)),
+        ):
+            record_api_audit_event(build_api_audit_event(_minimal_request(), 200, 1.0))
+            first = _read_audit_lines(audit_path)[0]
+            reset_chain_state()
+            record_api_audit_event(build_api_audit_event(_minimal_request(), 201, 2.0))
+
+        events = _read_audit_lines(audit_path)
+        assert events[1]["prev_hash"] == first["hash"]
+        assert verify_audit_chain(str(audit_path))[0] is True
+
     def test_verify_nonexistent_file(self, tmp_path):
         """Verifying a nonexistent file should fail gracefully."""
         is_valid, message = verify_audit_chain(str(tmp_path / "no-such-file.jsonl"))
@@ -397,10 +461,15 @@ class TestJobIdExtractionUnit:
         assert _extract_job_id("/api/v1/jobs/job_1a2b3c4d5e6f") == "job_1a2b3c4d5e6f"
 
     def test_job_id_from_result_subpath(self):
-        assert _extract_job_id("/api/v1/jobs/job_aabbccddeeff/result") == "job_aabbccddeeff"
+        assert (
+            _extract_job_id("/api/v1/jobs/job_aabbccddeeff/result")
+            == "job_aabbccddeeff"
+        )
 
     def test_job_id_from_retry_subpath(self):
-        assert _extract_job_id("/api/v1/jobs/job_112233445566/retry") == "job_112233445566"
+        assert (
+            _extract_job_id("/api/v1/jobs/job_112233445566/retry") == "job_112233445566"
+        )
 
     def test_no_job_id_for_list(self):
         assert _extract_job_id("/api/v1/jobs") is None
@@ -525,11 +594,15 @@ class TestResetChainState:
 
         # Reset chain state
         reset_chain_state()
+        # Reset is process-state cleanup; an existing audit file remains the
+        # durable source of truth. Remove it here because this test explicitly
+        # wants to start a new isolated chain.
+        audit_path.unlink()
 
         # Third request should have prev_hash=None again
         client.get("/api/v1/health")
         events = _read_audit_lines(audit_path)
-        assert events[2]["prev_hash"] is None
+        assert events[0]["prev_hash"] is None
 
 
 class TestApiKeyMasking:

@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 # AWS EKS Module Variables
-# EDCOCR — Cloud-Native Deployment
+# Industrial Adaptive OCR — Cloud-Native Deployment
 # -----------------------------------------------------------------------------
 
 variable "cluster_name" {
@@ -120,4 +120,12 @@ variable "tags" {
     ManagedBy   = "terraform"
     Environment = "staging"
   }
+}
+
+# -- API endpoint exposure (LT-06 / S2-19) -----------------------------------
+
+variable "endpoint_public_access" {
+  description = "When true, EKS Kubernetes API is reachable from the public internet. Default false (private endpoint only)."
+  type        = bool
+  default     = false
 }

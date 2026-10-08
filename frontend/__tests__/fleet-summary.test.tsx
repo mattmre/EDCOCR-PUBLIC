@@ -55,7 +55,7 @@ const emptyQueues: QueueSnapshot = {
   active_alerts: [],
 };
 
-describe("<FleetSummary />", => {
+describe("<FleetSummary />", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-26T12:00:00Z"));
@@ -64,7 +64,7 @@ describe("<FleetSummary />", => {
     vi.useRealTimers();
   });
 
-  it("renders online total + capability breakdown", => {
+  it("renders online total + capability breakdown", () => {
     const nowSec = Math.floor(Date.now() / 1000);
     const workers = [
       worker({ worker_id: "g1", state: "online", capabilities: ["ocr_gpu"], last_heartbeat: nowSec }),
@@ -82,7 +82,7 @@ describe("<FleetSummary />", => {
     expect(onlineCard).toHaveTextContent(/1 nlp/);
   });
 
-  it("counts stale workers (heartbeat older than threshold)", => {
+  it("counts stale workers (heartbeat older than threshold)", () => {
     const nowSec = Math.floor(Date.now() / 1000);
     const workers = [
       worker({ worker_id: "fresh", state: "online", last_heartbeat: nowSec }),
@@ -100,7 +100,7 @@ describe("<FleetSummary />", => {
     expect(screen.getByTestId("stale-count")).toHaveTextContent("2");
   });
 
-  it("handles snapshots without a workers collection", => {
+  it("handles snapshots without a workers collection", () => {
     const fleet = makeFleet([]);
     delete fleet.workers;
 
@@ -109,7 +109,7 @@ describe("<FleetSummary />", => {
     expect(screen.getByTestId("stale-count")).toHaveTextContent("0");
   });
 
-  it("toggles stale filter via callback", async => {
+  it("toggles stale filter via callback", async () => {
     vi.useRealTimers();
     const user = userEvent.setup();
     const onToggle = vi.fn();
@@ -126,7 +126,7 @@ describe("<FleetSummary />", => {
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
-  it("shows em-dash ETA when throughput is missing", => {
+  it("shows em-dash ETA when throughput is missing", () => {
     render(
       <FleetSummary
         fleet={makeFleet([])}
@@ -137,7 +137,7 @@ describe("<FleetSummary />", => {
     expect(screen.getByTestId("card-eta")).toHaveTextContent("—");
   });
 
-  it("computes ETA in minutes when throughput is provided", => {
+  it("computes ETA in minutes when throughput is provided", () => {
     render(
       <FleetSummary
         fleet={makeFleet([])}
@@ -150,8 +150,8 @@ describe("<FleetSummary />", => {
   });
 });
 
-describe("<CapabilityBadge />", => {
-  it("uses a distinct palette per known capability", => {
+describe("<CapabilityBadge />", () => {
+  it("uses a distinct palette per known capability", () => {
     const { rerender } = render(<CapabilityBadge capability="ocr_gpu" />);
     const gpuPalette = screen.getByTestId("capability-badge-ocr_gpu").getAttribute("data-palette");
 
@@ -166,7 +166,7 @@ describe("<CapabilityBadge />", => {
     expect(gpuPalette).not.toBe(nlpPalette);
   });
 
-  it("falls back to a neutral palette for unknown capabilities", => {
+  it("falls back to a neutral palette for unknown capabilities", () => {
     render(<CapabilityBadge capability="exotic_thing" />);
     const palette = screen
       .getByTestId("capability-badge-exotic_thing")

@@ -1,4 +1,4 @@
-"""Signed enrichment plugin fixture for release entry-point validation."""
+"""Signed enrichment plugin fixture for maintenance review entry-point validation."""
 
 from __future__ import annotations
 

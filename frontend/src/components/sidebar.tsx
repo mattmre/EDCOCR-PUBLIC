@@ -29,7 +29,7 @@ export function Sidebar() {
   return (
     <aside className="hidden w-60 shrink-0 border-r border-border bg-muted/30 md:flex md:flex-col">
       <div className="px-4 py-5">
-        <p className="text-sm font-semibold">EDCOCR</p>
+        <p className="text-sm font-semibold">OCR_LOCAL</p>
         <p className="text-xs text-muted-foreground">Operator Console</p>
       </div>
       <nav className="flex-1 space-y-1 px-2 pb-4" aria-label="Primary">

@@ -2,7 +2,7 @@
 {{- if eq .Values.observability.federation.mode "thanos_sidecar" }}
 {{- if .Values.observability.federation.thanos_sidecar.enabled }}
 # =============================================================================
-#  -- C3 Federated Observability
+# Plan C Phase 1 -- C3 Federated Observability
 #
 # ClusterIP service exposing the Thanos sidecar's gRPC StoreAPI (10901) and
 # HTTP probe endpoint (10902). A remote Thanos Querier consumes the gRPC

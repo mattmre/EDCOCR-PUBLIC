@@ -18,7 +18,7 @@ const ALL_ENGINES: Array<{ id: string; label: string; license: string }> = [
 
 const QUALITY_TIERS: TenantQualityTier[] = ["draft", "standard", "legal"];
 
-/** Conservative BCP-47 subset used by the EDCOCR language registry. */
+/** Conservative BCP-47 subset used by the OCR_LOCAL language registry. */
 const BCP47_REGEX = /^[A-Za-z]{2,3}(-[A-Za-z]{2,4})?(-[A-Za-z]{2,3})?$/;
 
 const DEFAULT_BCP47_SUGGESTIONS = [

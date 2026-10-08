@@ -1,4 +1,4 @@
-"""Validate language support stack for all 45 EDCOCR languages.
+"""Validate language support stack for all 45 OCR_LOCAL languages.
 
 Checks language config completeness, font mapping, font file availability,
 PaddleOCR model directory presence, and Tesseract language data presence
@@ -35,6 +35,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from ocr_local.config.language_config import (
     LANGUAGE_REGISTRY,
     LanguageEntry,
+    get_paddle_model_family,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,9 +65,18 @@ VALID_TIERS = {"core", "extended"}
 
 # Valid scripts
 VALID_SCRIPTS = {
-    "latin", "cyrillic", "cjk", "arabic", "devanagari",
-    "tamil", "telugu", "kannada", "georgian", "greek",
-    "thai", "bengali",
+    "latin",
+    "cyrillic",
+    "cjk",
+    "arabic",
+    "devanagari",
+    "tamil",
+    "telugu",
+    "kannada",
+    "georgian",
+    "greek",
+    "thai",
+    "bengali",
 }
 
 
@@ -146,7 +156,7 @@ class ValidationReport:
 
 
 def _check_model_dir(paddle_code: str) -> tuple[bool, str]:
-    """Check if PaddleOCR model directory exists for a language.
+    """Check if the qualified OCR route has a baked recognition model.
 
     PaddleOCR stores models under PADDLEOCR_HOME/whl/ with subdirectories
     for det (detection), rec (recognition), and cls (classification).
@@ -159,6 +169,11 @@ def _check_model_dir(paddle_code: str) -> tuple[bool, str]:
     # ~/.paddleocr/whl/rec/<lang>/  or  ~/.paddleocr/whl/det/<lang>/
     # The exact structure varies by PaddleOCR version.
     # We check for any directory containing the language code under whl/.
+    model_family = get_paddle_model_family(paddle_code)
+    if model_family is None:
+        entry = LANGUAGE_REGISTRY[paddle_code]
+        return _check_tesseract_data(entry.tesseract_code)
+
     model_base = Path(PADDLEOCR_MODEL_DIR)
     if not model_base.is_dir():
         return False, str(model_base)
@@ -167,13 +182,15 @@ def _check_model_dir(paddle_code: str) -> tuple[bool, str]:
     rec_dir = model_base / "rec"
     if rec_dir.is_dir():
         for child in rec_dir.iterdir():
-            if child.is_dir() and paddle_code in child.name:
+            if child.is_dir() and (
+                child.name == model_family or child.name.startswith(f"{model_family}_")
+            ):
                 return True, str(child)
 
     # Fallback: scan the entire whl directory for any match
     for dirpath, dirnames, _filenames in os.walk(str(model_base)):
         for dirname in dirnames:
-            if paddle_code in dirname:
+            if dirname == model_family or dirname.startswith(f"{model_family}_"):
                 return True, os.path.join(dirpath, dirname)
 
     return False, str(model_base)
@@ -328,8 +345,7 @@ def validate_all_languages(
 
     # Filter languages by tier
     entries = [
-        entry for entry in LANGUAGE_REGISTRY.values()
-        if entry.tier in selected_tiers
+        entry for entry in LANGUAGE_REGISTRY.values() if entry.tier in selected_tiers
     ]
 
     report = ValidationReport(
@@ -363,25 +379,18 @@ def validate_all_languages(
     report.all_config_valid = report.config_fail == 0
 
     if check_fonts:
-        report.fonts_found = sum(
-            1 for r in results if r.font_file_exists is True
-        )
-        report.fonts_missing = sum(
-            1 for r in results if r.font_file_exists is False
-        )
+        report.fonts_found = sum(1 for r in results if r.font_file_exists is True)
+        report.fonts_missing = sum(1 for r in results if r.font_file_exists is False)
 
     if check_models:
-        report.models_found = sum(
-            1 for r in results if r.model_dir_exists is True
-        )
-        report.models_missing = sum(
-            1 for r in results if r.model_dir_exists is False
-        )
+        report.models_found = sum(1 for r in results if r.model_dir_exists is True)
+        report.models_missing = sum(1 for r in results if r.model_dir_exists is False)
         report.tesseract_found = sum(
             1 for r in results if r.tesseract_data_exists is True
         )
         report.tesseract_missing = sum(
-            1 for r in results
+            1
+            for r in results
             if r.tesseract_data_exists is False and r.has_tesseract_code
         )
 
@@ -417,18 +426,14 @@ def format_console_report(report: ValidationReport) -> str:
     lines.append(f"  Total languages:  {report.total_languages}")
     lines.append(f"  Config PASS:      {report.config_pass}")
     lines.append(f"  Config FAIL:      {report.config_fail}")
-    lines.append(
-        f"  Overall:          {'PASS' if report.all_config_valid else 'FAIL'}"
-    )
+    lines.append(f"  Overall:          {'PASS' if report.all_config_valid else 'FAIL'}")
     lines.append("")
 
     if report.fonts_checked:
         lines.append(f"  Font directory:   {report.font_dir}")
         lines.append(f"  Fonts found:      {report.fonts_found}")
         lines.append(f"  Fonts missing:    {report.fonts_missing}")
-        lines.append(
-            f"  Unique fonts:     {len(report.unique_fonts_needed)}"
-        )
+        lines.append(f"  Unique fonts:     {len(report.unique_fonts_needed)}")
         lines.append("")
 
     if report.models_checked:
@@ -495,14 +500,11 @@ def format_console_report(report: ValidationReport) -> str:
                 lines.append("CONFIG ISSUES")
                 lines.append("-" * 80)
                 issues_found = True
-            lines.append(
-                f"  {lang['paddle_code']}: {', '.join(lang['config_issues'])}"
-            )
+            lines.append(f"  {lang['paddle_code']}: {', '.join(lang['config_issues'])}")
 
     if report.fonts_checked:
         missing_fonts = [
-            lang for lang in report.languages
-            if lang["font_file_exists"] is False
+            lang for lang in report.languages if lang["font_file_exists"] is False
         ]
         if missing_fonts:
             lines.append("")
@@ -537,9 +539,7 @@ def format_markdown_report(report: ValidationReport) -> str:
     lines.append(f"**Generated**: {report.timestamp}")
     lines.append(f"**Tiers**: {', '.join(report.tiers_checked)}")
     lines.append(f"**Total languages**: {report.total_languages}")
-    lines.append(
-        f"**Result**: {'PASS' if report.all_config_valid else 'FAIL'}"
-    )
+    lines.append(f"**Result**: {'PASS' if report.all_config_valid else 'FAIL'}")
     lines.append("")
 
     # Summary table
@@ -552,9 +552,7 @@ def format_markdown_report(report: ValidationReport) -> str:
     if report.fonts_checked:
         lines.append(f"| Fonts found | {report.fonts_found} |")
         lines.append(f"| Fonts missing | {report.fonts_missing} |")
-        lines.append(
-            f"| Unique fonts needed | {len(report.unique_fonts_needed)} |"
-        )
+        lines.append(f"| Unique fonts needed | {len(report.unique_fonts_needed)} |")
     if report.models_checked:
         lines.append(f"| Models found | {report.models_found} |")
         lines.append(f"| Models missing | {report.models_missing} |")
@@ -620,9 +618,7 @@ def format_markdown_report(report: ValidationReport) -> str:
         lines.append("")
 
     # Issues section
-    issue_langs = [
-        lang for lang in report.languages if lang["config_issues"]
-    ]
+    issue_langs = [lang for lang in report.languages if lang["config_issues"]]
     if issue_langs:
         lines.append("## Config Issues")
         lines.append("")
@@ -655,7 +651,7 @@ def _parse_args(argv=None):
     """
     parser = argparse.ArgumentParser(
         description=(
-            "Validate language support stack for EDCOCR "
+            "Validate language support stack for OCR_LOCAL "
             "(config, fonts, models, tesseract)"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -700,7 +696,8 @@ Examples:
         help="Write markdown report to this path",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable verbose logging",
     )
@@ -733,9 +730,7 @@ def main(argv=None):
     else:
         tiers = [args.tier]
 
-    logger.info(
-        "Validating language support for tier(s): %s", ", ".join(tiers)
-    )
+    logger.info("Validating language support for tier(s): %s", ", ".join(tiers))
 
     report = validate_all_languages(
         tiers=tiers,

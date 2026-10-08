@@ -9,6 +9,8 @@ from ocr_local.translation.external_client import (
     DEFAULT_TRANSLATION_READINESS_PATH,
     TranslationReadinessStatus,
     TranslationServiceClient,
+    translation_timeout_from_env,
+    validate_translation_timeout,
 )
 
 if TYPE_CHECKING:
@@ -92,8 +94,8 @@ def _configured_url(config: "PipelineConfig | None") -> str | None:
 def _configured_timeout(config: "PipelineConfig | None") -> float:
     value = getattr(config, "translation_external_timeout_seconds", None)
     if value is not None:
-        return float(value)
-    return float(os.environ.get("EDC_TRANSLATION_TIMEOUT_SECONDS", "30"))
+        return validate_translation_timeout(value)
+    return translation_timeout_from_env()
 
 
 def _configured_readiness_path(config: "PipelineConfig | None") -> str:

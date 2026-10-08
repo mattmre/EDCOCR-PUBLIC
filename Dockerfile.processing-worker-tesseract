@@ -1,0 +1,100 @@
+# Syntax: docker/dockerfile:1.7
+
+ARG BASE_IMAGE=scratch
+FROM ${BASE_IMAGE}
+
+ARG BASE_IMAGE
+ARG BASE_IMAGE_DIGEST
+ARG SOURCE_REVISION
+ARG RELEASE_VERSION
+
+USER root
+
+# This inventory is the exact core+extended language registry, not Debian's
+# unbounded tesseract-ocr-all metapackage or historic/script duplicates.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      fonts-noto-core \
+      tesseract-ocr \
+      tesseract-ocr-ara \
+      tesseract-ocr-bel \
+      tesseract-ocr-ben \
+      tesseract-ocr-bul \
+      tesseract-ocr-ces \
+      tesseract-ocr-chi-sim \
+      tesseract-ocr-chi-tra \
+      tesseract-ocr-dan \
+      tesseract-ocr-deu \
+      tesseract-ocr-ell \
+      tesseract-ocr-eng \
+      tesseract-ocr-est \
+      tesseract-ocr-fas \
+      tesseract-ocr-fin \
+      tesseract-ocr-fra \
+      tesseract-ocr-hin \
+      tesseract-ocr-hrv \
+      tesseract-ocr-hun \
+      tesseract-ocr-ita \
+      tesseract-ocr-jpn \
+      tesseract-ocr-kan \
+      tesseract-ocr-kat \
+      tesseract-ocr-kor \
+      tesseract-ocr-lav \
+      tesseract-ocr-lit \
+      tesseract-ocr-mar \
+      tesseract-ocr-nep \
+      tesseract-ocr-nld \
+      tesseract-ocr-nor \
+      tesseract-ocr-osd \
+      tesseract-ocr-pol \
+      tesseract-ocr-por \
+      tesseract-ocr-ron \
+      tesseract-ocr-rus \
+      tesseract-ocr-slk \
+      tesseract-ocr-spa \
+      tesseract-ocr-srp-latn \
+      tesseract-ocr-swe \
+      tesseract-ocr-tam \
+      tesseract-ocr-tel \
+      tesseract-ocr-tha \
+      tesseract-ocr-tur \
+      tesseract-ocr-uig \
+      tesseract-ocr-ukr \
+      tesseract-ocr-urd \
+      tesseract-ocr-vie \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-processing-worker-tesseract.lock /tmp/requirements.lock
+RUN python -m pip install --no-cache-dir --upgrade "pip==26.2.1"
+RUN python -m pip install --no-cache-dir --requirement /tmp/requirements.lock \
+    && python -m pip check \
+    && rm /tmp/requirements.lock
+
+ENV HOME=/home/ocr \
+    CUDA_VISIBLE_DEVICES="" \
+    OCR_LANGUAGE_TIERS=core,extended \
+    OCR_SEPARATE_TESSERACT_LANE=true \
+    OCR_WORKER_CAPABILITY=tesseract \
+    WORKER_QUEUES=ocr_tesseract
+
+RUN test -n "$SOURCE_REVISION" \
+    && test -n "$BASE_IMAGE_DIGEST" \
+    && case "$BASE_IMAGE" in *@"$BASE_IMAGE_DIGEST") ;; *) exit 64 ;; esac \
+    && test -n "$RELEASE_VERSION" \
+    && test "$(id -u ocr)" = 1000 \
+    && python -c "import pytesseract; assert pytesseract.get_tesseract_version().major == 5" \
+    && python -c "from ocr_local.config.language_config import TESSERACT_MAP; import pytesseract; installed=set(pytesseract.get_languages()); expected=set(TESSERACT_MAP.values()); assert expected <= installed, sorted(expected - installed)" \
+    && python -c "import importlib.util; assert importlib.util.find_spec('paddleocr') is None" \
+    && mkdir -p /home/ocr \
+    && chown -R 1000:1000 /home/ocr
+
+LABEL org.opencontainers.image.revision="$SOURCE_REVISION" \
+      org.opencontainers.image.version="$RELEASE_VERSION" \
+      org.opencontainers.image.base.name="$BASE_IMAGE" \
+      org.opencontainers.image.base.digest="$BASE_IMAGE_DIGEST" \
+      org.opencontainers.image.role="ocr-tesseract-worker"
+
+USER 1000:1000
+WORKDIR /app/coordinator
+
+CMD ["celery", "-A", "coordinator.coordinator", "worker", "--loglevel=info", "--queues=ocr_tesseract", "--concurrency=2", "--max-tasks-per-child=100", "--hostname=ocr-tesseract@%h"]

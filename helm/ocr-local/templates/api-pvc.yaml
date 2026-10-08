@@ -1,0 +1,18 @@
+{{- if and .Values.api.enabled .Values.api.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-api-data
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-storage
+spec:
+  accessModes:
+    - {{ .Values.api.persistence.accessMode | default "ReadWriteOnce" | quote }}
+  {{- if .Values.api.persistence.storageClass }}
+  storageClassName: {{ .Values.api.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.api.persistence.size | default "20Gi" | quote }}
+{{- end }}

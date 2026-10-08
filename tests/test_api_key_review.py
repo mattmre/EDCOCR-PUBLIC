@@ -87,7 +87,11 @@ class _FakeQuerySet:
         result = list(self._items)
         # Support is_active filtering
         if "is_active" in kwargs:
-            result = [i for i in result if getattr(i, "is_active", True) == kwargs["is_active"]]
+            result = [
+                i
+                for i in result
+                if getattr(i, "is_active", True) == kwargs["is_active"]
+            ]
         # Support key_id__startswith filtering
         if "key_id__startswith" in kwargs:
             prefix = kwargs["key_id__startswith"]
@@ -175,9 +179,16 @@ def _build_mock_job_models():
     class FakeApiKeyRecord:
         DoesNotExist = _FakeDoesNotExist
 
-        def __init__(self, key_id="", description="", is_active=True,
-                     use_count=0, last_used_at=None, created_at=None,
-                     permissions=None):
+        def __init__(
+            self,
+            key_id="",
+            description="",
+            is_active=True,
+            use_count=0,
+            last_used_at=None,
+            created_at=None,
+            permissions=None,
+        ):
             self.key_id = key_id
             self.description = description
             self.is_active = is_active
@@ -215,9 +226,20 @@ def _build_mock_job_models():
 
     jobs_mod = types.ModuleType("jobs")
 
+    rls_mod = types.ModuleType("jobs.rls")
+    rls_mod.control_plane_rls_command = lambda func: func
+    tasks_mod = types.ModuleType("jobs.tasks")
+
+    def record_control_plane_custody_event(**kwargs):
+        FakeCustodyEvent.objects.create(job=None, **kwargs)
+
+    tasks_mod._record_control_plane_custody_event = record_control_plane_custody_event
+
     return {
         "jobs": jobs_mod,
         "jobs.models": models_mod,
+        "jobs.rls": rls_mod,
+        "jobs.tasks": tasks_mod,
     }
 
 
@@ -832,8 +854,11 @@ class TestRevokeApiKey:
         cmd.handle(key_id="no_job_key_0001001", confirm=True)
 
         assert key.is_active is False
-        # No custody event created (no job to anchor to)
-        assert len(FakeCustodyEvent._created) == 0
+        # Control-plane revocations use a standalone, job-less custody event;
+        # they must remain auditable even when no OCR Job FK exists.
+        assert len(FakeCustodyEvent._created) == 1
+        assert FakeCustodyEvent._created[0]["job"] is None
+        assert FakeCustodyEvent._created[0]["event_type"] == "api_key_revoked"
 
     def test_revoke_output_shows_key_info(self, revoke_module):
         """revoke_api_key should display key information before revoking."""

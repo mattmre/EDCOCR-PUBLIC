@@ -10,16 +10,18 @@ spec:
   scaleTargetRef:
     name: {{ .Release.Name }}-layout-cpu-worker
   minReplicaCount: {{ .Values.layoutCpuWorker.autoscaling.minReplicas }}
-  maxReplicaCount: {{ .Values.layoutCpuWorker.autoscaling.maxReplicas }}
+  maxReplicaCount: {{ min .Values.layoutCpuWorker.autoscaling.maxReplicas (.Values.keda.maxReplicaCount | default 50) }}
   pollingInterval: {{ .Values.layoutCpuWorker.autoscaling.pollingInterval }}
   cooldownPeriod: {{ .Values.layoutCpuWorker.autoscaling.cooldownPeriod }}
   triggers:
     - type: rabbitmq
       metadata:
-        protocol: amqp
+        protocol: http
         queueName: ocr_layout_cpu
+        vhostName: "/"
         mode: QueueLength
         value: {{ .Values.layoutCpuWorker.autoscaling.queueTarget | quote }}
+        excludeUnacknowledged: "false"
       authenticationRef:
         name: {{ .Release.Name }}-rabbitmq-auth
 {{- end }}

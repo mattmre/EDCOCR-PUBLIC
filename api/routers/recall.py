@@ -24,6 +24,7 @@ from api.models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["recall"])
+_MAX_TENANT_SCOPED_JOB_IDS = 100_000
 
 # Module-level singleton; lazily initialized to avoid import-time DB access.
 _entity_index: EntityIndex | None = None
@@ -45,11 +46,35 @@ def _request_tenant_id(request: Request) -> str | None:
     return getattr(request.state, "tenant_id", None)
 
 
+def _is_platform_admin(request: Request) -> bool:
+    """True when server-attached tenant_permissions includes platform_admin.
+
+    Trusts only ``request.state.tenant_permissions`` (API key path), never free-form
+    JWT ``identity.claims["permissions"]`` (R4-RC-11 / RC-04 amp).
+    """
+    from api.authz import is_platform_admin
+
+    return is_platform_admin(request)
+
+
 def _tenant_job_ids(tenant_id: str) -> list[str]:
-    """Return all job IDs belonging to a tenant."""
+    """Return a bounded tenant job allowlist, failing closed when too large."""
     session = get_session_factory()()
     try:
-        rows = session.query(Job.job_id).filter(Job.tenant_id == tenant_id).all()
+        rows = (
+            session.query(Job.job_id)
+            .filter(Job.tenant_id == tenant_id)
+            .limit(_MAX_TENANT_SCOPED_JOB_IDS + 1)
+            .all()
+        )
+        if len(rows) > _MAX_TENANT_SCOPED_JOB_IDS:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "tenant_scope_too_large",
+                    "message": "Tenant search scope exceeds the configured safety limit.",
+                },
+            )
         return [r[0] for r in rows]
     finally:
         session.close()
@@ -69,7 +94,10 @@ def _verify_job_tenant(job_id: str, tenant_id: str | None) -> None:
         if not exists:
             raise HTTPException(
                 status_code=404,
-                detail={"error": "job_not_found", "message": f"Job {job_id} not found."},
+                detail={
+                    "error": "job_not_found",
+                    "message": f"Job {job_id} not found.",
+                },
             )
     finally:
         session.close()
@@ -89,13 +117,17 @@ def _verify_job_tenant(job_id: str, tenant_id: str | None) -> None:
 async def search_entities(
     request: Request,
     type: Optional[str] = Query(
-        default=None, description="Filter by entity type (e.g. PERSON, DATE)"
+        default=None,
+        max_length=128,
+        description="Filter by entity type (e.g. PERSON, DATE)",
     ),
     q: Optional[str] = Query(
-        default=None, description="Text search query (LIKE matching)"
+        default=None,
+        max_length=256,
+        description="Text search query (LIKE matching)",
     ),
     job_id: Optional[str] = Query(
-        default=None, description="Filter by job ID"
+        default=None, max_length=64, description="Filter by job ID"
     ),
     min_confidence: float = Query(
         default=0.0, ge=0.0, le=1.0, description="Minimum confidence threshold"
@@ -112,15 +144,15 @@ async def search_entities(
     deprecated ``page``/``per_page`` pair for backward compatibility.
     """
     limit, offset = pagination
-    tenant_id = _request_tenant_id(request)
+    from api.authz import require_tenant_scope_or_platform
 
-    # Tenant isolation: restrict results to jobs owned by this tenant
+    scoped = require_tenant_scope_or_platform(request)
     allowed_job_ids = None
-    if tenant_id is not None:
+    if scoped is not None:
         if job_id:
-            _verify_job_tenant(job_id, tenant_id)
+            _verify_job_tenant(job_id, scoped)
         else:
-            allowed_job_ids = _tenant_job_ids(tenant_id)
+            allowed_job_ids = _tenant_job_ids(scoped)
 
     index = _get_index()
     results, total = index.search_entities(
@@ -167,13 +199,17 @@ async def search_entities(
 async def search_extractions(
     request: Request,
     field: Optional[str] = Query(
-        default=None, description="Filter by field name (e.g. invoice_number, date)"
+        default=None,
+        max_length=128,
+        description="Filter by field name (e.g. invoice_number, date)",
     ),
     q: Optional[str] = Query(
-        default=None, description="Value search query (LIKE matching)"
+        default=None,
+        max_length=256,
+        description="Value search query (LIKE matching)",
     ),
     job_id: Optional[str] = Query(
-        default=None, description="Filter by job ID"
+        default=None, max_length=64, description="Filter by job ID"
     ),
     min_confidence: float = Query(
         default=0.0, ge=0.0, le=1.0, description="Minimum confidence threshold"
@@ -190,15 +226,15 @@ async def search_extractions(
     deprecated ``page``/``per_page`` pair for backward compatibility.
     """
     limit, offset = pagination
-    tenant_id = _request_tenant_id(request)
+    from api.authz import require_tenant_scope_or_platform
 
-    # Tenant isolation: restrict results to jobs owned by this tenant
+    scoped = require_tenant_scope_or_platform(request)
     allowed_job_ids = None
-    if tenant_id is not None:
+    if scoped is not None:
         if job_id:
-            _verify_job_tenant(job_id, tenant_id)
+            _verify_job_tenant(job_id, scoped)
         else:
-            allowed_job_ids = _tenant_job_ids(tenant_id)
+            allowed_job_ids = _tenant_job_ids(scoped)
 
     index = _get_index()
     results, total = index.search_extractions(
@@ -248,8 +284,14 @@ async def recall_stats(
     """Return entity and extraction index statistics.
 
     Includes total counts, unique types/fields, and number of
-    indexed jobs.
+    indexed jobs. Tenant-scoped keys only see aggregates for their own
+    jobs (maintenance review). Platform admins and single-tenant mode
+    retain global stats.
     """
     index = _get_index()
-    stats = index.stats()
+    from api.authz import require_tenant_scope_or_platform
+
+    scoped = require_tenant_scope_or_platform(request)
+    allowed_job_ids = None if scoped is None else _tenant_job_ids(scoped)
+    stats = index.stats(allowed_job_ids=allowed_job_ids)
     return RecallStatsResponse(**stats)

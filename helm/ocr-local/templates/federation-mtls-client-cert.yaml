@@ -1,6 +1,6 @@
 {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
 {{- /*
-  Federation mTLS — peer-cluster client certificate (item C8).
+  Federation mTLS — peer-cluster client certificate (Plan C Phase 1, item C8).
 
   Single client cert used both by:
     1. The RabbitMQ federation upstream connection (this cluster acting as

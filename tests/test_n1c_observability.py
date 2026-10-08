@@ -40,6 +40,7 @@ def manager(tmp_path):
 
         from api.job_manager import JobManager
 
+        _write_completed_artifacts(tmp_path / "out")
         yield JobManager(get_session_factory())
 
 
@@ -71,6 +72,19 @@ def _make_proc_mock(returncode=0):
     return proc
 
 
+def _write_completed_artifacts(output_dir):
+    """Make a successful process mock satisfy the real output contract."""
+    from pathlib import Path
+
+    root = Path(output_dir)
+    pdf_dir = root / "EXPORT" / "PDF"
+    text_dir = root / "EXPORT" / "TEXT"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    text_dir.mkdir(parents=True, exist_ok=True)
+    (pdf_dir / "result.pdf").write_bytes(b"%PDF-1.4\nmock completed artifact\n")
+    (text_dir / "result.txt").write_text("mock OCR text\n", encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Task 1: tenant_id wiring to dashboard MetricsCollector
 # ---------------------------------------------------------------------------
@@ -88,7 +102,7 @@ class TestTenantIdDashboardWiring:
 
         _insert_job(
             "job_tid_001",
-            status="processing",
+            status="submitted",
             pages_completed=3,
             tenant_id="tenant_abc",
         )
@@ -113,7 +127,7 @@ class TestTenantIdDashboardWiring:
 
         _insert_job(
             "job_tid_002",
-            status="processing",
+            status="submitted",
             pages_completed=1,
             tenant_id="tenant_xyz",
         )
@@ -138,7 +152,7 @@ class TestTenantIdDashboardWiring:
 
         _insert_job(
             "job_tid_003",
-            status="processing",
+            status="submitted",
             tenant_id="tenant_counts",
         )
 
@@ -158,7 +172,7 @@ class TestTenantIdDashboardWiring:
         collector = get_collector()
         collector.reset()
 
-        _insert_job("job_tid_004", status="processing")
+        _insert_job("job_tid_004", status="submitted")
 
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.return_value = _make_proc_mock(0)
@@ -180,13 +194,13 @@ class TestTenantIdDashboardWiring:
         # Run two jobs with different tenant IDs
         _insert_job(
             "job_tid_005a",
-            status="processing",
+            status="submitted",
             pages_completed=10,
             tenant_id="tenant_a",
         )
         _insert_job(
             "job_tid_005b",
-            status="processing",
+            status="submitted",
             pages_completed=20,
             tenant_id="tenant_b",
         )
@@ -236,10 +250,11 @@ class TestSLAMonitorFeed:
 
         _insert_job(
             "job_sla_001",
-            status="processing",
+            status="submitted",
             pages_completed=5,
             tenant_id="tenant_sla",
         )
+        _write_completed_artifacts(tmp_path / "out")
 
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.return_value = _make_proc_mock(0)
@@ -264,7 +279,7 @@ class TestSLAMonitorFeed:
 
         _insert_job(
             "job_sla_002",
-            status="processing",
+            status="submitted",
             tenant_id="tenant_sla_fail",
         )
 
@@ -288,7 +303,7 @@ class TestSLAMonitorFeed:
         reset_global_monitor()
         monitor = get_monitor()
 
-        _insert_job("job_sla_003", status="processing")
+        _insert_job("job_sla_003", status="submitted")
 
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.return_value = _make_proc_mock(0)
@@ -304,7 +319,8 @@ class TestSLAMonitorFeed:
 
     def test_sla_monitor_failure_does_not_break_pipeline(self, manager, tmp_path):
         """If SLA monitor throws, the pipeline still completes."""
-        _insert_job("job_sla_004", status="processing")
+        _insert_job("job_sla_004", status="submitted")
+        _write_completed_artifacts(tmp_path / "out")
 
         with patch("subprocess.Popen") as mock_popen:
             mock_popen.return_value = _make_proc_mock(0)
@@ -332,7 +348,7 @@ class TestSLAMonitorFeed:
 
         _insert_job(
             "job_sla_005",
-            status="processing",
+            status="submitted",
             tenant_id="tenant_lat",
         )
 
@@ -358,7 +374,7 @@ class TestSLAMonitorFeed:
 
         _insert_job(
             "job_sla_006",
-            status="processing",
+            status="submitted",
             tenant_id="tenant_exc",
         )
 

@@ -6,6 +6,11 @@ across different messaging backends.
 
 All external SDK imports are lazy — module works without dependencies.
 
+**Claim status (wire-or-hide):** HIDE / experimental library.
+Not mounted as a required production ingress path. Do not claim Kafka/SNS
+fleet eventing as default-on product capability without mount + E2E proof.
+See ``docs/analysis/dead-code-20260729/WIRE-OR-HIDE-TRIAGE.md``.
+
 Environment variables:
     EVENT_BUS_BACKEND           — "local" (default), "kafka", or "sns"
     KAFKA_BOOTSTRAP_SERVERS     — Kafka broker address (default: localhost:9092)
@@ -137,11 +142,25 @@ class Event:
 
 
 class EventBus(ABC):
-    """Abstract event bus interface."""
+    """Abstract event bus interface.
+
+    Delivery semantics: at-most-once *attempt* per subscriber — ``publish``
+    invokes every matching subscriber exactly once and never retries. It is
+    NOT at-least-once delivery: a subscriber that raises does not receive
+    the event again. The boolean return reports fan-out health: ``True``
+    only when every delivery attempt succeeded; falsy when any subscriber
+    (local) or transport send (Kafka/SNS) failed. Callers must NOT treat
+    the return as unconditional success — log and metric on falsy.
+    """
 
     @abstractmethod
     def publish(self, event: Event) -> bool:
-        """Publish an event. Returns True if successful."""
+        """Publish an event.
+
+        Returns True only if every delivery attempt succeeded; falsy if
+        any subscriber raised (local bus) or the transport send failed
+        (Kafka/SNS). See class docstring for delivery semantics.
+        """
         ...
 
     @abstractmethod
@@ -166,18 +185,35 @@ class LocalEventBus(EventBus):
         self._max_history = 1000
 
     def publish(self, event: Event) -> bool:
+        """Dispatch to matching subscribers; False if any raised.
+
+        At-most-once attempt per subscriber (no retries). Every subscriber
+        still runs even after an earlier one fails; each failure is logged
+        with its subscription id. No in-repo callers currently branch on
+        this return (verified 2026-09-02) — new callers must handle False
+        (log + metric), never silently ignore it.
+        """
         with self._lock:
             self._history.append(event)
             if len(self._history) > self._max_history:
-                self._history = self._history[-self._max_history:]
+                self._history = self._history[-self._max_history :]
             subs = list(self._subscriptions.items())
 
+        failures = 0
         for sub_id, (et, callback) in subs:
             if et == event.event_type or et == EventType.CUSTOM:
                 try:
                     callback(event)
                 except Exception:
+                    failures += 1
                     logger.exception(f"Event callback failed for {sub_id}")
+        if failures:
+            logger.warning(
+                "LocalEventBus.publish delivered with %d/%d subscriber failures",
+                failures,
+                len(subs),
+            )
+            return False
         return True
 
     def subscribe(self, event_type: EventType, callback) -> str:
@@ -236,31 +272,21 @@ class KafkaEventBus(EventBus):
         sasl_username: str = "",
         sasl_password: str = "",
     ):
-        self._bootstrap_servers = (
-            bootstrap_servers
-            or os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+        self._bootstrap_servers = bootstrap_servers or os.environ.get(
+            "KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"
         )
-        self._topic_prefix = (
-            topic_prefix
-            or os.environ.get("KAFKA_TOPIC_PREFIX", "ocr-pipeline")
+        self._topic_prefix = topic_prefix or os.environ.get(
+            "KAFKA_TOPIC_PREFIX", "ocr-pipeline"
         )
         self._use_topic_map = use_topic_map
-        self._security_protocol = (
-            security_protocol
-            or os.environ.get("KAFKA_SECURITY_PROTOCOL", "")
+        self._security_protocol = security_protocol or os.environ.get(
+            "KAFKA_SECURITY_PROTOCOL", ""
         )
-        self._sasl_mechanism = (
-            sasl_mechanism
-            or os.environ.get("KAFKA_SASL_MECHANISM", "")
+        self._sasl_mechanism = sasl_mechanism or os.environ.get(
+            "KAFKA_SASL_MECHANISM", ""
         )
-        self._sasl_username = (
-            sasl_username
-            or os.environ.get("KAFKA_SASL_USERNAME", "")
-        )
-        self._sasl_password = (
-            sasl_password
-            or os.environ.get("KAFKA_SASL_PASSWORD", "")
-        )
+        self._sasl_username = sasl_username or os.environ.get("KAFKA_SASL_USERNAME", "")
+        self._sasl_password = sasl_password or os.environ.get("KAFKA_SASL_PASSWORD", "")
         self._producer = None
         self._local_subs: dict = {}
         self._counter = 0
@@ -338,9 +364,7 @@ class SnsEventBus(EventBus):
             try:
                 import boto3
             except ImportError:
-                raise ImportError(
-                    "boto3 is required. Install with: pip install boto3"
-                )
+                raise ImportError("boto3 is required. Install with: pip install boto3")
             self._client = boto3.client("sns", region_name=self._region)
         return self._client
 

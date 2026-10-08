@@ -10,7 +10,6 @@ These tests verify that preprocessing functions:
 Run with: python -m pytest tests/test_preprocessing.py -v
 """
 
-
 import numpy as np
 import pytest
 from PIL import Image
@@ -21,6 +20,7 @@ from PIL import Image
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def white_image():
@@ -99,28 +99,33 @@ def dense_skewed_text_image():
 # Tests: Individual functions
 # ---------------------------------------------------------------------------
 
+
 class TestDeskew:
     """Tests for deskew_image()."""
 
     def test_deskew_returns_image(self, white_image):
         from preprocessing import deskew_image
+
         result = deskew_image(white_image)
         assert isinstance(result, Image.Image)
 
     def test_deskew_handles_already_straight(self, white_image):
         """A blank white image should come back unchanged (no skew detected)."""
         from preprocessing import deskew_image
+
         result = deskew_image(white_image)
         assert isinstance(result, Image.Image)
         assert result.size == white_image.size
 
     def test_deskew_preserves_dimensions(self, skewed_text_image):
         from preprocessing import deskew_image
+
         result = deskew_image(skewed_text_image)
         assert result.size == skewed_text_image.size
 
     def test_deskew_tiny_image_returns_original(self, tiny_image):
         from preprocessing import deskew_image
+
         result = deskew_image(tiny_image)
         # Should return original unchanged (too small)
         assert result is tiny_image
@@ -182,12 +187,14 @@ class TestBinarize:
 
     def test_binarize_returns_image(self, white_image):
         from preprocessing import binarize_adaptive
+
         result = binarize_adaptive(white_image)
         assert isinstance(result, Image.Image)
 
     def test_binarize_returns_binary_image(self, noisy_image):
         """Output should be grayscale with only black and white pixels."""
         from preprocessing import binarize_adaptive
+
         result = binarize_adaptive(noisy_image)
         assert result.mode == "L"
         arr = np.array(result)
@@ -197,6 +204,7 @@ class TestBinarize:
 
     def test_binarize_preserves_size(self, white_image):
         from preprocessing import binarize_adaptive
+
         result = binarize_adaptive(white_image)
         assert result.size == white_image.size
 
@@ -206,17 +214,20 @@ class TestDenoise:
 
     def test_denoise_returns_image(self, noisy_image):
         from preprocessing import denoise_image
+
         result = denoise_image(noisy_image)
         assert isinstance(result, Image.Image)
 
     def test_denoise_preserves_dimensions(self, noisy_image):
         from preprocessing import denoise_image
+
         result = denoise_image(noisy_image)
         assert result.size == noisy_image.size
 
     def test_denoise_reduces_noise(self, noisy_image):
         """Denoised image should have lower pixel variance than noisy input."""
         from preprocessing import denoise_image
+
         result = denoise_image(noisy_image)
         original_std = np.std(np.array(noisy_image).astype(float))
         result_std = np.std(np.array(result.convert("RGB")).astype(float))
@@ -229,11 +240,13 @@ class TestEnhanceContrast:
 
     def test_contrast_returns_image(self, white_image):
         from preprocessing import enhance_contrast
+
         result = enhance_contrast(white_image)
         assert isinstance(result, Image.Image)
 
     def test_contrast_preserves_dimensions(self, white_image):
         from preprocessing import enhance_contrast
+
         result = enhance_contrast(white_image)
         assert result.size == white_image.size
 
@@ -242,33 +255,39 @@ class TestEnhanceContrast:
 # Tests: Pipeline function (preprocess_for_ocr)
 # ---------------------------------------------------------------------------
 
+
 class TestPreprocessForOcr:
     """Tests for the main preprocess_for_ocr() pipeline."""
 
     def test_level_none_returns_original(self, white_image):
         """Level 'none' should return the exact same object."""
         from preprocessing import preprocess_for_ocr
+
         result = preprocess_for_ocr(white_image, level="none")
         assert result is white_image
 
     def test_level_standard_returns_image(self, white_image):
         from preprocessing import preprocess_for_ocr
+
         result = preprocess_for_ocr(white_image, level="standard")
         assert isinstance(result, Image.Image)
 
     def test_level_enhanced_returns_image(self, white_image):
         from preprocessing import preprocess_for_ocr
+
         result = preprocess_for_ocr(white_image, level="enhanced")
         assert isinstance(result, Image.Image)
 
     def test_level_aggressive_returns_image(self, white_image):
         from preprocessing import preprocess_for_ocr
+
         result = preprocess_for_ocr(white_image, level="aggressive")
         assert isinstance(result, Image.Image)
 
     def test_handles_grayscale_input(self, gray_image):
         """Grayscale images should be handled without error at all levels."""
         from preprocessing import preprocess_for_ocr
+
         for level in ("standard", "enhanced", "aggressive"):
             result = preprocess_for_ocr(gray_image, level=level)
             assert isinstance(result, Image.Image), f"Failed at level={level}"
@@ -276,18 +295,21 @@ class TestPreprocessForOcr:
     def test_handles_rgba_input(self, rgba_image):
         """RGBA images should be handled without error."""
         from preprocessing import preprocess_for_ocr
+
         result = preprocess_for_ocr(rgba_image, level="enhanced")
         assert isinstance(result, Image.Image)
 
     def test_tiny_image_returns_original(self, tiny_image):
         """Images below minimum dimension should be returned unchanged."""
         from preprocessing import preprocess_for_ocr
+
         result = preprocess_for_ocr(tiny_image, level="aggressive")
         assert result is tiny_image
 
     def test_large_image_returns_image(self, large_image):
         """Normal document-size images should process without error."""
         from preprocessing import preprocess_for_ocr
+
         result = preprocess_for_ocr(large_image, level="standard")
         assert isinstance(result, Image.Image)
         assert result.size == large_image.size
@@ -295,14 +317,36 @@ class TestPreprocessForOcr:
     def test_invalid_level_defaults_to_standard(self, white_image):
         """Unknown level string should fall back to 'standard' behavior."""
         from preprocessing import preprocess_for_ocr
+
         # Should not raise; should log a warning and default to standard
         result = preprocess_for_ocr(white_image, level="turbo")
         assert isinstance(result, Image.Image)
+
+    def test_preserve_geometry_skips_geometric_transforms(
+        self, white_image, monkeypatch
+    ):
+        """Text-layer preprocessing must not move pixels without a transform."""
+        import preprocessing as mod
+
+        def unexpected_geometry(_image):
+            raise AssertionError("geometry-changing preprocessing was called")
+
+        monkeypatch.setattr(mod, "deskew_image", unexpected_geometry)
+        monkeypatch.setattr(mod, "_apply_advanced_preprocessing", unexpected_geometry)
+
+        result = mod.preprocess_for_ocr(
+            white_image,
+            level="enhanced",
+            preserve_geometry=True,
+        )
+        assert isinstance(result, Image.Image)
+        assert result.size == white_image.size
 
 
 # ---------------------------------------------------------------------------
 # Tests: OpenCV not available
 # ---------------------------------------------------------------------------
+
 
 class TestNoCv2:
     """Tests verifying graceful fallback when OpenCV is not installed."""

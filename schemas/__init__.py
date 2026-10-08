@@ -1,4 +1,4 @@
-"""Output contract schema definitions for EDCOCR.
+"""Output contract schema definitions for OCR_LOCAL.
 
 Provides versioned JSON Schema definitions for all pipeline output formats.
 Use load_schema(output_type) to get a schema dict, or validate(data, output_type)
@@ -11,6 +11,7 @@ from pathlib import Path
 __all__ = [
     "SCHEMA_DIR",
     "OUTPUT_TYPES",
+    "ARTIFACT_OUTPUT_TYPES",
     "load_schema",
     "validate",
     "get_schema_version",
@@ -34,15 +35,23 @@ OUTPUT_TYPES = (
     "custody",
     "retrieval",
     "output_manifest",
+    "form",
+    "ai_text",
+    "language",
+    "symbology",
+)
+
+# Schema-backed files discoverable through the job output API. output_manifest
+# describes the API manifest response itself and is therefore not an artifact.
+ARTIFACT_OUTPUT_TYPES = tuple(
+    output_type for output_type in OUTPUT_TYPES if output_type != "output_manifest"
 )
 
 
 def load_schema(output_type: str) -> dict:
     """Load JSON Schema for the given output type."""
     if output_type not in OUTPUT_TYPES:
-        raise ValueError(
-            f"Unknown output type: {output_type}. Valid: {OUTPUT_TYPES}"
-        )
+        raise ValueError(f"Unknown output type: {output_type}. Valid: {OUTPUT_TYPES}")
     path = SCHEMA_DIR / f"{output_type}.schema.json"
     if not path.exists():
         raise FileNotFoundError(f"Schema not found: {path}")

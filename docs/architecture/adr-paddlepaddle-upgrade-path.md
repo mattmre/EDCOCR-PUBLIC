@@ -1,3 +1,5 @@
+> Design/reference material. Optional deployment and feature claims require the acceptance checks in [candidate scope](../release-candidate.md).
+
 # ADR: PaddlePaddle Upgrade Path
 
 **Status**: Accepted

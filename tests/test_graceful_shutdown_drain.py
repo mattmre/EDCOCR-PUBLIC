@@ -1,4 +1,4 @@
-"""Tests for graceful-shutdown drain logic ( P1 fix).
+"""Tests for graceful-shutdown drain logic (maintenance review P1 fix).
 
 Validates that SIGTERM drains in-flight queue items before killing threads,
 rather than abandoning work immediately.

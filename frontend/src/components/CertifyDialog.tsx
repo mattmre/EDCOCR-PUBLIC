@@ -36,7 +36,7 @@ const METHOD_LABEL: Record<CertifyAuthMethod, string> = {
 export interface CertifyDialogProps {
   reviewId: string;
   open: boolean;
-  onClose: => void;
+  onClose: () => void;
   /** Called with the updated item on successful certification. */
   onCertified: (updated: ReviewItem) => void;
 }
@@ -79,6 +79,10 @@ export function CertifyDialog({
   async function handleConfirm() {
     if (!method) {
       setError("Select a strong-authentication method to continue.");
+      return;
+    }
+    if (!authToken.trim()) {
+      setError("Complete strong authentication before continuing.");
       return;
     }
     setSubmitting(true);

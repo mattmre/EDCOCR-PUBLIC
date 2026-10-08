@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Example Kafka consumer for EDCOCR event bus.
+"""Example Kafka consumer for OCR_LOCAL event bus.
 
 Demonstrates consuming events from the ocr.jobs.completed topic with:
   - Automatic deserialization to Event objects
@@ -282,7 +282,7 @@ def consume_batch(consumer_backend, consumer, batch_size: int = 10) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="EDCOCR Kafka consumer example",
+        description="OCR_LOCAL Kafka consumer example",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -318,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
     """Main entry point."""
     args = parse_args(argv)
 
-    logger.info("EDCOCR Kafka Consumer Example")
+    logger.info("OCR_LOCAL Kafka Consumer Example")
     logger.info("Bootstrap servers: %s", args.bootstrap_servers)
     logger.info("Topic: %s", args.topic)
     logger.info("Group ID: %s", args.group_id)

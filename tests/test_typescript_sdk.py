@@ -35,13 +35,13 @@ class TestPackageJson:
 
     def test_version_is_semver(self):
         version = self.pkg["version"]
-        assert re.match(r"^\d+\.\d+\.\d+$", version), f"Invalid semver: {version}"
+        assert re.match(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$", version), f"Invalid semver: {version}"
 
     def test_version_matches_sdk_constant(self):
         """SDK_VERSION in src/client.ts should match package.json version."""
         client_ts = SDK_ROOT / "src" / "client.ts"
         content = client_ts.read_text(encoding="utf-8")
-        match = re.search(r"SDK_VERSION\s*=\s*['\"](\d+\.\d+\.\d+)['\"]", content)
+        match = re.search(r"SDK_VERSION\s*=\s*['\"](\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)['\"]", content)
         assert match, "SDK_VERSION not found in client.ts"
         assert match.group(1) == self.pkg["version"]
 
@@ -59,10 +59,21 @@ class TestPackageJson:
     def test_license(self):
         assert self.pkg["license"] == "MIT"
 
-    def test_engines_node_18_plus(self):
+    def test_engines_node_matches_vitest_toolchain_floor(self):
         engines = self.pkg.get("engines", {})
         assert "node" in engines
-        assert "18" in engines["node"], "Should require Node.js 18+"
+        assert engines["node"] == "^20.19.0 || >=22.12.0"
+
+    def test_dev_engines_match_runtime_floor(self):
+        dev_engines = self.pkg.get("devEngines", {})
+        runtime = dev_engines.get("runtime", {})
+        assert runtime.get("name") == "node"
+        assert runtime.get("version") == self.pkg["engines"]["node"]
+        assert runtime.get("onFail") == "error"
+
+    def test_node_types_match_minimum_runtime_major(self):
+        dev_deps = self.pkg.get("devDependencies", {})
+        assert dev_deps.get("@types/node", "").startswith("^20.")
 
     def test_no_runtime_dependencies(self):
         """SDK should have zero runtime dependencies (fetch-based)."""
@@ -85,7 +96,7 @@ class TestPackageJson:
     def test_has_repository(self):
         repo = self.pkg.get("repository", {})
         assert "url" in repo
-        assert "EDCOCR" in repo["url"]
+        assert "EDCOCR-PUBLIC" in repo["url"]
 
     def test_exports_field(self):
         exports = self.pkg.get("exports", {})

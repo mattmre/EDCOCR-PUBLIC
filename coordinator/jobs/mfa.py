@@ -53,23 +53,32 @@ MFA_VERIFIED_SESSION_KEY = "_otp_verified"
 # ---------------------------------------------------------------------------
 
 
+# Paths that require TOTP when MFA is required (R2-RC-03 / PA-A15 / PB-A09).
+# Staff dashboard previously skipped TOTP because middleware only gated /admin/.
+_MFA_PROTECTED_PREFIXES = (
+    "/admin/",
+    "/dashboard/",
+)
+
+
 class MFAMiddleware:
-    """Enforce TOTP verification for admin paths when MFA is required.
+    """Enforce TOTP verification for admin *and* staff dashboard when MFA required.
 
     Behaviour:
-    * Only intercepts requests whose ``path`` starts with ``/admin/``.
+    * Intercepts ``/admin/`` and ``/dashboard/`` (staff operator surfaces).
     * Passes through immediately when ``is_mfa_required()`` returns False.
     * Passes through if the user already has a verified session flag.
     * Passes through for unauthenticated users (let Django handle login).
     * Passes through for the OTP verify/setup page itself (to avoid loops).
-    * Redirects all other admin requests to the django-otp verify page.
+    * Redirects other protected requests to the django-otp verify page.
     """
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
-        if not request.path.startswith("/admin/"):
+        path = request.path or ""
+        if not any(path.startswith(p) for p in _MFA_PROTECTED_PREFIXES):
             return self.get_response(request)
 
         if not is_mfa_required():
@@ -90,22 +99,22 @@ class MFAMiddleware:
             request.session[MFA_VERIFIED_SESSION_KEY] = True
             return self.get_response(request)
 
-        # Allow access to the login and OTP-related admin pages to avoid
-        # redirect loops.  The django-otp login view lives at /admin/login/.
+        # Allow access to login/logout and OTP device management to avoid loops.
+        # OTPAdminSite serves TOTP challenge on /admin/login/ when user has a device.
         _passthrough_prefixes = (
             "/admin/login/",
             "/admin/logout/",
             "/admin/otp/",
+            "/admin/otp_totp/",
         )
-        if any(request.path.startswith(p) for p in _passthrough_prefixes):
+        if any(path.startswith(p) for p in _passthrough_prefixes):
             return self.get_response(request)
 
-        # Redirect to the admin login page (which, with OTPAdminSite or
-        # OTPMiddleware, will require TOTP verification).
+        # Authenticated but not OTP-verified: force re-login through OTPAdminSite.
         login_url = reverse("admin:login")
         logger.info(
             "MFA verification required for user=%s path=%s",
             request.user,
-            request.path,
+            path,
         )
-        return HttpResponseRedirect(f"{login_url}?next={request.path}")
+        return HttpResponseRedirect(f"{login_url}?next={path}")

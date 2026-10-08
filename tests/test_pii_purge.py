@@ -20,6 +20,7 @@ import importlib
 import os
 import sys
 import types
+from contextlib import nullcontext
 from io import StringIO
 from unittest.mock import MagicMock
 
@@ -68,6 +69,7 @@ def _build_mock_django():
 
     class _FakeSettings:
         NFS_ROOT = "/tmp/test-nfs"
+        configured = True
 
     conf_mod.settings = _FakeSettings()
 
@@ -76,6 +78,8 @@ def _build_mock_django():
     django_utils = types.ModuleType("django.utils")
     django_core = types.ModuleType("django.core")
     django_core_management = types.ModuleType("django.core.management")
+    django_db = types.ModuleType("django.db")
+    django_db.transaction = types.SimpleNamespace(atomic=nullcontext)
 
     return {
         "django": django_mod,
@@ -85,6 +89,7 @@ def _build_mock_django():
         "django.core": django_core,
         "django.core.management": django_core_management,
         "django.core.management.base": base_mod,
+        "django.db": django_db,
     }
 
 
@@ -110,6 +115,15 @@ class _FakeQuerySet:
                 elif key == "entity_type":
                     if getattr(item, "entity_type", "") == value:
                         filtered.append(item)
+                elif key == "pk__in":
+                    if getattr(item, "pk", None) in value:
+                        filtered.append(item)
+                elif key == "job":
+                    if getattr(item, "job_id", None) == getattr(value, "job_id", None):
+                        filtered.append(item)
+                elif key == "job_id__in":
+                    if getattr(item, "job_id", None) in value:
+                        filtered.append(item)
                 else:
                     # Generic attribute match
                     filtered.append(item)
@@ -123,6 +137,15 @@ class _FakeQuerySet:
         return _FakeQuerySet(self._items)
 
     def values_list(self, *fields, flat=False):
+        values = [
+            tuple(getattr(item, field) for field in fields) for item in self._items
+        ]
+        if flat and len(fields) == 1:
+            return [value[0] for value in values]
+        return values
+
+    def order_by(self, *fields):
+        del fields
         return _FakeQuerySet(self._items)
 
     def count(self):
@@ -133,6 +156,12 @@ class _FakeQuerySet:
         self._items.clear()
         return (n, {})
 
+    def update(self, **kwargs):
+        for item in self._items:
+            for key, value in kwargs.items():
+                setattr(item, key, value)
+        return len(self._items)
+
     def first(self):
         return self._items[0] if self._items else None
 
@@ -142,13 +171,17 @@ class _FakeQuerySet:
     def __iter__(self):
         return iter(self._items)
 
+    def iterator(self, chunk_size=None):
+        del chunk_size
+        return iter(self._items)
+
     def __len__(self):
         return len(self._items)
 
     def __or__(self, other):
         """Support queryset union (qs1 | qs2)."""
         combined = list(self._items)
-        if hasattr(other, '_items'):
+        if hasattr(other, "_items"):
             combined.extend(other._items)
         return _FakeQuerySet(combined)
 
@@ -175,9 +208,18 @@ def _build_mock_job_models():
             @classmethod
             def filter(cls, **kwargs):
                 items = cls._store
+                for item in items:
+                    if not isinstance(getattr(item, "status", None), str):
+                        item.status = _JobStatus.COMPLETED
+                    if not isinstance(getattr(item, "tenant_id", None), str):
+                        item.tenant_id = "test-tenant"
                 for key, value in kwargs.items():
                     if key == "job_id":
-                        items = [j for j in items if str(getattr(j, "job_id", "")) == str(value)]
+                        items = [
+                            j
+                            for j in items
+                            if str(getattr(j, "job_id", "")) == str(value)
+                        ]
                 return _FakeQuerySet(items)
 
             @classmethod
@@ -187,6 +229,17 @@ def _build_mock_job_models():
             @classmethod
             def first(cls):
                 return cls._store[0] if cls._store else None
+
+            @classmethod
+            def select_for_update(cls):
+                return cls
+
+            @classmethod
+            def get(cls, **kwargs):
+                del kwargs
+                if not cls._store:
+                    raise LookupError("job not found")
+                return cls._store[0]
 
     class FakeCustodyEvent:
         _created = []
@@ -213,9 +266,31 @@ def _build_mock_job_models():
             def count(cls):
                 return len(cls._store)
 
+    class FakeTaskDispatchOutbox:
+        class Status:
+            PENDING = "pending"
+            FAILED = "failed"
+            CLAIMED = "claimed"
+            DEAD = "dead"
+
+        class objects:
+            @classmethod
+            def filter(cls, **kwargs):
+                del kwargs
+                return _FakeQuerySet([])
+
+    class FakePresignedTaskCapability:
+        class objects:
+            @classmethod
+            def filter(cls, **kwargs):
+                del kwargs
+                return _FakeQuerySet([])
+
     models_mod.Job = FakeJob
     models_mod.CustodyEvent = FakeCustodyEvent
     models_mod.PiiEntity = FakePiiEntity
+    models_mod.TaskDispatchOutbox = FakeTaskDispatchOutbox
+    models_mod.PresignedTaskCapability = FakePresignedTaskCapability
 
     jobs_mod = types.ModuleType("jobs")
 
@@ -237,6 +312,10 @@ def _build_mock_job_models():
     class FakeExtractedEntity:
         class objects:
             @classmethod
+            def all(cls):
+                return _FakeQuerySet([])
+
+            @classmethod
             def none(cls):
                 return _FakeQuerySet([])
 
@@ -246,11 +325,33 @@ def _build_mock_job_models():
 
     extraction_mod.ExtractedEntity = FakeExtractedEntity
 
+    class _EmptyDerivativeModel:
+        class objects:
+            @classmethod
+            def all(cls):
+                return _FakeQuerySet([])
+
+            @classmethod
+            def filter(cls, **kwargs):
+                return _FakeQuerySet([])
+
+    extraction_mod.ExtractedFormValue = _EmptyDerivativeModel
+    extraction_mod.DocumentChunk = _EmptyDerivativeModel
+
+    tasks_mod = types.ModuleType("jobs.tasks")
+    tasks_mod._record_control_plane_custody_event = lambda **kwargs: (
+        FakeCustodyEvent.objects.create(job=None, **kwargs)
+    )
+    tasks_mod._get_backend_for_job = lambda job: types.SimpleNamespace(
+        backend_name="nfs"
+    )
+
     return {
         "jobs": jobs_mod,
         "jobs.models": models_mod,
         "jobs.redis_streams": redis_streams_mod,
         "jobs.extraction_models": extraction_mod,
+        "jobs.tasks": tasks_mod,
     }
 
 
@@ -260,6 +361,7 @@ def _make_pii_entity(job_id, entity_type, entity_value):
     entity.job_id = job_id
     entity.entity_type = entity_type
     entity.entity_value = entity_value
+    entity.pk = f"{job_id}:{entity_type}:{entity_value}"
     return entity
 
 
@@ -272,6 +374,10 @@ def _import_purge_pii(monkeypatch, django_mocks, model_mocks):
     """Import the purge_pii command module with mocks in place."""
     all_mocks = {**django_mocks, **model_mocks}
 
+    rls_mod = types.ModuleType("jobs.rls")
+    rls_mod.control_plane_rls_command = lambda func: func
+    all_mocks["jobs.rls"] = rls_mod
+
     saved = {}
     for name, mod in all_mocks.items():
         saved[name] = sys.modules.get(name)
@@ -280,7 +386,9 @@ def _import_purge_pii(monkeypatch, django_mocks, model_mocks):
     # Inject the real litigation_hold module so the command can import it
     lh_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "coordinator", "jobs", "litigation_hold.py",
+        "coordinator",
+        "jobs",
+        "litigation_hold.py",
     )
     lh_spec = importlib.util.spec_from_file_location("jobs.litigation_hold", lh_path)
     lh_mod = importlib.util.module_from_spec(lh_spec)
@@ -406,7 +514,7 @@ class TestPurgeByJobId:
         )
 
         output = cmd.stdout.getvalue()
-        assert "No matching PII entities found" in output
+        assert "No matching PII records found" in output
 
 
 # ===========================================================================
@@ -446,7 +554,7 @@ class TestPurgeBySubject:
         )
 
         output = cmd.stdout.getvalue()
-        assert "Purged 2 PII entities" in output
+        assert "Purged 3 PII entities" in output
 
 
 # ===========================================================================
@@ -455,10 +563,10 @@ class TestPurgeBySubject:
 
 
 class TestPurgeWithEntityTypeFilter:
-    """purge_pii --entity-type should narrow the purge scope."""
+    """purge_pii --entity-type selects jobs for whole-job PII erasure."""
 
     def test_entity_type_filter(self, purge_pii_module, monkeypatch):
-        """Only entities matching the specified type are purged."""
+        """A type match selects the job and every job-scoped PII plane."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
 
         mod = purge_pii_module["cmd_module"]
@@ -486,7 +594,7 @@ class TestPurgeWithEntityTypeFilter:
         )
 
         output = cmd.stdout.getvalue()
-        assert "Purged 2 PII entities" in output
+        assert "Purged 3 PII entities" in output
 
 
 # ===========================================================================
@@ -559,7 +667,7 @@ class TestPurgeDryRun:
         )
 
         output = cmd.stdout.getvalue()
-        assert "Found 2 PII entities" in output
+        assert "Found 2 PII-bearing records" in output
         assert "Entity types:" in output
 
 
@@ -639,8 +747,11 @@ class TestCustodyEventEmitted:
             confirm=True,
         )
 
-        assert len(FakeCustodyEvent._created) == 1
-        event = FakeCustodyEvent._created[0]
+        assert [event["event_type"] for event in FakeCustodyEvent._created] == [
+            "pii_deletion_started",
+            "pii_purged",
+        ]
+        event = FakeCustodyEvent._created[-1]
         assert event["event_type"] == "pii_purged"
         assert event["data"]["action"] == "purge_pii"
         assert event["data"]["entity_count"] == 1
@@ -765,7 +876,7 @@ class TestNoMatch:
         )
 
         output = cmd.stdout.getvalue()
-        assert "No matching PII entities found" in output
+        assert "No matching PII records found" in output
 
 
 # ===========================================================================
@@ -803,8 +914,8 @@ class TestOperatorIdentity:
             confirm=True,
         )
 
-        assert len(FakeCustodyEvent._created) == 1
-        event = FakeCustodyEvent._created[0]
+        assert len(FakeCustodyEvent._created) == 2
+        event = FakeCustodyEvent._created[-1]
         assert "operator" in event["data"]
         assert event["data"]["operator"] == getpass.getuser()
         assert isinstance(event["data"]["operator"], str)
@@ -837,6 +948,51 @@ class TestRequiresFilter:
                 dry_run=False,
                 confirm=True,
             )
+
+
+class TestStorageFailClosed:
+    """Storage cleanup failures must preserve the purgeable database rows."""
+
+    def test_storage_failure_blocks_database_and_audit_mutation(
+        self, purge_pii_module, monkeypatch
+    ):
+        monkeypatch.delenv("LITIGATION_HOLD", raising=False)
+
+        mod = purge_pii_module["cmd_module"]
+        FakeJob = purge_pii_module["FakeJob"]
+        FakePiiEntity = purge_pii_module["FakePiiEntity"]
+        FakeCustodyEvent = purge_pii_module["FakeCustodyEvent"]
+        CommandError = purge_pii_module["CommandError"]
+
+        job_id = "job-storage-failure"
+        anchor_job = MagicMock()
+        anchor_job.job_id = job_id
+        FakeJob.objects._store = [anchor_job]
+        entity = _make_pii_entity(job_id, "SSN", "123-45-6789")
+        FakePiiEntity.objects._store = [entity]
+
+        monkeypatch.setattr(
+            mod,
+            "_delete_ner_files_for_job_checked",
+            lambda _job_id: (0, ["sidecar remains"]),
+        )
+
+        cmd = mod.Command()
+        cmd.stdout = StringIO()
+        with pytest.raises(CommandError, match="PII purge incomplete"):
+            cmd.handle(
+                job_id=job_id,
+                subject=None,
+                entity_type=None,
+                dry_run=False,
+                confirm=True,
+            )
+
+        assert FakePiiEntity.objects._store == [entity]
+        assert [event["event_type"] for event in FakeCustodyEvent._created] == [
+            "pii_deletion_started",
+            "pii_deletion_failed",
+        ]
 
 
 # ===========================================================================

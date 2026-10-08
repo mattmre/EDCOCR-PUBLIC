@@ -29,10 +29,12 @@ spec:
   triggers:
     - type: rabbitmq
       metadata:
-        protocol: amqp
+        protocol: http
         queueName: ocr_nlp_gpu
+        vhostName: "/"
         mode: QueueLength
         value: {{ .Values.nlpGpuWorker.autoscaling.queueTarget | quote }}
+        excludeUnacknowledged: "false"
       authenticationRef:
         name: {{ .Release.Name }}-rabbitmq-auth
 {{- end }}

@@ -1,0 +1,25 @@
+{{- /*
+  R2-RC-20: optional PVC for NFS/shared job storage.
+  When storage.backend is "nfs" and storage.nfs.persistence.enabled is true,
+  create a PVC and expect workloads to mount it at storage.nfs.mountPath.
+  Without persistence.enabled, backend=nfs is env-only (NFS_ROOT ConfigMap) —
+  operators must enable this for real shared storage.
+*/ -}}
+{{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-nfs-data
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: shared-storage
+spec:
+  accessModes:
+    - {{ .Values.storage.nfs.persistence.accessMode | default "ReadWriteMany" | quote }}
+  {{- if .Values.storage.nfs.persistence.storageClass }}
+  storageClassName: {{ .Values.storage.nfs.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.nfs.persistence.size | default "100Gi" | quote }}
+{{- end }}

@@ -6,6 +6,8 @@ are populated at job lifecycle points (submit and completion).
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -38,7 +40,14 @@ def manager(tmp_path):
 
         from api.job_manager import JobManager
 
-        yield JobManager(get_session_factory())
+        _write_completed_artifacts(str(tmp_path / "out"))
+        manager = JobManager(get_session_factory())
+        try:
+            yield manager
+        finally:
+            assert manager.shutdown(
+                timeout=5.0
+            ), "dashboard test JobManager workers did not shut down"
 
 
 def _seed_source_file(tmp_path, manager):
@@ -46,9 +55,12 @@ def _seed_source_file(tmp_path, manager):
     import pathlib
 
     # manager fixture patches config.SOURCE_FOLDER to tmp_path/source
-    source_dir = pathlib.Path(manager._session_factory().bind.url.database).parent / "source"
+    source_dir = (
+        pathlib.Path(manager._session_factory().bind.url.database).parent / "source"
+    )
     # Fallback: extract from the patched config
     from api.job_manager import config
+
     source_dir = pathlib.Path(config.SOURCE_FOLDER)
     target = source_dir / "sample.pdf"
     target.write_bytes(b"%PDF-1.4 test content")
@@ -73,6 +85,19 @@ def _insert_job(job_id, status="submitted", **kwargs):
     return job_id
 
 
+def _write_completed_artifacts(output_dir: str) -> None:
+    """Make the subprocess mock satisfy the real completion contract."""
+    from pathlib import Path
+
+    root = Path(output_dir)
+    pdf_dir = root / "EXPORT" / "PDF"
+    text_dir = root / "EXPORT" / "TEXT"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    text_dir.mkdir(parents=True, exist_ok=True)
+    (pdf_dir / "result.pdf").write_bytes(b"%PDF-1.4\nmock completed artifact\n")
+    (text_dir / "result.txt").write_text("mock OCR text\n", encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Submit wiring tests
 # ---------------------------------------------------------------------------
@@ -91,7 +116,8 @@ class TestDashboardWiringOnSubmit:
 
         source_file = tmp_path / "source" / "test.pdf"
         source_file.parent.mkdir(parents=True, exist_ok=True)
-        source_file.write_bytes(b"%PDF-1.4 test")
+        fixture = Path(__file__).resolve().parent / "fixtures" / "test-canary-2page.pdf"
+        source_file.write_bytes(fixture.read_bytes())
 
         manager.submit(source_path=str(source_file))
 
@@ -110,7 +136,8 @@ class TestDashboardWiringOnSubmit:
 
         source_file = tmp_path / "source" / "test.pdf"
         source_file.parent.mkdir(parents=True, exist_ok=True)
-        source_file.write_bytes(b"%PDF-1.4 test")
+        fixture = Path(__file__).resolve().parent / "fixtures" / "test-canary-2page.pdf"
+        source_file.write_bytes(fixture.read_bytes())
 
         manager.submit(source_path=str(source_file))
 
@@ -129,7 +156,8 @@ class TestDashboardWiringOnSubmit:
         """If the dashboard collector throws, submit still succeeds."""
         source_file = tmp_path / "source" / "test.pdf"
         source_file.parent.mkdir(parents=True, exist_ok=True)
-        source_file.write_bytes(b"%PDF-1.4 test")
+        fixture = Path(__file__).resolve().parent / "fixtures" / "test-canary-2page.pdf"
+        source_file.write_bytes(fixture.read_bytes())
 
         with patch("api.dashboard.get_collector", side_effect=RuntimeError("boom")):
             # Should not raise
@@ -152,10 +180,11 @@ class TestDashboardWiringOnComplete:
         collector = get_collector()
         collector.reset()
 
-        _insert_job("job_test001", status="processing", pages_completed=5)
+        _insert_job("job_test001", status="submitted", pages_completed=5)
 
         source_dir = str(tmp_path / "src")
         output_dir = str(tmp_path / "out")
+        _write_completed_artifacts(output_dir)
 
         with patch("subprocess.Popen") as mock_popen:
             proc = MagicMock()
@@ -182,10 +211,11 @@ class TestDashboardWiringOnComplete:
         store = get_analytics_store()
         store.reset()
 
-        _insert_job("job_test002", status="processing", pages_completed=3)
+        _insert_job("job_test002", status="submitted", pages_completed=3)
 
         source_dir = str(tmp_path / "src")
         output_dir = str(tmp_path / "out")
+        _write_completed_artifacts(output_dir)
 
         with patch("subprocess.Popen") as mock_popen:
             proc = MagicMock()
@@ -203,6 +233,51 @@ class TestDashboardWiringOnComplete:
             job_ids = [r.job_id for r in store._records]
         assert "job_test002" in job_ids
 
+    def test_completion_stamps_analytics_tenant(self, manager, tmp_path):
+        """AnalyticsStore.record_job receives job.tenant_id on completion."""
+        from api.analytics import get_analytics_store
+
+        store = get_analytics_store()
+        store.reset()
+
+        tenant = "tenant_aaaaaaaaaaaa"
+        _insert_job(
+            "job_test_tenant_a",
+            status="submitted",
+            pages_completed=4,
+            tenant_id=tenant,
+        )
+
+        source_dir = str(tmp_path / "src")
+        output_dir = str(tmp_path / "out")
+        _write_completed_artifacts(output_dir)
+
+        with patch("subprocess.Popen") as mock_popen:
+            proc = MagicMock()
+            proc.pid = 9999
+            proc.returncode = 0
+            proc.poll.return_value = 0
+            proc.wait.return_value = 0
+            mock_popen.return_value = proc
+
+            manager._run_pipeline("job_test_tenant_a", source_dir, output_dir, {})
+
+        with store._lock:
+            matching = [r for r in store._records if r.job_id == "job_test_tenant_a"]
+        assert len(matching) == 1
+        assert matching[0].tenant_id == tenant
+        # Scoped query sees it; foreign tenant does not
+        assert (
+            store.get_period_stats(0.0, time.time() + 1, tenant_id=tenant).total_jobs
+            == 1
+        )
+        assert (
+            store.get_period_stats(
+                0.0, time.time() + 1, tenant_id="tenant_bbbbbbbbbbbb"
+            ).total_jobs
+            == 0
+        )
+
     def test_completion_updates_queue_depth(self, manager, tmp_path):
         """QueueMonitor.record_depth is called on pipeline completion."""
         from api.queue_alerting import get_queue_monitor
@@ -210,10 +285,11 @@ class TestDashboardWiringOnComplete:
         monitor = get_queue_monitor()
         monitor.reset()
 
-        _insert_job("job_test003", status="processing")
+        _insert_job("job_test003", status="submitted")
 
         source_dir = str(tmp_path / "src")
         output_dir = str(tmp_path / "out")
+        _write_completed_artifacts(output_dir)
 
         with patch("subprocess.Popen") as mock_popen:
             proc = MagicMock()
@@ -239,10 +315,11 @@ class TestDashboardWiringOnComplete:
         store = get_analytics_store()
         store.reset()
 
-        _insert_job("job_test004", status="processing")
+        _insert_job("job_test004", status="submitted")
 
         source_dir = str(tmp_path / "src")
         output_dir = str(tmp_path / "out")
+        _write_completed_artifacts(output_dir)
 
         with patch("subprocess.Popen") as mock_popen:
             proc = MagicMock()
@@ -270,10 +347,11 @@ class TestDashboardWiringOnComplete:
         store = get_analytics_store()
         store.reset()
 
-        _insert_job("job_test005", status="processing")
+        _insert_job("job_test005", status="submitted")
 
         source_dir = str(tmp_path / "src")
         output_dir = str(tmp_path / "out")
+        _write_completed_artifacts(output_dir)
 
         # Force an exception by making Popen raise
         with patch("subprocess.Popen", side_effect=OSError("mock spawn failure")):
@@ -289,10 +367,11 @@ class TestDashboardWiringOnComplete:
         self, manager, tmp_path
     ):
         """If dashboard collector throws, the pipeline still completes."""
-        _insert_job("job_test006", status="processing")
+        _insert_job("job_test006", status="submitted")
 
         source_dir = str(tmp_path / "src")
         output_dir = str(tmp_path / "out")
+        _write_completed_artifacts(output_dir)
 
         with patch("subprocess.Popen") as mock_popen:
             proc = MagicMock()

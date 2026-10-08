@@ -1,9 +1,15 @@
 {{- if and .Values.federation.enabled .Values.federation.argocd.enabled }}
+{{- if not .Values.federation.argocd.repoURL }}
+{{- fail "federation.argocd.repoURL must be set when federation.argocd.enabled=true" }}
+{{- end }}
+{{- if not .Values.federation.argocd.targetClusters }}
+{{- fail "federation.argocd.targetClusters must contain at least one cluster when federation.argocd.enabled=true" }}
+{{- end }}
 # =============================================================================
-# ArgoCD ApplicationSet
+# ArgoCD ApplicationSet (Plan C Phase 1)
 #
 # Fans the chart out to N target clusters via the list-generator pattern from
-#  Section 4.3. Each cluster pulls its own per-region and per-tenant
+# Plan C Section 4.3. Each cluster pulls its own per-region and per-tenant
 # overlays from the same Git repo via ArgoCD list-generator placeholders.
 #
 # Requires: ArgoCD installed in the cluster running this chart, with cluster
@@ -34,6 +40,10 @@ spec:
         targetRevision: {{ .Values.federation.argocd.targetRevision }}
         path: helm/ocr-local
         helm:
+          # Region/tenant overlays are optional repository extensions.  Do
+          # not make an ApplicationSet sync fail merely because a generated
+          # cluster has no specialized overlay yet.
+          ignoreMissingValueFiles: true
           valueFiles:
             - values.yaml
             - 'overlays/values-{{ "{{region}}" }}.yaml'

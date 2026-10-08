@@ -11,6 +11,7 @@ Verifies:
 
 Requires Django to be configured -- skipped otherwise.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -22,7 +23,8 @@ from pathlib import Path
 import pytest
 
 django = pytest.importorskip(
-    "django", reason="Django required for coordinator migration tests",
+    "django",
+    reason="Django required for coordinator migration tests",
 )
 
 COORDINATOR_ROOT = Path(__file__).resolve().parents[2] / "coordinator"
@@ -39,7 +41,6 @@ import django as _django  # noqa: E402
 _django.setup()
 
 from django.db import models as django_models  # noqa: E402
-
 from jobs.models import (  # noqa: E402
     BatchTranslationInput,
     BatchTranslationJob,
@@ -143,14 +144,11 @@ class TestBatchTranslationInput:
         assert unique_present
 
     def test_index_on_batch_status(self):
-        idx_fields = [
-            tuple(idx.fields) for idx in BatchTranslationInput._meta.indexes
-        ]
+        idx_fields = [tuple(idx.fields) for idx in BatchTranslationInput._meta.indexes]
         # Either ("batch","status") or ("batch_id","status") depending on
         # how the migration was written.
         assert any(
-            tuple(f) == ("batch", "status")
-            or tuple(f) == ("batch_id", "status")
+            tuple(f) == ("batch", "status") or tuple(f) == ("batch_id", "status")
             for f in idx_fields
         )
 
@@ -166,6 +164,10 @@ class TestMakeMigrationsCheck:
         repo_root = Path(__file__).resolve().parents[2]
         env = os.environ.copy()
         env["DJANGO_SETTINGS_MODULE"] = "coordinator.settings_test"
+        python_paths = [str(repo_root), str(repo_root / "coordinator")]
+        if env.get("PYTHONPATH"):
+            python_paths.append(env["PYTHONPATH"])
+        env["PYTHONPATH"] = os.pathsep.join(python_paths)
         proc = subprocess.run(
             [
                 sys.executable,

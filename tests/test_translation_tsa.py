@@ -119,4 +119,20 @@ def test_http_rfc3161_client_posts_timestamp_query(monkeypatch):
     assert tsr == _Response.content
     _, kwargs = post.call_args
     assert kwargs["headers"]["Content-Type"] == "application/timestamp-query"
+    assert kwargs["allow_redirects"] is False
     assert bytes.fromhex("b" * 64) in kwargs["data"]
+
+
+def test_http_rfc3161_client_rejects_oversized_response(monkeypatch):
+    class _Response:
+        content = b"x" * 9
+
+        def raise_for_status(self):
+            return None
+
+    post = MagicMock(return_value=_Response())
+    monkeypatch.setitem(__import__("sys").modules, "requests", MagicMock(post=post))
+    with pytest.raises(TSATimestampUnavailable, match="safety limit"):
+        HTTPRFC3161TSAClient(
+            "http://timestamp.example", max_response_bytes=8
+        ).timestamp("b" * 64)

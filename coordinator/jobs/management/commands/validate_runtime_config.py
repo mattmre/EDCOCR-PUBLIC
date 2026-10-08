@@ -44,17 +44,20 @@ MONITORED_PREFIXES: tuple[str, ...] = (
     "TENANT_",
 )
 
-MONITORED_EXACT_NAMES: frozenset[str] = frozenset({
-    "DATABASE_URL",
-    "DEPLOYMENT_ENV",
-    "PRODUCTION_READINESS_ACK",
-    "STORAGE_BACKEND",
-    "NFS_ROOT",
-    "OCR_API_KEY",
-    "DPI",
-    "TEMP_FOLDER",
-    "LOG_DIR",
-})
+MONITORED_EXACT_NAMES: frozenset[str] = frozenset(
+    {
+        "DATABASE_URL",
+        "DATABASE_SCHEMA",
+        "DEPLOYMENT_ENV",
+        "PRODUCTION_READINESS_ACK",
+        "STORAGE_BACKEND",
+        "NFS_ROOT",
+        "OCR_API_KEY",
+        "DPI",
+        "TEMP_FOLDER",
+        "LOG_DIR",
+    }
+)
 
 
 def _is_monitored(name: str) -> bool:
@@ -72,7 +75,9 @@ def capture_monitored_env() -> dict[str, str]:
     return {k: v for k, v in sorted(os.environ.items()) if _is_monitored(k)}
 
 
-def save_snapshot(filepath: str | Path, env: dict[str, str] | None = None) -> dict[str, str]:
+def save_snapshot(
+    filepath: str | Path, env: dict[str, str] | None = None
+) -> dict[str, str]:
     """Save current monitored env vars as a JSON baseline snapshot.
 
     Returns the captured environment dict.
@@ -86,7 +91,9 @@ def save_snapshot(filepath: str | Path, env: dict[str, str] | None = None) -> di
     }
     path = Path(filepath)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return env
 
 
@@ -114,11 +121,13 @@ def detect_drift(
         if key not in current:
             missing.append({"key": key, "baseline_value": baseline[key]})
         elif current[key] != baseline[key]:
-            changed.append({
-                "key": key,
-                "baseline_value": baseline[key],
-                "current_value": current[key],
-            })
+            changed.append(
+                {
+                    "key": key,
+                    "baseline_value": baseline[key],
+                    "current_value": current[key],
+                }
+            )
 
     for key in sorted(current):
         if key not in baseline:
@@ -263,6 +272,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Standalone CLI entry-point (works without Django)
 # ---------------------------------------------------------------------------
+
 
 def cli_main(argv: list[str] | None = None) -> int:
     """Standalone CLI that works without Django installed."""

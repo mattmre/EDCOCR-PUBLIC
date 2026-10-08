@@ -1,4 +1,4 @@
-"""Pydantic v2 models for EDCOCR API requests and responses."""
+"""Pydantic v2 models for OCR_LOCAL API requests and responses."""
 
 from __future__ import annotations
 

@@ -129,7 +129,9 @@ class TestFinalizeEntityOutput:
         }
 
         org_entity = next(
-            entity for entity in page["entities"] if entity["field_type"] == "organization"
+            entity
+            for entity in page["entities"]
+            if entity["field_type"] == "organization"
         )
         assert org_entity["bbox"] == [10, 10, 100, 30]
 
@@ -222,7 +224,5 @@ class TestWriteEntitiesJson:
             PIPELINE_VERSION,
         )
 
-        assert result_path is not None
-        entities_root = os.path.join(str(tmp_path), "EXPORT", "ENTITIES")
-        resolved = os.path.realpath(result_path)
-        assert resolved.startswith(os.path.realpath(entities_root))
+        assert result_path is None
+        assert not (tmp_path.parent / "etc").exists()

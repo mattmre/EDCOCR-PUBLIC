@@ -1,0 +1,54 @@
+{
+  "algorithm": "sha256",
+  "bundleSha256": "c7b8cfe468bd0ae993c15af2b6d2154aa7af3a29df4a913c082792604f67e2dc",
+  "byteCount": 16404627,
+  "fileCount": 9,
+  "files": [
+    {
+      "path": "whl/cls/ch_ppocr_mobile_v2.0_cls_infer/inference.pdiparams",
+      "sha256": "d1efda1b80e174b4fcb168a035ac96c1af4938892bd86a55f300a6027105d08c",
+      "size": 539978
+    },
+    {
+      "path": "whl/cls/ch_ppocr_mobile_v2.0_cls_infer/inference.pdiparams.info",
+      "sha256": "ee0c2eaa4c09814802bf520c01dfdbc1345dc2879dc9e67424d32c7b0ee88e59",
+      "size": 18545
+    },
+    {
+      "path": "whl/cls/ch_ppocr_mobile_v2.0_cls_infer/inference.pdmodel",
+      "sha256": "3c4337ec61722a20b1dca2e5bfaffc313c0592bc89ad6e0d45168224186f6683",
+      "size": 1624487
+    },
+    {
+      "path": "whl/det/en/en_PP-OCRv3_det_infer/inference.pdiparams",
+      "sha256": "83676ec730627ab4502f401410a4b6a3ce1c0bb98fa249b71db055b6bddae051",
+      "size": 2377917
+    },
+    {
+      "path": "whl/det/en/en_PP-OCRv3_det_infer/inference.pdiparams.info",
+      "sha256": "2fe414d9eadf914bf44e3f9ba212988a6f26f364e4f87c6d0af57438ffffc0c4",
+      "size": 26392
+    },
+    {
+      "path": "whl/det/en/en_PP-OCRv3_det_infer/inference.pdmodel",
+      "sha256": "c4bfb1b05d9d1d5a760801eaf6d20180ef7e47bcc675fb17d1f3a89da5fef427",
+      "size": 1590133
+    },
+    {
+      "path": "whl/rec/en/en_PP-OCRv4_rec_infer/inference.pdiparams",
+      "sha256": "75f64a1ffb70c56b7a25655963ca16f5bf3286202e3f52ac972bee05cdee2f56",
+      "size": 7607269
+    },
+    {
+      "path": "whl/rec/en/en_PP-OCRv4_rec_infer/inference.pdiparams.info",
+      "sha256": "710d9f3d7c503067ae708f4bc3adc6973c0d6391adb7a1470c36eb70da6b5b83",
+      "size": 102540
+    },
+    {
+      "path": "whl/rec/en/en_PP-OCRv4_rec_infer/inference.pdmodel",
+      "sha256": "85b952f05f709af259cfe4254012aa7208bef0998f71f57a15495446f25ccd43",
+      "size": 2517366
+    }
+  ],
+  "schemaVersion": 1
+}

@@ -1,4 +1,4 @@
-"""Tests for webhook delivery retry logic.
+"""Tests for webhook delivery retry logic (maintenance review).
 
 Run with: cd coordinator && python -m pytest jobs/tests/test_webhook_retry.py -v
 """
@@ -6,6 +6,7 @@ Run with: cd coordinator && python -m pytest jobs/tests/test_webhook_retry.py -v
 import sys
 import types
 import uuid
+from contextlib import nullcontext
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,6 +32,7 @@ def _make_fake_ssrf(mock_opener=None, validate_side_effect=None):
         fake_ssrf.validate_webhook_url = MagicMock(side_effect=validate_side_effect)
     else:
         fake_ssrf.validate_webhook_url = MagicMock()
+    fake_ssrf.pinned_url_for_request = lambda url, **_kwargs: nullcontext(url)
     fake_pkg.ssrf = fake_ssrf
     return {
         "ocr_distributed": fake_pkg,

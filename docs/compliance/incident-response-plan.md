@@ -1,3 +1,5 @@
+> Design/reference material. Optional deployment and feature claims require the acceptance checks in [candidate scope](../release-candidate.md).
+
 # Incident Response Plan -- EDCOCR v1.0
 
 ## 1. Purpose and Scope

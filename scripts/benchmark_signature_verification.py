@@ -21,7 +21,7 @@ The --synthetic flag generates images with known signature presence labels for
 CI testing without external datasets. The --dry-run flag validates corpus
 structure without running detection.
 
-Requires: signature_verification.py (from EDCOCR project root)
+Requires: signature_verification.py (from OCR_LOCAL project root)
 """
 
 import argparse

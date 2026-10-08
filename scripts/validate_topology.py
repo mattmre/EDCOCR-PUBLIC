@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deployment topology detection and validation for EDCOCR.
+"""Deployment topology detection and validation for OCR_LOCAL.
 
 Detects the intended deployment topology (single-node GPU, single-node CPU,
 multi-GPU, distributed, Kubernetes, air-gapped) and validates that the host
@@ -887,7 +887,7 @@ def format_markdown_report(report: TopologyReport) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Detect and validate EDCOCR deployment topology.",
+        description="Detect and validate OCR_LOCAL deployment topology.",
     )
     parser.add_argument(
         "--topology",

@@ -12,10 +12,11 @@ const {
 
 const BASE_URL = process.env.PLAYWRIGHT_COORDINATOR_BASE_URL || "";
 
-test.describe("Coordinator Admin UI", => {
+test.describe("Coordinator Admin UI", () => {
   test.skip(
     !hasEnv("PLAYWRIGHT_COORDINATOR_BASE_URL"),
-    "Set PLAYWRIGHT_COORDINATOR_BASE_URL to run coordinator UI tests.");
+    "Set PLAYWRIGHT_COORDINATOR_BASE_URL to run coordinator UI tests.",
+  );
 
   test("Admin login page loads", async ({ page }) => {
     const consoleTracker = trackConsoleErrors(page);
@@ -53,7 +54,8 @@ test.describe("Coordinator Admin UI", => {
   test("Authenticated admin sees dashboard", async ({ page }) => {
     test.skip(
       !hasAdminCredentials(),
-      "Set Django admin credentials to run authenticated coordinator UI tests.");
+      "Set Django admin credentials to run authenticated coordinator UI tests.",
+    );
 
     const consoleTracker = trackConsoleErrors(page);
     await loginToAdmin(page);

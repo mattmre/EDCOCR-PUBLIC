@@ -14,12 +14,11 @@ to ``"en"`` and ``language_source="default_fallback"`` is recorded in
 the resulting ``DocumentTranslation.processing`` block.
 
 Engine selection delegates to :func:`ocr_local.translation.router.select_engine`.
-When no engine satisfies the request (e.g. on the SDK CI lane where only
-``passthrough`` is registered), the facade falls back to passthrough so
-the sidecar shape is still produced and downstream consumers can wire
-against the contract.  The fallback is recorded as
-``engine.id == "passthrough"`` and is visible in the sidecar.
+When no real engine satisfies a cross-language request, the facade omits the
+translation sidecar.  It never relabels passthrough/source text as translated
+output.  Same-language requests still use the explicit passthrough engine.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -34,8 +33,9 @@ from ocr_local.translation.custody_adapter import emit_translation_applied
 from ocr_local.translation.external_client import (
     DEFAULT_TRANSLATION_SERVICE_URL,
     TranslationServiceClient,
+    translation_timeout_from_env,
+    validate_translation_timeout,
 )
-from ocr_local.translation.engines import get_engine
 from ocr_local.translation.metrics import record_translation_chars
 from ocr_local.translation.models import (
     DocumentTranslation,
@@ -46,7 +46,7 @@ from ocr_local.translation.models import (
 from ocr_local.translation.policy import (
     PolicyDenied,
     compute_policy_hash,
-    load_tenant_policy,
+    get_tenant_policy,
 )
 from ocr_local.translation.readiness import external_translation_readiness
 from ocr_local.translation.router import (
@@ -119,12 +119,13 @@ def translate_document(
 
     # Load tenant policy once -- it doesn't change per target language.
     try:
-        tenant = load_tenant_policy(tenant_id)
+        tenant = get_tenant_policy(tenant_id)
         policy_hash = compute_policy_hash(tenant)
     except Exception as exc:
         logger.warning(
             "Translation: failed to load tenant policy for %s: %s",
-            tenant_id, exc,
+            tenant_id,
+            exc,
         )
         return results
 
@@ -145,7 +146,9 @@ def translate_document(
         except Exception as exc:
             logger.warning(
                 "Translation to %s failed for %s: %s",
-                tgt_lang, doc_path, exc,
+                tgt_lang,
+                doc_path,
+                exc,
             )
             # fail-open: OCR job continues; sidecar omitted for this language.
     return results
@@ -196,7 +199,7 @@ def _translate_document_external(
 
     if not target_languages:
         return []
-    tenant = load_tenant_policy(tenant_id)
+    tenant = get_tenant_policy(tenant_id)
     policy_hash = compute_policy_hash(tenant)
     document_bundle = _build_external_document_bundle(
         doc_path=doc_path,
@@ -295,11 +298,11 @@ def _external_translation_client(
     )
     timeout = getattr(config, "translation_external_timeout_seconds", None)
     if timeout is None:
-        timeout = float(os.environ.get("EDC_TRANSLATION_TIMEOUT_SECONDS", "30"))
+        timeout = translation_timeout_from_env()
     return TranslationServiceClient(
         str(url),
         api_key=os.environ.get("EDC_TRANSLATION_API_KEY"),
-        timeout=float(timeout),
+        timeout=validate_translation_timeout(timeout),
     )
 
 
@@ -363,7 +366,9 @@ def _document_translation_from_bundle(
         source_file=source_file,
         source_language=pages[0].spans[0].source_language if pages else "und",
         target_language=translation_bundle["target_language"],
-        certified=bool(translation_bundle["certified"]),
+        # External/provider claims are never allowed to self-certify local
+        # forensic output; only the strong-auth review promotion may do so.
+        certified=False,
         engine={
             "id": provider["id"],
             "is_local": provider["is_local"],
@@ -420,6 +425,55 @@ def _translate_to_language(
         page_data_snap and page_data_snap.get("privilege_flag", False)
     )
 
+    # Empty / missing snap: no spans to translate. Do not select an engine —
+    # fail-closed adapters must not break the empty-document contract.
+    text_by_page: dict = {}
+    if page_data_snap:
+        text_by_page = (
+            page_data_snap.get("text_by_page") or page_data_snap.get("texts") or {}
+        )
+    has_translatable_text = any(bool(t) for t in text_by_page.values())
+    if not has_translatable_text:
+        return DocumentTranslation(
+            schema_version="1.0",
+            document_id=hashlib.sha256(doc_path.encode("utf-8")).hexdigest()[:16],
+            source_file=os.path.basename(doc_path),
+            source_language=src_lang,
+            target_language=tgt_lang,
+            certified=False,
+            engine={
+                "id": "none",
+                "is_local": True,
+                "license": "n/a",
+                "provider_retention_class": "local_only",
+                "weights_sha256": "n/a",
+            },
+            quality={
+                "mean_score": None,
+                "below_threshold_count": 0,
+                "quality_class": "n/a",
+            },
+            pages=[],
+            stats={
+                "total_chars": 0,
+                "total_spans": 0,
+                "page_count": 0,
+            },
+            custody={
+                "chain_head": "n/a",
+                "clock_source": "system",
+                "source_ocr_sha256": "n/a",
+                "tenant_policy_hash": policy_hash,
+                "tenant_id": tenant_id,
+            },
+            processing={
+                "pipeline_version": "1.2.1",
+                "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                "enable_translation": True,
+                "language_source": language_source,
+            },
+        )
+
     req = TranslationRequest(
         src_lang=src_lang,
         tgt_lang=tgt_lang,
@@ -433,9 +487,8 @@ def _translate_to_language(
         custody_chain if custody_chain is not None else _make_noop_chain()
     )
     # Wave M2 PR B14 -- prefer tenant-aware router when a real tenant_id is
-    # supplied (i.e. not the legacy "default" sentinel).  Falls back to the
-    # legacy router on NoEligibleEngineError so existing single-tenant
-    # deployments keep working unchanged.
+    # supplied (i.e. not the legacy "default" sentinel).  Missing eligible
+    # engines fail closed for the optional translation sidecar.
     use_v2 = bool(tenant_id) and tenant_id != "default"
     engine = _instantiate_engine(
         req,
@@ -448,39 +501,38 @@ def _translate_to_language(
     pages_translated: list[PageTranslation] = []
     total_chars = 0
 
-    if page_data_snap and "text_by_page" in page_data_snap:
-        text_by_page = page_data_snap["text_by_page"] or {}
-        for page_num, page_text in text_by_page.items():
-            if not page_text:
-                continue
-            # Apply glossary preprocessing BEFORE segmentation so the
-            # downstream engine sees the tenant-overridden terminology.
-            try:
-                modified_text, _hits = prepare_translation_input(
-                    tenant_id=tenant_id,
-                    text=page_text,
-                    source_lang=src_lang,
-                    target_lang=tgt_lang,
-                    custody_chain=custody_chain,
-                )
-            except Exception as exc:
-                logger.debug(
-                    "Translation: glossary prep failed for page %s (non-fatal): %s",
-                    page_num, exc,
-                )
-                modified_text = page_text
-            segs = segment_to_sentences(modified_text, src_lang)
-            if not segs:
-                continue
-            spans_out = engine.translate_spans(segs, src_lang, tgt_lang)
-            total_chars += sum(len(s["text"]) for s in segs)
-            try:
-                page_int = int(page_num)
-            except (TypeError, ValueError):
-                page_int = 0
-            pages_translated.append(
-                PageTranslation(page_num=page_int, spans=list(spans_out))
+    for page_num, page_text in text_by_page.items():
+        if not page_text:
+            continue
+        # Apply glossary preprocessing BEFORE segmentation so the
+        # downstream engine sees the tenant-overridden terminology.
+        try:
+            modified_text, _hits = prepare_translation_input(
+                tenant_id=tenant_id,
+                text=page_text,
+                source_lang=src_lang,
+                target_lang=tgt_lang,
+                custody_chain=custody_chain,
             )
+        except Exception as exc:
+            logger.debug(
+                "Translation: glossary prep failed for page %s (non-fatal): %s",
+                page_num,
+                exc,
+            )
+            modified_text = page_text
+        segs = segment_to_sentences(modified_text, src_lang)
+        if not segs:
+            continue
+        spans_out = engine.translate_spans(segs, src_lang, tgt_lang)
+        total_chars += sum(len(s["text"]) for s in segs)
+        try:
+            page_int = int(page_num)
+        except (TypeError, ValueError):
+            page_int = 0
+        pages_translated.append(
+            PageTranslation(page_num=page_int, spans=list(spans_out))
+        )
 
     if custody_chain is not None:
         try:
@@ -501,14 +553,16 @@ def _translate_to_language(
             )
         except Exception:
             logger.debug(
-                "Translation: custody emit failed (non-fatal)", exc_info=True,
+                "Translation: custody emit failed (non-fatal)",
+                exc_info=True,
             )
 
     try:
         record_translation_chars(tenant_id, engine.capability.id, total_chars)
     except Exception:
         logger.debug(
-            "Translation: metrics record failed (non-fatal)", exc_info=True,
+            "Translation: metrics record failed (non-fatal)",
+            exc_info=True,
         )
 
     return DocumentTranslation(
@@ -546,7 +600,7 @@ def _translate_to_language(
             "tenant_id": tenant_id,
         },
         processing={
-            "pipeline_version": "4.1.0",
+            "pipeline_version": "1.2.1",
             "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
             "enable_translation": True,
             "language_source": language_source,
@@ -568,16 +622,9 @@ def _instantiate_engine(
     swallows it (privilege/tenant/policy rejections must NOT silently
     fall back to passthrough -- that would mask audit-relevant denials).
 
-    On ``UNSUPPORTED_LANGUAGE`` (no engine for src->tgt) we fall back to
-    passthrough so the sidecar contract still produces output on the SDK
-    CI lane where only passthrough is registered; the fallback is
-    visible because ``engine.id == "passthrough"`` in the sidecar.
-
     Wave M2 PR B14 -- when ``use_tenant_router`` is True, the
     :func:`select_engine_for_tenant` path is used.  An empty candidate
-    list (raising :class:`NoEligibleEngineError`) falls back to the
-    legacy router so deployments with no per-tenant config registered
-    still produce output.
+    list remains a hard no-output condition for this optional sidecar.
     """
     if use_tenant_router:
         try:
@@ -591,23 +638,12 @@ def _instantiate_engine(
                 privilege_flag=privilege_flag,
             )
         except NoEligibleEngineError:
-            # No tenant-level candidates -- fall through to legacy router.
-            pass
+            raise
         except PolicyDenied:
             # Policy/privilege denial -- propagate so caller records it.
             raise
 
-    try:
-        engine_or_cls = select_engine(req, tenant, chain)
-    except PolicyDenied as exc:
-        # UNSUPPORTED_LANGUAGE is the only PolicyDenied we transparently
-        # downgrade to passthrough -- privilege/tenant denials must
-        # propagate so the OCR job's fail-open wrapper records them.
-        from ocr_local.translation.custody_adapter import ReasonCode
-        if exc.reason_code == ReasonCode.UNSUPPORTED_LANGUAGE:
-            engine_cls = get_engine("passthrough")
-            return engine_cls()
-        raise
+    engine_or_cls = select_engine(req, tenant, chain)
 
     if isinstance(engine_or_cls, type):
         return engine_or_cls()

@@ -99,8 +99,8 @@ class TestSkipModelPreload:
 class TestCpuOnlyMode:
     """Verify cpu_only=True passes correct kwargs to PaddleOCR."""
 
-    def test_cpu_only_sets_use_onnx(self):
-        """cpu_only=True should pass use_onnx=True to PaddleOCR constructor."""
+    def test_cpu_only_uses_native_paddle_models(self):
+        """CPU preload must not request ONNX for fresh Paddle model caches."""
         import download_models
 
         mock_ocr_cls = MagicMock()
@@ -113,7 +113,7 @@ class TestCpuOnlyMode:
 
         mock_ocr_cls.assert_called_once()
         call_kwargs = mock_ocr_cls.call_args[1]
-        assert call_kwargs["use_onnx"] is True
+        assert "use_onnx" not in call_kwargs
         assert call_kwargs["use_gpu"] is False
         assert call_kwargs["lang"] == "en"
         assert call_kwargs["use_angle_cls"] is True
@@ -134,8 +134,8 @@ class TestCpuOnlyMode:
         assert "use_onnx" not in call_kwargs
         assert call_kwargs["use_gpu"] is False
 
-    def test_cpu_only_all_langs_get_use_onnx(self):
-        """Every language should get use_onnx=True in CPU-only mode."""
+    def test_cpu_only_all_langs_disable_gpu_without_onnx(self):
+        """Every CPU preload uses native Paddle format with GPU disabled."""
         import download_models
 
         mock_ocr_cls = MagicMock()
@@ -149,8 +149,44 @@ class TestCpuOnlyMode:
 
         assert mock_ocr_cls.call_count == 3
         for call in mock_ocr_cls.call_args_list:
-            assert call[1]["use_onnx"] is True
+            assert "use_onnx" not in call[1]
             assert call[1]["use_gpu"] is False
+
+    def test_cpu_only_preload_filters_unsupported_paddleocr_29_langs(self):
+        """CPU-only preload skips only the known PaddleOCR 2.9.1 gaps."""
+        import download_models
+
+        with patch.object(
+            download_models, "TARGET_LANGS", ["en", "fi", "el", "kn", "ch"]
+        ):
+            result = download_models._preload_target_langs(cpu_only=True)
+
+        assert result == ["en", "fi", "ch"]
+
+    def test_standard_preload_keeps_full_target_language_list(self):
+        """Unsupported scripts are filtered in standard mode too."""
+        import download_models
+
+        with patch.object(
+            download_models, "TARGET_LANGS", ["en", "fi", "el", "kn", "ch"]
+        ):
+            result = download_models._preload_target_langs(cpu_only=False)
+
+        assert result == ["en", "fi", "ch"]
+
+    def test_cpu_only_preload_logs_skipped_language_contract(self):
+        """Unsupported CPU-only preload languages are visible in logs."""
+        import download_models
+
+        with patch.object(download_models, "TARGET_LANGS", ["en", "fi", "kn"]):
+            with patch.object(download_models, "logger") as mock_logger:
+                result = download_models._preload_target_langs(cpu_only=True)
+
+        assert result == ["en", "fi"]
+        log_msg = mock_logger.warning.call_args[0][0]
+        log_args = mock_logger.warning.call_args[0][1:]
+        assert "preload language" in log_msg
+        assert log_args == (1, "kn")
 
     def test_cpu_only_build_env_var(self):
         """CPU_ONLY_BUILD=1 env var is read at module level."""
@@ -191,9 +227,30 @@ class TestGracefulFailure:
         import download_models
 
         with patch.dict(sys.modules, {"paddleocr": None}):
-            with patch("builtins.__import__", side_effect=ImportError("no paddleocr")):
-                result = download_models._import_paddleocr()
-                assert result is None
+            with patch("importlib.util.find_spec", return_value=None):
+                with patch(
+                    "builtins.__import__",
+                    side_effect=ImportError("no paddleocr"),
+                ):
+                    result = download_models._import_paddleocr()
+                    assert result is None
+
+    def test_import_paddleocr_raises_when_installed_import_is_broken(self):
+        """Broken installed PaddleOCR stacks must fail the preload build."""
+        import download_models
+
+        fake_spec = MagicMock(origin="/path/to/paddleocr")
+        fake_spec.submodule_search_locations = None
+        with patch("importlib.util.find_spec", return_value=fake_spec):
+            with patch(
+                "builtins.__import__",
+                side_effect=ImportError("No module named 'setuptools'"),
+            ):
+                with pytest.raises(
+                    RuntimeError,
+                    match="paddleocr import failed during model preload at /path/to/paddleocr",
+                ):
+                    download_models._import_paddleocr()
 
     def test_single_lang_failure_continues(self):
         """A failure for one language should not stop other languages."""
@@ -270,7 +327,7 @@ class TestGracefulFailure:
 
 
 class TestCliArgs:
-    """Verify CLI argument parsing for --cpu-only and --skip-uie."""
+    """Verify CLI argument parsing for CPU, UIE, and subset controls."""
 
     def test_cpu_only_flag(self):
         """--cpu-only sets args.cpu_only to True."""
@@ -301,6 +358,26 @@ class TestCliArgs:
         assert args.cpu_only is True
         assert args.skip_uie is True
 
+    def test_languages_flag(self):
+        import download_models
+
+        args = download_models._parse_args(["--languages", "en,ch"])
+        assert args.languages == ["en", "ch"]
+
+    def test_languages_flag_trims_and_deduplicates(self):
+        import download_models
+
+        args = download_models._parse_args(["--languages", " en, ch,en "])
+        assert args.languages == ["en", "ch"]
+
+    @pytest.mark.parametrize("selection", ["", " , ", "en,unknown"])
+    def test_invalid_languages_flag_is_an_argument_error(self, selection):
+        import download_models
+
+        with pytest.raises(SystemExit) as exc_info:
+            download_models._parse_args(["--languages", selection])
+        assert exc_info.value.code == 2
+
 
 # ===========================================================================
 # Tests: Target languages list
@@ -320,13 +397,57 @@ class TestTargetLangs:
         import download_models
 
         for lang in ["en", "ch", "fr", "german"]:
-            assert lang in download_models.TARGET_LANGS, f"{lang} missing from TARGET_LANGS"
+            assert lang in download_models.TARGET_LANGS, (
+                f"{lang} missing from TARGET_LANGS"
+            )
 
     def test_target_langs_count(self):
         """Should have 34 languages in the expanded baseline."""
         import download_models
 
         assert len(download_models.TARGET_LANGS) == 34
+
+    def test_cpu_only_preload_unsupported_langs_stay_explicit(self):
+        """The temporary PaddleOCR 2.9.1 preload gap is an explicit contract."""
+        import download_models
+
+        assert download_models.PADDLEOCR_29_UNSUPPORTED_LANGS == {
+            "bn",
+            "el",
+            "kn",
+            "th",
+        }
+        assert {"el", "kn"} < set(download_models.TARGET_LANGS)
+
+    def test_requested_subset_is_bounded_to_target_registry(self):
+        import download_models
+
+        with patch.object(download_models, "TARGET_LANGS", ["en", "ch", "el"]):
+            assert download_models._preload_target_langs(
+                requested_langs=["ch", "en", "ch"]
+            ) == ["ch", "en"]
+
+    def test_requested_unknown_language_fails_closed(self):
+        import download_models
+
+        with patch.object(download_models, "TARGET_LANGS", ["en", "ch"]):
+            with pytest.raises(ValueError, match="outside TARGET_LANGS"):
+                download_models._preload_target_langs(requested_langs=["xx"])
+
+    def test_finnish_preloads_with_latin_model_family(self):
+        import download_models
+
+        mock_ocr_cls = MagicMock()
+        with (
+            patch.object(
+                download_models, "_import_paddleocr", return_value=mock_ocr_cls
+            ),
+            patch.object(download_models, "SKIP_MODEL_PRELOAD", False),
+            patch.object(download_models, "TARGET_LANGS", ["fi"]),
+        ):
+            download_models.download_models(cpu_only=True)
+
+        assert mock_ocr_cls.call_args.kwargs["lang"] == "latin"
 
 
 # ===========================================================================
@@ -354,7 +475,7 @@ class TestEngineCleanup:
         # The engine was created and should be referenced (del just decrements refcount)
         mock_ocr_cls.assert_called_once()
 
-    def test_successful_download_no_exception(self):
+    def test_successful_download_no_exception(self, capsys):
         """Successful download should not raise any exception."""
         import download_models
 
@@ -369,3 +490,27 @@ class TestEngineCleanup:
                     download_models.download_models(cpu_only=True)
 
         assert mock_ocr_cls.call_count == 2
+        assert (
+            "MODEL_PRELOAD_OK attempted=2 succeeded=2 skipped=0"
+            in capsys.readouterr().out
+        )
+
+    def test_subset_reports_only_requested_languages_as_skipped(self, capsys):
+        """Subset preload status counts omitted requested models, not registry size."""
+        import download_models
+
+        mock_ocr_cls = MagicMock(return_value=MagicMock())
+        with (
+            patch.object(
+                download_models, "_import_paddleocr", return_value=mock_ocr_cls
+            ),
+            patch.object(download_models, "SKIP_MODEL_PRELOAD", False),
+            patch.object(download_models, "TARGET_LANGS", ["en", "ch", "el"]),
+        ):
+            download_models.download_models(cpu_only=True, languages=["en", "el"])
+
+        assert mock_ocr_cls.call_count == 1
+        assert (
+            "MODEL_PRELOAD_OK attempted=1 succeeded=1 skipped=1"
+            in capsys.readouterr().out
+        )

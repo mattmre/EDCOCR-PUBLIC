@@ -1,4 +1,4 @@
-"""Tests for the EDCOCR MCP-style tool server."""
+"""Tests for the EDC_OCR MCP-style tool server."""
 
 from __future__ import annotations
 
@@ -11,7 +11,11 @@ _SDK_SRC = str(Path(__file__).resolve().parent.parent / "sdk" / "python" / "src"
 if _SDK_SRC not in sys.path:
     sys.path.insert(0, _SDK_SRC)
 
-from edcocr_sdk.mcp_server import OCRToolServer, handle_jsonrpc, serve_json_lines  # noqa: E402
+from edcocr_sdk.mcp_server import (  # noqa: E402
+    OCRToolServer,
+    handle_jsonrpc,
+    serve_json_lines,
+)
 
 
 class _ModelResult:
@@ -116,3 +120,13 @@ def test_json_lines_server_handles_initialize_and_tool_list():
     responses = [json.loads(line) for line in output.getvalue().splitlines()]
     assert responses[0]["result"]["serverInfo"]["name"] == "edc-ocr-tools"
     assert responses[1]["result"]["tools"][0]["name"].startswith("ocr_")
+
+
+def test_public_mcp_environment_configuration_is_retained(monkeypatch):
+    from edcocr_sdk.mcp_server import build_parser
+
+    monkeypatch.setenv("EDCOCR_API_URL", "https://owned-api.example.invalid")
+    monkeypatch.setenv("EDCOCR_API_KEY", "owned-fixture-key")
+    args = build_parser().parse_args([])
+    assert args.api_url == "https://owned-api.example.invalid"
+    assert args.api_key == "owned-fixture-key"

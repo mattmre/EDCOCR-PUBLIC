@@ -18,7 +18,6 @@ operate with UIE + regex extraction.
 """
 
 import datetime
-import json
 import logging
 import os
 import threading
@@ -28,7 +27,8 @@ from typing import Optional
 
 from ocr_distributed.ocr_utils import (
     build_sidecar_base_name,
-    sanitize_path_segment,
+    resolve_safe_output_subfolder,
+    write_json_atomic,
 )
 from ocr_local.ml.layoutlm_model_registry import resolve_active_model_selection
 
@@ -1078,26 +1078,7 @@ def write_entities_json(
     """Write a durable .entities.json sidecar file."""
     try:
         entities_dir = os.path.join(output_folder, "EXPORT", "ENTITIES")
-        if subfolder and subfolder != ".":
-            safe_parts = [
-                sanitize_path_segment(part)
-                for part in subfolder.replace("\\", "/").split("/")
-                if part
-            ]
-            target_dir = (
-                os.path.join(entities_dir, *safe_parts)
-                if safe_parts
-                else entities_dir
-            )
-        else:
-            target_dir = entities_dir
-
-        resolved = os.path.realpath(target_dir)
-        if not resolved.startswith(os.path.realpath(entities_dir)):
-            logger.error(
-                "Path traversal blocked in entities output: %s", subfolder
-            )
-            return None
+        target_dir = resolve_safe_output_subfolder(entities_dir, subfolder)
 
         os.makedirs(target_dir, exist_ok=True)
 
@@ -1128,8 +1109,7 @@ def write_entities_json(
             "pages": doc_entities.pages,
         }
 
-        with open(json_path, "w", encoding="utf-8") as handle:
-            json.dump(report, handle, indent=2, ensure_ascii=False, default=str)
+        write_json_atomic(json_path, report, allowed_root=entities_dir)
 
         return json_path
     except Exception as exc:

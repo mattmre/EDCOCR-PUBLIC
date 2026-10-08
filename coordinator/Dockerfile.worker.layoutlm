@@ -9,7 +9,15 @@
 #   docker build -f coordinator/Dockerfile.worker.layoutlm -t ocr-local/worker-layoutlm .
 #   docker build -f coordinator/Dockerfile.worker.layoutlm --build-arg USE_GPU=1 -t ocr-local/worker-layoutlm:gpu .
 
-FROM python:3.11-slim-bookworm AS base
+FROM python:3.12-slim-bookworm AS base
+ARG SOURCE_REVISION
+ARG SOURCE_TREE_SHA256
+RUN if ! printf '%s' "${SOURCE_REVISION}" | grep -Eq '^[0-9a-f]{40,64}$' || \
+       ! printf '%s' "${SOURCE_TREE_SHA256}" | grep -Eq '^[0-9a-f]{64}$'; then \
+      printf '%s\n' 'ERROR: use scripts/with_runtime_source.sh worker to build this image' >&2; exit 1; fi
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      io.ocr_local.runtime-source-sha256="${SOURCE_TREE_SHA256}" \
+      io.ocr_local.runtime-profile="worker"
 
 # System dependencies (minimal — no OCR libs needed for LayoutLMv3)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libgomp1 \
     nfs-common \
+    tini \
     curl \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -27,6 +36,7 @@ WORKDIR /app
 # Install Python requirements
 # ---------------------------------------------------------------------------
 COPY coordinator/requirements.txt /app/coordinator-requirements.txt
+RUN python3 -m pip install --no-cache-dir --upgrade "pip==26.2.1"
 RUN pip install --no-cache-dir -r /app/coordinator-requirements.txt
 
 # ---------------------------------------------------------------------------
@@ -76,7 +86,7 @@ ENV DJANGO_SETTINGS_MODULE=coordinator.settings
 ENV ENABLE_LAYOUTLM=true
 
 # ---------------------------------------------------------------------------
-# Remove build-essential from runtime image ( / INFRA-002)
+# Remove build-essential from runtime image (maintenance review / INFRA-002)
 # gcc/g++/make are only needed for compiling C extensions during pip install;
 # the compiled .so files remain but the toolchain is stripped to reduce
 # image size (~200MB) and CVE surface area.
@@ -95,13 +105,14 @@ RUN groupadd -r -g 1000 ocr && \
 USER ocr
 
 # ---------------------------------------------------------------------------
-# Docker HEALTHCHECK — Celery worker inspect ping
+# Docker HEALTHCHECK — Celery worker inspect ping (maintenance review)
 # start-period=120s gives time for LayoutLMv3 model loading.
 # ---------------------------------------------------------------------------
 HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
-    CMD celery -A coordinator inspect ping --timeout=10 -d celery@$(hostname) || exit 1
+    CMD python3 /app/coordinator/worker_healthcheck.py
 
 # Default: LayoutLMv3 worker listening on ocr_layoutlm queue
+ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
 CMD ["celery", "-A", "coordinator", "worker", \
      "-Q", "ocr_layoutlm", \
      "-c", "2", \

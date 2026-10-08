@@ -273,7 +273,11 @@ def test_aggregate_french_returns_fr(mock_fr_model):
 
 def test_aggregate_chinese_maps_to_ch(mock_zh_model):
     pl = aggregate_page_from_full_text(
-        1, "\u4e2d\u6587\u6587\u672c", mock_zh_model, "", 0.4,
+        1,
+        "\u4e2d\u6587\u6587\u672c",
+        mock_zh_model,
+        "",
+        0.4,
     )
     assert pl.primary_language == "ch"
 
@@ -294,7 +298,11 @@ def test_aggregate_whitespace_only_returns_und(mock_en_model):
 
 def test_aggregate_fasttext_exception_returns_und(mock_raising_model):
     pl = aggregate_page_from_full_text(
-        1, "some english text here", mock_raising_model, "", 0.4,
+        1,
+        "some english text here",
+        mock_raising_model,
+        "",
+        0.4,
     )
     assert pl.primary_language == "und"
     # Span still created so the pipeline records the attempt.
@@ -310,7 +318,11 @@ def test_aggregate_none_model_returns_und():
 
 def test_aggregate_low_confidence_returns_und(mock_low_conf_model):
     pl = aggregate_page_from_full_text(
-        1, "ambiguous text", mock_low_conf_model, "", 0.4,
+        1,
+        "ambiguous text",
+        mock_low_conf_model,
+        "",
+        0.4,
     )
     assert pl.primary_language == "und"
     assert pl.spans_labeled == 0
@@ -318,7 +330,11 @@ def test_aggregate_low_confidence_returns_und(mock_low_conf_model):
 
 def test_aggregate_custom_threshold(mock_low_conf_model):
     pl = aggregate_page_from_full_text(
-        1, "ambiguous text", mock_low_conf_model, "", 0.10,
+        1,
+        "ambiguous text",
+        mock_low_conf_model,
+        "",
+        0.10,
     )
     assert pl.primary_language == "en"
     assert pl.spans_labeled == 1
@@ -326,7 +342,11 @@ def test_aggregate_custom_threshold(mock_low_conf_model):
 
 def test_aggregate_single_page_span_count_one(mock_en_model):
     pl = aggregate_page_from_full_text(
-        1, "this is an English sentence", mock_en_model, "", 0.4,
+        1,
+        "this is an English sentence",
+        mock_en_model,
+        "",
+        0.4,
     )
     assert pl.span_count == 1
     assert len(pl.spans) == 1
@@ -357,7 +377,11 @@ def test_aggregate_records_latin_script_for_english(mock_en_model):
 
 def test_aggregate_records_cjk_script(mock_zh_model):
     pl = aggregate_page_from_full_text(
-        1, "\u4e2d\u6587\u5b57\u7b26", mock_zh_model, "", 0.4,
+        1,
+        "\u4e2d\u6587\u5b57\u7b26",
+        mock_zh_model,
+        "",
+        0.4,
     )
     assert pl.spans[0].script == "cjk"
     assert "cjk" in pl.scripts_detected
@@ -389,7 +413,11 @@ def test_aggregate_languages_detected_on_success(mock_en_model):
 
 def test_aggregate_und_produces_empty_languages(mock_low_conf_model):
     pl = aggregate_page_from_full_text(
-        1, "amb text", mock_low_conf_model, "", 0.4,
+        1,
+        "amb text",
+        mock_low_conf_model,
+        "",
+        0.4,
     )
     assert pl.languages_detected == []
     assert pl.language_char_shares == {}
@@ -404,7 +432,11 @@ def test_aggregate_predict_called_with_k3(mock_en_model):
 
 def test_aggregate_strips_newlines_before_predict(mock_en_model):
     aggregate_page_from_full_text(
-        1, "line one\nline two\nline three", mock_en_model, "", 0.4,
+        1,
+        "line one\nline two\nline three",
+        mock_en_model,
+        "",
+        0.4,
     )
     fed = mock_en_model.predict.call_args[0][0]
     assert "\n" not in fed
@@ -434,7 +466,11 @@ def test_finalize_multi_page_same_language(mock_en_model):
 def test_finalize_multi_page_mixed_dominant_wins(mock_en_model, mock_fr_model):
     # English page has more characters than French page.
     en = aggregate_page_from_full_text(
-        1, "This is a long English OCR page with many words", mock_en_model, "", 0.4,
+        1,
+        "This is a long English OCR page with many words",
+        mock_en_model,
+        "",
+        0.4,
     )
     fr = aggregate_page_from_full_text(2, "Bonjour", mock_fr_model, "", 0.4)
     doc = finalize_document_language("d", "f", [en, fr], "s", "t", "1.2.1")
@@ -461,7 +497,12 @@ def test_finalize_all_und_pages(mock_low_conf_model):
 def test_finalize_processing_has_required_keys(mock_en_model):
     pl = aggregate_page_from_full_text(1, "English", mock_en_model, "", 0.4)
     doc = finalize_document_language(
-        "d", "f.pdf", [pl], "sha256abc", "toksha", "1.2.3",
+        "d",
+        "f.pdf",
+        [pl],
+        "sha256abc",
+        "toksha",
+        "1.2.3",
     )
     required = {
         "detection_engine",
@@ -489,6 +530,7 @@ def test_finalize_processing_records_fasttext_sha(mock_en_model):
 
 def test_finalize_timestamp_is_iso_8601(mock_en_model):
     import datetime as _dt
+
     pl = aggregate_page_from_full_text(1, "English", mock_en_model, "", 0.4)
     doc = finalize_document_language("d", "f", [pl], "s", "t", "1.2.1")
     # Round-trip through datetime.fromisoformat
@@ -521,7 +563,9 @@ def test_finalize_skips_none_pages(mock_en_model):
     assert doc.primary_language == "en"
 
 
-def test_finalize_language_char_shares_sum_to_one_on_success(mock_en_model, mock_fr_model):
+def test_finalize_language_char_shares_sum_to_one_on_success(
+    mock_en_model, mock_fr_model
+):
     p1 = aggregate_page_from_full_text(1, "English one", mock_en_model, "", 0.4)
     p2 = aggregate_page_from_full_text(2, "Bonjour", mock_fr_model, "", 0.4)
     doc = finalize_document_language("d", "f", [p1, p2], "s", "t", "1.2.1")
@@ -557,6 +601,25 @@ def test_write_language_json_ends_with_language_json(tmp_path, mock_en_model):
     doc = finalize_document_language("d1", "sample.pdf", [pl], "s", "t", "1.2.1")
     path = write_language_json(doc, str(tmp_path), "sample.pdf")
     assert path.endswith(".language.json")
+
+
+@pytest.mark.parametrize(
+    ("source_file", "expected_name"),
+    [
+        ("photo.png", "photo__png.language.json"),
+        ("doc. .pdf", "doc~p1hyzciwcbdj7bvhtcrr7262l5zme.language.json"),
+    ],
+)
+def test_write_language_json_uses_canonical_sidecar_name(
+    tmp_path, mock_en_model, source_file, expected_name
+):
+    page = aggregate_page_from_full_text(1, "English", mock_en_model, "", 0.4)
+    doc = finalize_document_language("d1", source_file, [page], "s", "t", "1.2.1")
+
+    path = write_language_json(doc, str(tmp_path), source_file)
+
+    assert path is not None
+    assert os.path.basename(path) == expected_name
 
 
 def test_write_language_json_nested_subfolder(tmp_path, mock_en_model):
@@ -606,7 +669,9 @@ def test_write_language_json_schema_version(tmp_path, mock_en_model):
 
 
 def test_write_language_json_validates_against_schema(
-    tmp_path, schema, mock_en_model,
+    tmp_path,
+    schema,
+    mock_en_model,
 ):
     pl = aggregate_page_from_full_text(1, "English", mock_en_model, "", 0.4)
     doc = finalize_document_language("d1", "x.pdf", [pl], "sh", "tk", "1.2.1")
@@ -617,7 +682,9 @@ def test_write_language_json_validates_against_schema(
 
 
 def test_write_language_json_validates_without_spans(
-    tmp_path, schema, mock_en_model,
+    tmp_path,
+    schema,
+    mock_en_model,
 ):
     pl = aggregate_page_from_full_text(1, "English", mock_en_model, "", 0.4)
     doc = finalize_document_language("d1", "x.pdf", [pl], "sh", "tk", "1.2.1")
@@ -641,12 +708,16 @@ def test_write_language_json_multi_page(tmp_path, mock_en_model, mock_fr_model):
 def test_write_language_json_traversal_blocked(tmp_path, mock_en_model):
     pl = aggregate_page_from_full_text(1, "English", mock_en_model, "", 0.4)
     doc = finalize_document_language(
-        "d1", "../../etc/passwd", [pl], "s", "t", "1.2.1",
+        "d1",
+        "../../etc/passwd",
+        [pl],
+        "s",
+        "t",
+        "1.2.1",
     )
     path = write_language_json(doc, str(tmp_path), "../../etc/passwd")
-    # ``..`` components are stripped before path realisation; the file lands
-    # at the LANGUAGE root rather than outside it.
-    assert path is None or str(tmp_path) in os.path.realpath(path)
+    assert path is None
+    assert not (tmp_path / "etc").exists()
 
 
 def test_write_language_json_creates_parent_dirs(tmp_path, mock_en_model):
@@ -690,7 +761,11 @@ def test_write_language_json_document_summary_shape(tmp_path, mock_en_model):
 
 def test_write_language_json_ascii_nonlatin(tmp_path, mock_zh_model):
     pl = aggregate_page_from_full_text(
-        1, "\u4e2d\u6587\u6587\u672c", mock_zh_model, "", 0.4,
+        1,
+        "\u4e2d\u6587\u6587\u672c",
+        mock_zh_model,
+        "",
+        0.4,
     )
     doc = finalize_document_language("d1", "x.pdf", [pl], "s", "t", "1.2.1")
     path = write_language_json(doc, str(tmp_path), "x.pdf", include_spans=True)
@@ -708,7 +783,8 @@ def test_write_language_json_no_subfolder(tmp_path, mock_en_model):
 
 
 def test_write_language_json_processing_includes_timestamp(
-    tmp_path, mock_en_model,
+    tmp_path,
+    mock_en_model,
 ):
     pl = aggregate_page_from_full_text(1, "English", mock_en_model, "", 0.4)
     doc = finalize_document_language("d1", "x.pdf", [pl], "s", "t", "1.2.1")

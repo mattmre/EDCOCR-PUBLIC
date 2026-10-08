@@ -200,7 +200,7 @@ class DnsSdDiscovery:
         resolver = self._get_resolver()
         if resolver is None:
             _LOG.error(
-                "dnspython unavailable -- install 'dnspython>=2.0,<3.0' "
+                "dnspython unavailable -- install 'dnspython>=2.8.0,<3.0' "
                 "to enable DNS-SD discovery"
             )
             return []

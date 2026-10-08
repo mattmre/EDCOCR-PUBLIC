@@ -2,7 +2,7 @@
 """Redis Sentinel failover drill framework.
 
 Validates Redis Sentinel configuration and simulates failover scenarios
-for the EDCOCR distributed pipeline.  Designed to be run against a
+for the OCR_LOCAL distributed pipeline.  Designed to be run against a
 live Sentinel deployment (Docker Compose HA overlay or Kubernetes with
 ``redis.sentinel.enabled=true``).
 
@@ -959,7 +959,7 @@ def run_drill(
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
-        description="Redis Sentinel failover drill framework for EDCOCR",
+        description="Redis Sentinel failover drill framework for OCR_LOCAL",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

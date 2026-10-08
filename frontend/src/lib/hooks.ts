@@ -38,7 +38,7 @@ export interface AutoRefreshResult<T> {
   error: Error | null;
   loading: boolean;
   lastUpdated: number | null;
-  refresh: => void;
+  refresh: () => void;
 }
 
 /**
@@ -66,7 +66,7 @@ export function useAutoRefresh<T>(
   // Track the active controller so we can abort on unmount or refresh.
   const controllerRef = useRef<AbortController | null>(null);
 
-  const runFetch = useCallback(async => {
+  const runFetch = useCallback(async () => {
     if (controllerRef.current) {
       controllerRef.current.abort();
     }
@@ -100,7 +100,7 @@ export function useAutoRefresh<T>(
     // Initial fetch.
     void runFetch();
 
-    const tick = => {
+    const tick = () => {
       if (cancelled) return;
       // Skip the tick if the tab is hidden.
       if (typeof document !== "undefined" && document.hidden) {
@@ -111,7 +111,7 @@ export function useAutoRefresh<T>(
 
     const id = setInterval(tick, intervalMs);
 
-    const onVisibility = => {
+    const onVisibility = () => {
       if (typeof document !== "undefined" && !document.hidden) {
         void runFetch();
       }
@@ -120,7 +120,7 @@ export function useAutoRefresh<T>(
       document.addEventListener("visibilitychange", onVisibility);
     }
 
-    return => {
+    return () => {
       cancelled = true;
       clearInterval(id);
       if (typeof document !== "undefined") {
@@ -133,7 +133,7 @@ export function useAutoRefresh<T>(
     };
   }, [intervalMs, runFetch]);
 
-  return { data, error, loading, lastUpdated, refresh: => void runFetch() };
+  return { data, error, loading, lastUpdated, refresh: () => void runFetch() };
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +226,7 @@ export interface ReviewItemFetchResult {
   data: ReviewItem | null;
   error: Error | null;
   loading: boolean;
-  refresh: => void;
+  refresh: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ interface AsyncResource<T> {
   data: T | null;
   error: Error | null;
   loading: boolean;
-  refresh: => void;
+  refresh: () => void;
 }
 
 /**
@@ -293,7 +293,7 @@ export function useReviewItem(reviewId: string | null | undefined): ReviewItemFe
 
   useEffect(() => {
     refresh();
-    return => {
+    return () => {
       if (controllerRef.current) {
         controllerRef.current.abort();
         controllerRef.current = null;
@@ -348,13 +348,13 @@ export function useTenantConfig(tenantId: string | null | undefined): AsyncResou
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return => {
+    return () => {
       cancelled = true;
       controller.abort();
     };
   }, [tenantId, tick]);
 
-  return { data, error, loading, refresh: => setTick((n) => n + 1) };
+  return { data, error, loading, refresh: () => setTick((n) => n + 1) };
 }
 
 /**
@@ -409,13 +409,13 @@ export function useTenantGlossary(
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return => {
+    return () => {
       cancelled = true;
       controller.abort();
     };
   }, [tenantId, sourceLang, targetLang, page, pageSize, tick]);
 
-  return { data, error, loading, refresh: => setTick((n) => n + 1) };
+  return { data, error, loading, refresh: () => setTick((n) => n + 1) };
 }
 
 // ---------------------------------------------------------------------------
@@ -436,9 +436,9 @@ export interface UseSettingsResult {
   /** Merge a partial patch into `settings` (per-section shallow merge). */
   update: (patch: DeepPartial<Settings>) => void;
   /** Persist the current `settings` to localStorage. Returns success. */
-  save: => boolean;
+  save: () => boolean;
   /** Wipe persisted settings and reset state to defaults. */
-  reset: => void;
+  reset: () => void;
   /** Timestamp (ms since epoch) of the most recent successful save, or null. */
   lastSavedAt: number | null;
 }
@@ -547,7 +547,7 @@ export function useAlertRule(ruleId: string | null | undefined): {
   data: AlertRule | null;
   error: Error | null;
   loading: boolean;
-  refresh: => void;
+  refresh: () => void;
 } {
   const [data, setData] = useState<AlertRule | null>(null);
   const [error, setError] = useState<Error | null>(null);
@@ -578,13 +578,13 @@ export function useAlertRule(ruleId: string | null | undefined): {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return => {
+    return () => {
       cancelled = true;
       controller.abort();
     };
   }, [ruleId, tick]);
 
-  return { data, error, loading, refresh: => setTick((n) => n + 1) };
+  return { data, error, loading, refresh: () => setTick((n) => n + 1) };
 }
 
 /** Polls /api/v1/admin/alert-channels every 60 s. */
@@ -645,7 +645,7 @@ export function useFeatureFlag(key: string | null | undefined) {
     const controller = new AbortController();
     controllerRef.current = controller;
     setLoading(true);
-    void (async => {
+    void (async () => {
       try {
         const { getFlag } = await import("./feature-flags-api");
         const flag = await getFlag(key, controller.signal);
@@ -674,7 +674,7 @@ export function useFeatureFlag(key: string | null | undefined) {
 
   useEffect(() => {
     refresh();
-    return => {
+    return () => {
       if (controllerRef.current) {
         controllerRef.current.abort();
         controllerRef.current = null;
@@ -705,7 +705,7 @@ export function useFlagHistory(key: string | null | undefined) {
     const controller = new AbortController();
     let cancelled = false;
     setLoading(true);
-    void (async => {
+    void (async () => {
       try {
         const { getFlagHistory } = await import("./feature-flags-api");
         const entries = await getFlagHistory(key, controller.signal);
@@ -727,11 +727,11 @@ export function useFlagHistory(key: string | null | undefined) {
         if (!cancelled) setLoading(false);
       }
     })();
-    return => {
+    return () => {
       cancelled = true;
       controller.abort();
     };
   }, [key, tick]);
 
-  return { data, error, loading, refresh: => setTick((n) => n + 1) };
+  return { data, error, loading, refresh: () => setTick((n) => n + 1) };
 }

@@ -107,7 +107,7 @@ def test_write_document_bundle_round_trip(tmp_path: Path):
     validate_document_bundle(loaded)
 
 
-def test_translate_document_bundle_e2e_passthrough():
+def test_translate_document_bundle_e2e_same_language_passthrough():
     document_bundle = build_document_bundle(
         document_id="doc-e2e",
         source_file_name="e2e.pdf",
@@ -119,7 +119,7 @@ def test_translate_document_bundle_e2e_passthrough():
 
     translation_bundle = translate_document_bundle(
         document_bundle,
-        target_language="fr",
+        target_language="en",
         engine_id="passthrough",
     )
 
@@ -130,7 +130,7 @@ def test_translate_document_bundle_e2e_passthrough():
     assert translation_bundle["source_bundle_sha256"] == canonical_json_sha256(
         document_bundle
     )
-    assert translation_bundle["target_language"] == "fr"
+    assert translation_bundle["target_language"] == "en"
     assert translation_bundle["engine_provider"]["id"] == "passthrough"
     assert translation_bundle["certified"] is False
     assert [span["span_id"] for span in translation_bundle["translated_spans"]] == [
@@ -143,6 +143,45 @@ def test_translate_document_bundle_e2e_passthrough():
         120.0,
         42.0,
     ]
+
+
+def test_translate_document_bundle_rejects_cross_language_passthrough():
+    from ocr_local.translation.custody_adapter import ReasonCode
+    from ocr_local.translation.policy import PolicyDenied
+
+    document_bundle = build_document_bundle(
+        document_id="doc-cross-language",
+        source_file_name="cross-language.pdf",
+        source_file_bytes=b"cross-language fixture",
+        spans=_ocr_like_spans(),
+    )
+
+    with pytest.raises(PolicyDenied) as exc_info:
+        translate_document_bundle(
+            document_bundle,
+            target_language="fr",
+            engine_id="passthrough",
+        )
+
+    assert exc_info.value.reason_code == ReasonCode.UNSUPPORTED_LANGUAGE
+
+
+def test_translate_document_bundle_without_eligible_engine_fails_closed(monkeypatch):
+    from ocr_local.translation.engines.passthrough import PassthroughEngine
+    from ocr_local.translation.policy import PolicyDenied
+
+    document_bundle = build_document_bundle(
+        document_id="doc-no-engine",
+        source_file_name="no-engine.pdf",
+        source_file_bytes=b"no-engine fixture",
+        spans=_ocr_like_spans(),
+    )
+    monkeypatch.setattr(
+        "ocr_local.translation.engines.ENGINE_REGISTRY",
+        {"passthrough": PassthroughEngine},
+    )
+    with pytest.raises(PolicyDenied):
+        translate_document_bundle(document_bundle, target_language="fr")
 
 
 def test_translate_document_bundle_rejects_invalid_input():

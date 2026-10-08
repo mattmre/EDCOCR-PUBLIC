@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketState
+from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from api.database import Job, get_session_factory
 
@@ -18,11 +18,13 @@ from api.database import Job, get_session_factory
 @pytest.fixture(autouse=True)
 def _clear_ws_connections():
     """Reset WebSocket connection registry between tests."""
-    from api.routers.ws import _connections
+    import api.routers.ws as ws_module
 
-    _connections.clear()
+    ws_module._connections.clear()
+    ws_module._pending_connections = 0
     yield
-    _connections.clear()
+    ws_module._connections.clear()
+    ws_module._pending_connections = 0
 
 
 @pytest.fixture()
@@ -111,6 +113,37 @@ def _create_job(status="submitted", **kwargs):
     return job_id
 
 
+@pytest.mark.parametrize("fixture_name", ["client", "auth_client"])
+def test_ws_allowlist_applies_before_auth_and_admission(request, fixture_name):
+    import api.routers.ws as ws_module
+
+    test_client = request.getfixturevalue(fixture_name)
+    job_id = _create_job(status="completed", job_id=f"allowed-{fixture_name}")
+    headers = {"x-api-key": "test-secret-key"} if fixture_name == "auth_client" else {}
+    with patch("api.auth.API_ALLOWED_IPS", ("testclient",)):
+        with test_client.websocket_connect(f"/ws/jobs/{job_id}", headers=headers) as ws:
+            assert ws.receive_json()["type"] == "connected"
+    with patch("api.auth.API_ALLOWED_IPS", ("203.0.113.10",)):
+        with pytest.raises(WebSocketDisconnect) as denied:
+            with test_client.websocket_connect(f"/ws/jobs/{job_id}", headers=headers):
+                pass
+    assert denied.value.code == 1008
+    assert ws_module._pending_connections == 0
+
+
+def test_ws_allowlist_rejects_missing_client_before_accept():
+    import asyncio
+
+    from api.routers.ws import job_progress_ws
+
+    ws = _FakeWebSocket()
+    ws.client = None
+    with patch("api.auth.API_ALLOWED_IPS", ("203.0.113.10",)):
+        asyncio.run(job_progress_ws(ws, "missing-client"))
+    assert not ws.accept_called
+    assert ws.close_calls == [(1008, "Client is not allowlisted")]
+
+
 # ---------------------------------------------------------------------------
 # Authentication tests
 # ---------------------------------------------------------------------------
@@ -133,6 +166,62 @@ class TestWSAuthentication:
         ) as ws:
             msg = ws.receive_json()
             assert msg["type"] == "connected"
+
+    def test_cookie_auth_requires_trusted_origin_and_negotiated_mode(self, auth_client):
+        """Cookie auth is bound to an explicit mode and trusted Origin."""
+        _create_job(status="completed", job_id="auth-test-cookie")
+        auth_client.cookies.set("ocr_api_key", "test-secret-key", path="/")
+        with auth_client.websocket_connect(
+            "/ws/jobs/auth-test-cookie",
+            headers={"Origin": "http://testserver"},
+            subprotocols=["ocr-local.auth.cookie.v1"],
+        ) as ws:
+            msg = ws.receive_json()
+            assert msg["type"] == "connected"
+            assert ws.accepted_subprotocol == "ocr-local.auth.cookie.v1"
+
+    def test_cookie_auth_rejects_foreign_origin(self, auth_client):
+        _create_job(status="completed", job_id="auth-test-cookie-origin")
+        auth_client.cookies.set("ocr_api_key", "test-secret-key", path="/")
+        with auth_client.websocket_connect(
+            "/ws/jobs/auth-test-cookie-origin",
+            headers={"Origin": "https://evil.example.test"},
+            subprotocols=["ocr-local.auth.cookie.v1"],
+        ) as ws:
+            msg = ws.receive_json()
+            assert msg["type"] == "error"
+            assert msg["message"] == "Authentication failed"
+
+    def test_ambient_cookie_without_mode_selector_is_rejected(self, auth_client):
+        _create_job(status="completed", job_id="auth-test-cookie-no-selector")
+        auth_client.cookies.set("ocr_api_key", "test-secret-key", path="/")
+        with auth_client.websocket_connect(
+            "/ws/jobs/auth-test-cookie-no-selector",
+            headers={"Origin": "http://testserver"},
+        ) as ws:
+            msg = ws.receive_json()
+            assert msg["type"] == "error"
+            assert "authentication protocol" in msg["message"].lower()
+
+    def test_logout_invalidates_cookie_authenticated_socket(self, auth_client):
+        _create_job(status="processing", job_id="auth-test-cookie-logout")
+        created = auth_client.post(
+            "/api/v1/auth/session", json={"api_key": "test-secret-key"}
+        )
+        assert created.status_code == 200, created.text
+
+        with auth_client.websocket_connect(
+            "/ws/jobs/auth-test-cookie-logout",
+            headers={"Origin": "http://testserver"},
+            subprotocols=["ocr-local.auth.cookie.v1"],
+        ) as ws:
+            assert ws.receive_json()["type"] == "connected"
+            logged_out = auth_client.delete(
+                "/api/v1/auth/session", headers={"Origin": "http://testserver"}
+            )
+            assert logged_out.status_code == 200, logged_out.text
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
 
     def test_connect_with_valid_auth_message(self, auth_client):
         """WebSocket connects when the first frame carries auth."""
@@ -201,17 +290,20 @@ class TestWSConnection:
             pass  # connect and immediately disconnect
 
         # After context manager exits, connection should be cleaned up
-        assert "conn-test-3" not in _connections or len(_connections.get("conn-test-3", set())) == 0
+        assert (
+            "conn-test-3" not in _connections
+            or len(_connections.get("conn-test-3", set())) == 0
+        )
 
 
 # ---------------------------------------------------------------------------
-# Registry cleanup tests
+# Registry cleanup tests (maintenance review)
 # ---------------------------------------------------------------------------
 
 
 class TestWSRegistryCleanup:
     """Verify _connections registry is always cleaned up, including early-return
-    paths for terminal jobs."""
+    paths for terminal jobs (maintenance review)."""
 
     def test_terminal_completed_cleans_registry(self, client):
         """Connecting to a completed job must leave _connections clean."""
@@ -324,6 +416,8 @@ class TestWSTerminalStates:
             assert completed["type"] == "completed"
             assert completed["job_id"] == "term-test-1"
             assert completed["status"] == "completed"
+            assert completed["result_available"] is True
+            assert "result_path" not in completed
 
     def test_failed_job_sends_failed_and_closes(self, client):
         """Connecting to a failed job sends connected + failed messages."""
@@ -512,9 +606,7 @@ class TestWSBroadcast:
 
         from api.routers.ws import notify_job_update
 
-        asyncio.run(
-            notify_job_update("no-such-job", {"type": "completed"})
-        )
+        asyncio.run(notify_job_update("no-such-job", {"type": "completed"}))
         # No error means success
 
     def test_notify_sends_to_connected_client(self):
@@ -537,10 +629,12 @@ class TestWSBroadcast:
         # Register mock connection
         _connections["broadcast-test-1"] = {mock_ws}
 
-        data = {"type": "completed", "job_id": "broadcast-test-1", "status": "completed"}
-        asyncio.run(
-            notify_job_update("broadcast-test-1", data)
-        )
+        data = {
+            "type": "completed",
+            "job_id": "broadcast-test-1",
+            "status": "completed",
+        }
+        asyncio.run(notify_job_update("broadcast-test-1", data))
 
         assert len(sent_data) == 1
         assert sent_data[0]["type"] == "completed"
@@ -558,9 +652,7 @@ class TestWSBroadcast:
         _connections["broadcast-test-2"] = {mock_ws}
 
         data = {"type": "completed", "job_id": "broadcast-test-2"}
-        asyncio.run(
-            notify_job_update("broadcast-test-2", data)
-        )
+        asyncio.run(notify_job_update("broadcast-test-2", data))
 
         # Dead connection should be cleaned up
         assert "broadcast-test-2" not in _connections
@@ -592,10 +684,12 @@ class TestWSBroadcast:
 
         _connections["broadcast-test-3"] = {mock_ws_1, mock_ws_2}
 
-        data = {"type": "progress", "job_id": "broadcast-test-3", "status": "processing"}
-        asyncio.run(
-            notify_job_update("broadcast-test-3", data)
-        )
+        data = {
+            "type": "progress",
+            "job_id": "broadcast-test-3",
+            "status": "processing",
+        }
+        asyncio.run(notify_job_update("broadcast-test-3", data))
 
         assert len(sent_data_1) == 1
         assert len(sent_data_2) == 1
@@ -625,9 +719,7 @@ class TestWSHelpers:
 
         mock_ws.send_json = mock_send
 
-        result = asyncio.run(
-            _send_json(mock_ws, {"type": "test"})
-        )
+        result = asyncio.run(_send_json(mock_ws, {"type": "test"}))
         assert result is True
         assert len(sent) == 1
 
@@ -640,9 +732,7 @@ class TestWSHelpers:
         mock_ws = MagicMock()
         mock_ws.client_state = WebSocketState.DISCONNECTED
 
-        result = asyncio.run(
-            _send_json(mock_ws, {"type": "test"})
-        )
+        result = asyncio.run(_send_json(mock_ws, {"type": "test"}))
         assert result is False
 
     def test_send_json_handles_exception(self):
@@ -659,9 +749,7 @@ class TestWSHelpers:
 
         mock_ws.send_json = mock_send
 
-        result = asyncio.run(
-            _send_json(mock_ws, {"type": "test"})
-        )
+        result = asyncio.run(_send_json(mock_ws, {"type": "test"}))
         assert result is False
 
     def test_authenticate_ws_no_key_configured(self):
@@ -670,16 +758,19 @@ class TestWSHelpers:
 
         with (
             patch("api.routers.ws.OCR_API_KEY", ""),
+            patch("api.auth.OCR_API_KEY", ""),
+            patch("api.config.OCR_API_KEY", ""),
             patch("api.oauth2_config.OAUTH2_ENABLED", False),
             patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+            patch("api.config.ALLOW_UNAUTHENTICATED", True),
+            patch("api.config.ENABLE_MULTITENANCY", False),
+            patch("api.auth.is_local_dev_environment", return_value=True),
         ):
             from api.routers.ws import _authenticate_ws
 
             mock_ws = MagicMock()
             mock_ws.headers = {}
-            result = asyncio.run(
-                _authenticate_ws(mock_ws)
-            )
+            result = asyncio.run(_authenticate_ws(mock_ws))
             assert result is True
 
     def test_authenticate_ws_correct_header_key(self):
@@ -691,9 +782,7 @@ class TestWSHelpers:
 
             mock_ws = MagicMock()
             mock_ws.headers = {"x-api-key": "secret-123"}
-            result = asyncio.run(
-                _authenticate_ws(mock_ws)
-            )
+            result = asyncio.run(_authenticate_ws(mock_ws))
             assert result is True
 
     def test_authenticate_ws_correct_auth_message(self):
@@ -708,10 +797,75 @@ class TestWSHelpers:
             mock_ws.receive_text = AsyncMock(
                 return_value='{"type":"auth","api_key":"secret-123"}'
             )
-            result = asyncio.run(
-                _authenticate_ws(mock_ws)
-            )
+            result = asyncio.run(_authenticate_ws(mock_ws))
             assert result is True
+
+    def test_authenticate_ws_correct_httponly_cookie(self):
+        """A browser HttpOnly session cookie authenticates without a frame."""
+        import asyncio
+
+        with patch("api.routers.ws.OCR_API_KEY", "secret-123"):
+            from api.routers.ws import _authenticate_ws
+
+            mock_ws = MagicMock()
+            mock_ws.headers = {"origin": "http://testserver", "host": "testserver"}
+            mock_ws.scope = {"scheme": "ws"}
+            mock_ws.cookies = {"ocr_api_key": "secret-123"}
+            mock_ws.receive_text = AsyncMock()
+            result = asyncio.run(
+                _authenticate_ws(mock_ws, auth_subprotocol="ocr-local.auth.cookie.v1")
+            )
+
+            assert result is True
+            mock_ws.receive_text.assert_not_awaited()
+
+    def test_authenticate_ws_prefers_header_over_httponly_cookie(self):
+        """An explicit X-API-Key keeps HTTP middleware precedence semantics."""
+        import asyncio
+
+        with patch("api.routers.ws.OCR_API_KEY", "secret-123"):
+            from api.routers.ws import _authenticate_ws
+
+            mock_ws = MagicMock()
+            mock_ws.headers = {"x-api-key": "secret-123"}
+            mock_ws.cookies = {"ocr_api_key": "wrong-cookie"}
+            result = asyncio.run(_authenticate_ws(mock_ws))
+
+            assert result is True
+
+    def test_authenticate_ws_rejects_oversized_auth_frame(self):
+        """Auth JSON is size-bounded before parsing or token comparison."""
+        import asyncio
+
+        with patch("api.routers.ws.OCR_API_KEY", "secret-123"):
+            from api.routers.ws import WS_MAX_MESSAGE_BYTES, _authenticate_ws
+
+            mock_ws = MagicMock()
+            mock_ws.headers = {}
+            mock_ws.receive_text = AsyncMock(
+                return_value="x" * (WS_MAX_MESSAGE_BYTES + 1)
+            )
+            result = asyncio.run(_authenticate_ws(mock_ws))
+
+            assert result is False
+
+    def test_authenticate_ws_rejects_binary_frame_with_unsupported_type(self):
+        import asyncio
+
+        with patch("api.routers.ws.OCR_API_KEY", "secret-123"):
+            from api.routers.ws import _authenticate_ws
+
+            mock_ws = MagicMock()
+            mock_ws.headers = {}
+            mock_ws.receive_text = AsyncMock(side_effect=KeyError("text"))
+            mock_ws.close = AsyncMock()
+            result = asyncio.run(_authenticate_ws(mock_ws))
+
+            assert result is False
+            mock_ws.close.assert_awaited_once_with(
+                code=1003,
+                reason="Text frames required",
+            )
 
     def test_authenticate_ws_wrong_key(self):
         """Authentication fails with a non-matching auth frame key."""
@@ -725,9 +879,7 @@ class TestWSHelpers:
             mock_ws.receive_text = AsyncMock(
                 return_value='{"type":"auth","api_key":"wrong-key"}'
             )
-            result = asyncio.run(
-                _authenticate_ws(mock_ws)
-            )
+            result = asyncio.run(_authenticate_ws(mock_ws))
             assert result is False
 
     def test_max_connections_limit(self, client):
@@ -747,6 +899,17 @@ class TestWSHelpers:
 
         _connections.clear()
 
+    def test_pending_handshakes_consume_connection_capacity(self):
+        """Unauthenticated sockets cannot bypass the active limit."""
+        import api.routers.ws as ws_module
+
+        with patch.object(ws_module, "MAX_WS_CONNECTIONS", 1):
+            assert ws_module._reserve_ws_slot() is True
+            assert ws_module._reserve_ws_slot() is False
+            ws_module._release_ws_slot()
+            assert ws_module._reserve_ws_slot() is True
+            ws_module._release_ws_slot()
+
     def test_authenticate_ws_none_key_when_required(self):
         """Authentication fails when key is required but None provided."""
         import asyncio
@@ -759,19 +922,17 @@ class TestWSHelpers:
             mock_ws.receive_text = AsyncMock(
                 return_value='{"type":"auth","api_key":""}'
             )
-            result = asyncio.run(
-                _authenticate_ws(mock_ws)
-            )
+            result = asyncio.run(_authenticate_ws(mock_ws))
             assert result is False
 
 
 # ---------------------------------------------------------------------------
-# OAuth2 token via auth frame (not query string)
+# maintenance review: OAuth2 token via auth frame (not query string)
 # ---------------------------------------------------------------------------
 
 
 class TestWSAuthFrameOAuth2:
-    """Tests for OAuth2 bearer token authentication via auth frame.
+    """Tests for OAuth2 bearer token authentication via auth frame (maintenance review).
 
     Validates that:
     - token query parameter is removed from endpoint signature
@@ -780,14 +941,15 @@ class TestWSAuthFrameOAuth2:
     """
 
     def test_endpoint_has_no_token_query_param(self):
-        """job_progress_ws must not accept a token query parameter."""
+        """job_progress_ws must not accept a token query parameter (maintenance review)."""
         import inspect
 
         from api.routers.ws import job_progress_ws
 
         sig = inspect.signature(job_progress_ws)
-        assert "token" not in sig.parameters, \
+        assert "token" not in sig.parameters, (
             "token query parameter must be removed to prevent credential leakage"
+        )
 
     def test_oauth2_token_via_auth_frame_succeeds(self):
         """Auth frame with token validates JWT when OAuth2 is enabled."""
@@ -859,6 +1021,7 @@ class TestWSAuthFrameOAuth2:
             patch("api.routers.ws.OCR_API_KEY", ""),
             patch("api.oauth2_config.OAUTH2_ENABLED", False),
             patch("api.auth.ALLOW_UNAUTHENTICATED", False),
+            patch("api.config.ALLOW_UNAUTHENTICATED", False),
         ):
             from api.routers.ws import _authenticate_ws
 
@@ -867,7 +1030,7 @@ class TestWSAuthFrameOAuth2:
         assert result is False
 
     def test_api_key_auth_frame_still_works(self):
-        """API key via auth frame is unaffected by  changes."""
+        """API key via auth frame is unaffected by maintenance review changes."""
         import asyncio
 
         mock_ws = MagicMock()
@@ -911,11 +1074,13 @@ class TestWSAuthFrameOAuth2:
         mock_ws.state = MagicMock()
         mock_ws.headers = {}
         mock_ws.receive_text = AsyncMock(
-            return_value=json.dumps({
-                "type": "auth",
-                "api_key": "my-key",
-                "token": "jwt-token",
-            }),
+            return_value=json.dumps(
+                {
+                    "type": "auth",
+                    "api_key": "my-key",
+                    "token": "jwt-token",
+                }
+            ),
         )
 
         with patch("api.routers.ws.OCR_API_KEY", "my-key"):
@@ -928,12 +1093,12 @@ class TestWSAuthFrameOAuth2:
 
 
 # ---------------------------------------------------------------------------
-# WebSocket idle timeout + max-duration limits
+# maintenance review: WebSocket idle timeout + max-duration limits
 # ---------------------------------------------------------------------------
 
 
 class TestWSTimeoutConfig:
-    """Verify  timeout constants are env-configurable."""
+    """Verify maintenance review timeout constants are env-configurable."""
 
     def test_default_constants_present(self):
         from api.routers import ws as ws_module
@@ -977,7 +1142,7 @@ class _FakeWebSocket:
 
     The real ``fastapi.testclient.TestClient`` makes it awkward to assert
     on close-frame ordering because the client side buffers frames across
-    ``close()`` calls.  For  we only need to verify the handler's
+    ``close()`` calls.  For maintenance review we only need to verify the handler's
     *server-side* decisions, so a simple stub is sufficient.
     """
 
@@ -1024,7 +1189,7 @@ class _FakeWebSocket:
 
 
 class TestWSIdleTimeout:
-    """Direct handler tests for  timeout behavior.
+    """Direct handler tests for maintenance review timeout behavior.
 
     These tests invoke ``job_progress_ws`` with a fake WebSocket to avoid
     TestClient buffering quirks when asserting on close-frame ordering.
@@ -1117,6 +1282,7 @@ class TestWSIdleTimeout:
         _create_job(status="processing", job_id="disabled-direct-1")
         ws = _FakeWebSocket()
         from fastapi import WebSocketDisconnect
+
         ws.enqueue_incoming(WebSocketDisconnect())
 
         call_count = [0]
@@ -1174,6 +1340,7 @@ class TestWSIdleTimeout:
         ws = _FakeWebSocket()
         # Deliver a ping frame, then a WebSocketDisconnect to end the loop.
         from fastapi import WebSocketDisconnect
+
         ws.enqueue_incoming("ping", WebSocketDisconnect())
 
         with (
@@ -1193,3 +1360,29 @@ class TestWSIdleTimeout:
             )
             for m in ws.sent
         )
+
+
+def test_logout_blocks_broadcast_even_when_transport_close_fails():
+    import asyncio
+    from types import SimpleNamespace
+
+    from api.routers import ws as module
+
+    socket = MagicMock()
+    socket.state = SimpleNamespace()
+    socket.client_state = WebSocketState.CONNECTED
+    socket.close = AsyncMock(side_effect=RuntimeError("injected transport failure"))
+    socket.send_json = AsyncMock()
+    module._mark_ws_credential(socket, "synthetic-test-key")
+    module._connections["logout-send-failure"] = {socket}
+
+    async def scenario():
+        assert await module.invalidate_ws_sessions_for_key("synthetic-test-key") == 1
+        await module.notify_job_update("logout-send-failure", {"type": "progress"})
+        assert not await module._send_json(socket, {"type": "pong"})
+        socket.send_json.assert_not_awaited()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        module._invalidated_ws_ids.discard(id(socket))

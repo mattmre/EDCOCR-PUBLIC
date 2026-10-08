@@ -29,10 +29,12 @@ spec:
   triggers:
     - type: rabbitmq
       metadata:
-        protocol: amqp
+        protocol: http
         queueName: {{ .Values.keda.gpu.queueName | default "ocr_gpu" }}
+        vhostName: "/"
         mode: QueueLength
         value: {{ .Values.gpuWorker.autoscaling.queueTarget | quote }}
+        excludeUnacknowledged: "false"
       authenticationRef:
         name: {{ .Release.Name }}-rabbitmq-auth
 {{- end }}

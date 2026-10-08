@@ -116,7 +116,13 @@ class TestEventSerialization:
     def test_to_dict_keys(self):
         event = Event(event_type=EventType.JOB_SUBMITTED)
         d = event.to_dict()
-        assert set(d.keys()) == {"event_type", "payload", "event_id", "timestamp", "source"}
+        assert set(d.keys()) == {
+            "event_type",
+            "payload",
+            "event_id",
+            "timestamp",
+            "source",
+        }
 
     def test_to_dict_event_type_is_string(self):
         event = Event(event_type=EventType.JOB_SUBMITTED)
@@ -237,9 +243,23 @@ class TestLocalEventBusPublish:
             raise RuntimeError("boom")
 
         bus.subscribe(EventType.JOB_SUBMITTED, bad_callback)
-        # Should not raise
+        # Should not raise — but must report the failure (falsy, not True).
         result = bus.publish(Event(event_type=EventType.JOB_SUBMITTED))
-        assert result is True
+        assert result is False
+
+    def test_publish_returns_false_only_for_failures(self):
+        bus = LocalEventBus()
+        received = []
+
+        def bad(e):
+            raise ValueError("fail")
+
+        bus.subscribe(EventType.JOB_SUBMITTED, bad)
+        bus.subscribe(EventType.JOB_SUBMITTED, lambda e: received.append(e))
+        result = bus.publish(Event(event_type=EventType.JOB_SUBMITTED))
+        # Failing subscriber reported, healthy one still ran.
+        assert result is False
+        assert len(received) == 1
 
     def test_callback_error_does_not_block_other_subscribers(self):
         bus = LocalEventBus()
@@ -456,7 +476,9 @@ class TestSnsEventBus:
     """Tests for SnsEventBus (no real AWS required)."""
 
     def test_init_stores_config(self):
-        bus = SnsEventBus(region="eu-west-1", topic_arn_prefix="arn:aws:sns:eu-west-1:123")
+        bus = SnsEventBus(
+            region="eu-west-1", topic_arn_prefix="arn:aws:sns:eu-west-1:123"
+        )
         assert bus._region == "eu-west-1"
         assert bus._topic_arn_prefix == "arn:aws:sns:eu-west-1:123"
 

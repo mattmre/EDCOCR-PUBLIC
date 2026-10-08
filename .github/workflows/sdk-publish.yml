@@ -170,7 +170,9 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -n "$NODE_AUTH_TOKEN" ]; then
-            npm publish --access public --provenance
+            version=$(node -p "require('./package.json').version")
+            if [[ "$version" == *-* ]]; then tag=rc; else tag=latest; fi
+            npm publish --access public --provenance --tag "$tag"
           else
             echo "NPM_TOKEN secret not set, skipping publish"
           fi

@@ -1,4 +1,4 @@
-# EDCOCR Python Dependencies
+# OCR_LOCAL Python Dependencies
 # Production pipeline: ocr_gpu_async.py
 #
 # IMPORTANT: This file does NOT include system-level dependencies that must be
@@ -19,10 +19,11 @@
 # PaddlePaddle deep learning framework
 # Use 'paddlepaddle-gpu' for GPU support (production Docker uses base image with GPU)
 # Use 'paddlepaddle' for CPU-only (model downloads, testing)
-# UPGRADE-CONSTRAINT: Locked to 2.6.x (ABI-locked to numpy 1.x). Upgrading to
-# 3.x requires coordinated numpy 2.x + OpenCV + PaddleOCR + PaddleNLP migration.
-# Q2 2026 qualification sprint planned. See docs/architecture/adr-paddlepaddle-upgrade-path.md
-paddlepaddle==2.6.2
+# PaddlePaddle 3.0.0 is the qualified CPU runtime for the legacy PaddleOCR 2.9.1
+# API. Paddle 2.6.2 aborts on Debian 13 and SIGILLs during predictor creation on
+# supported AMD/virtualized CPU hosts. Keep NumPy 1.x until the separate
+# PaddleOCR 3.x API migration is qualified.
+paddlepaddle==3.0.0
 
 # PaddleOCR - Advanced OCR engine with PP-OCRv4/PP-OCRv5 models
 # Primary OCR engine for the pipeline.
@@ -39,23 +40,23 @@ pytesseract==0.3.13
 
 # PyMuPDF - Fast PDF manipulation and rendering
 # Imported as 'fitz' in the codebase
-# Version must match coordinator/requirements.txt.
+# maintenance review: Version must match coordinator/requirements.txt.
 # Run scripts/check_deps_sync.py to verify sync.
-PyMuPDF==1.27.2.2
+PyMuPDF==1.28.0
 
 # PDF to image conversion via Poppler
 # Requires system package: poppler-utils
 pdf2image==1.17.0
 
 # Python Imaging Library - Image processing
-# Version must match coordinator/requirements.txt.
+# maintenance review: Version must match coordinator/requirements.txt.
 # Run scripts/check_deps_sync.py to verify sync.
-Pillow==12.2.0
+Pillow==12.3.0
 
-# OpenCV - Image preprocessing for enhanced OCR fallback
+# OpenCV - Image preprocessing for enhanced OCR fallback (Phase 4D)
 # Headless variant (no GUI dependencies) for Docker compatibility.
 # 4.12+ flips to numpy>=2 on Python 3.9+, which conflicts with the current
-# PaddleOCR 2.9.1 / PaddlePaddle 2.6.2 stack pinned to numpy 1.26.4.
+# qualified PaddleOCR 2.9.1 / PaddlePaddle 3.0.0 stack pinned to numpy 1.26.4.
 # Keep the highest resolver-safe 4.x line for deterministic preprocessing.
 opencv-python-headless==4.11.0.86
 
@@ -68,9 +69,10 @@ opencv-python-headless==4.11.0.86
 # Uses lid.176.bin model for 176 language detection
 # Model downloaded separately via download_models.py
 # TECH-DEBT: Unmaintained upstream (Meta ended development 2023). C++ build
-# fragile on Python 3.12+. Docker pre-built wheels mitigate. Q3 2026 migration
+# fragile on Python 3.12+. Python 3.12 installs intentionally degrade to
+# no FastText backend until a benchmarked replacement lands. Q3 2026 migration
 # candidate (fasttext-langdetect). See docs/architecture/adr-fasttext-assessment.md
-fasttext==0.9.3
+fasttext==0.9.3; python_version < "3.12"
 
 
 # ============================================================================
@@ -89,19 +91,19 @@ pandas==2.3.3
 # ============================================================================
 
 # FastAPI - Modern web framework for building APIs
-fastapi==0.136.1
+fastapi==0.139.0
 
 # Uvicorn - ASGI server for FastAPI
-uvicorn[standard]>=0.42.0,<1.0.0
+uvicorn[standard]>=0.48.0,<1.0.0
 
 # Multipart form data handling for file uploads
-python-multipart==0.0.29
+python-multipart==0.0.32
 
 # SQLAlchemy - Database ORM
-sqlalchemy==2.0.49
+sqlalchemy==2.0.51
 
 # Slowapi - Rate limiting for FastAPI
-slowapi==0.1.9
+slowapi==0.1.10
 
 # WebSocket support for real-time job progress streaming
 websockets>=16.0,<18.0
@@ -113,23 +115,32 @@ prometheus-client>=0.25.0,<1.0.0
 # Also used by PyJWT[crypto] for RSA/EC JWT signature verification
 cryptography>=41.0
 
-# OAuth2 JWT validation
+# OAuth2 JWT validation (Phase 5D)
 # Optional: graceful degradation when not installed (API key auth still works)
 # PyJWT replaces python-jose (unmaintained since 2022, algorithm confusion CVEs)
-PyJWT[crypto]>=2.12.1
+PyJWT[crypto]>=2.13.0
 
-# HTTP client for JWKS fetching
-httpx>=0.27
+# HTTP client for JWKS fetching (Phase 5D OAuth2)
+httpx>=0.28.1
 
-# spaCy - Named Entity Recognition
+# Starlette 1.3+ TestClient transport.  Without this package Starlette falls
+# back to deprecated legacy httpx compatibility, which is not the qualified
+# API validation path.
+httpx2>=2.10.0,<3.0.0
+
+# Bounded regex engine for tenant glossary patterns (hard match timeout).
+regex>=2024.11.6,<2027.0.0
+
+# spaCy - Named Entity Recognition (Phase 5A)
 # Optional: graceful degradation if absent (custom regex patterns still work)
 # After installing, download the model: python -m spacy download en_core_web_sm
 spacy==3.8.14
 
-# PaddleNLP - Universal Information Extraction
-# Optional: graceful degradation to regex-only extraction if absent
-# UIE models (uie-base ~400MB, uie-micro ~25MB) run on CPU
-paddlenlp==2.8.1
+# PaddleNLP UIE is intentionally not part of the default root install.
+# Structured extraction degrades to regex-only extraction when PaddleNLP is
+# absent. Use requirements-uie.txt only for the legacy Linux/Python <3.12 UIE
+# lane; keep the default OCR/runtime environment installable without the
+# brittle PaddleNLP -> paddle2onnx/tool-helpers chain.
 
 # Optional: LayoutLMv3 semantic extraction (token-level KIE)
 # Requires PyTorch. Uncomment to enable semantic extraction.
@@ -139,7 +150,7 @@ paddlenlp==2.8.1
 # timm>=0.9
 
 # ============================================================================
-# Optional: Handwriting Recognition
+# Optional: Handwriting Recognition (Phase 6D)
 # ============================================================================
 
 # TrOCR handwriting recognition requires PyTorch + Hugging Face transformers.
@@ -150,23 +161,30 @@ paddlenlp==2.8.1
 # transformers>=4.30
 
 # ============================================================================
-# Optional: RTL Text Support
+# Optional: RTL Text Support (Phase 6D)
 # ============================================================================
 
 # python-bidi provides Unicode Bidirectional Algorithm for RTL text reordering.
 # Graceful degradation: if absent, RTL text is returned in logical order.
 # python-bidi>=0.4
 
-# File System Watcher
+# File System Watcher (Phase 5C)
 # ============================================================================
 
 # Watchdog - Cross-platform filesystem event monitoring
 # Used by file_watcher.py for hot-folder OCR submission
-watchdog>=4.0
+watchdog>=6.0.0
 
 # PyYAML - YAML configuration file parsing
 # Used by file_watcher_config.py for watcher configuration
 PyYAML>=6.0
+
+# jsonschema - maintenance review v3.7.1 validator schemas
+# Used by scripts/validate_v33_schema_drift.py and related Brutal Honesty gates
+jsonschema>=4.0
+# rfc3339-validator - enables Draft7 FormatChecker date-time calendar enforcement
+# (jsonschema optional extra; required so public custody schema rejects Feb 30 etc.)
+rfc3339-validator>=0.1.4,<1
 
 # Pydantic - Data validation for watcher configuration
 # Also used by FastAPI (already a transitive dependency)
@@ -208,7 +226,7 @@ paramiko>=3.4
 # easyocr>=1.7
 
 # ============================================================================
-# Optional: Barcode/QR Code Extraction
+# Optional: Barcode/QR Code Extraction (Master API Phase 3)
 # ============================================================================
 
 # pyzbar - Barcode and QR code reading via libzbar
@@ -235,23 +253,29 @@ paramiko>=3.4
 # Security: Explicit transitive dependency pins (CVE fixes)
 # ============================================================================
 
-# onnx is a transitive dependency (via paddleocr/onnxruntime).
-# Pin to >=1.21.0 to fix CVE-2026-34447, CVE-2026-34446, GHSA-q56x-g2fj-4rj6,
-# CVE-2026-27489, CVE-2026-34445, and CVE-2026-28500.
+# ONNX is used by optional worker acceleration paths. Paddle 3 removes the old
+# protobuf 3 ceiling, so retain the patched ONNX line and qualify both against
+# the same exact protobuf version used by model-preload.
 onnx>=1.21.0
+protobuf==7.35.1
 
 # ============================================================================
 # Test dependencies
 # ============================================================================
 
 # Hypothesis - property-based testing for security-critical string handling
-hypothesis>=6.100.0
+hypothesis>=6.156.2
 
-# pytest-cov - Coverage reporting plugin for pytest
+# pytest-cov - Coverage reporting plugin for pytest (maintenance review)
 # CI/test dependency -- needed for coverage reporting in GitHub Actions.
 # Excluded from production Docker images (not imported by runtime code).
 # Required by tests/test_coverage_config.py and .github/workflows/ci.yml.
 pytest-cov>=7.1.0
+
+# PEP 517 frontend used by scripts/release_checklist.py for the Python SDK
+# source-distribution gate.
+build==1.5.0
+hatchling==1.31.0
 
 # CVE exclusion notes for pip-audit (no upstream fix available):
 # - Pygments CVE-2026-4539: affects all versions through 2.19.2 (latest)

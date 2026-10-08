@@ -744,21 +744,11 @@ class TestWriteSpecialistJson:
             source_file="test.pdf",
             doc_type="invoice",
         )
-        # Use a traversal deep enough to escape EXPORT/EXTRACTION base dir
         path = write_specialist_json(
             result, str(tmp_path), "../../../../../../../tmp/evil", "0.9.0"
         )
-        # On platforms where realpath resolves the traversal outside the
-        # extraction dir, this should be blocked. On Windows where the
-        # resolved path may still land under tmp_path, we accept that
-        # the protection functions as designed (resolved stays under root).
-        if path is not None:
-            extraction_base = os.path.realpath(
-                os.path.join(str(tmp_path), "EXPORT", "EXTRACTION")
-            )
-            assert os.path.realpath(os.path.dirname(path)).startswith(
-                extraction_base
-            )
+        assert path is None
+        assert not (tmp_path / "tmp" / "evil").exists()
 
     def test_json_fields_included(self, tmp_path):
         result = SpecialistResult(

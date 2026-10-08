@@ -340,8 +340,8 @@ class TestSupportedExtensions:
 
     def test_all_libraries_available(self):
         """All extensions returned when all libraries are installed."""
-        with patch.object(format_loaders, "_HEIF_AVAILABLE", True), \
-             patch.object(format_loaders, "_RAWPY_AVAILABLE", True), \
+        with patch.object(format_loaders, "_HEIF_AVAILABLE", True),\
+             patch.object(format_loaders, "_RAWPY_AVAILABLE", True),\
              patch.object(format_loaders, "_PYDICOM_AVAILABLE", True):
             exts = format_loaders.get_supported_extensions()
             assert format_loaders.HEIC_EXTENSIONS.issubset(exts)
@@ -350,32 +350,32 @@ class TestSupportedExtensions:
 
     def test_no_libraries_available(self):
         """Empty set when no optional libraries are installed."""
-        with patch.object(format_loaders, "_HEIF_AVAILABLE", False), \
-             patch.object(format_loaders, "_RAWPY_AVAILABLE", False), \
+        with patch.object(format_loaders, "_HEIF_AVAILABLE", False),\
+             patch.object(format_loaders, "_RAWPY_AVAILABLE", False),\
              patch.object(format_loaders, "_PYDICOM_AVAILABLE", False):
             exts = format_loaders.get_supported_extensions()
             assert exts == set()
 
     def test_only_heif_available(self):
         """Only HEIC extensions when only pillow-heif is installed."""
-        with patch.object(format_loaders, "_HEIF_AVAILABLE", True), \
-             patch.object(format_loaders, "_RAWPY_AVAILABLE", False), \
+        with patch.object(format_loaders, "_HEIF_AVAILABLE", True),\
+             patch.object(format_loaders, "_RAWPY_AVAILABLE", False),\
              patch.object(format_loaders, "_PYDICOM_AVAILABLE", False):
             exts = format_loaders.get_supported_extensions()
             assert exts == format_loaders.HEIC_EXTENSIONS
 
     def test_only_rawpy_available(self):
         """Only RAW extensions when only rawpy is installed."""
-        with patch.object(format_loaders, "_HEIF_AVAILABLE", False), \
-             patch.object(format_loaders, "_RAWPY_AVAILABLE", True), \
+        with patch.object(format_loaders, "_HEIF_AVAILABLE", False),\
+             patch.object(format_loaders, "_RAWPY_AVAILABLE", True),\
              patch.object(format_loaders, "_PYDICOM_AVAILABLE", False):
             exts = format_loaders.get_supported_extensions()
             assert exts == format_loaders.RAW_EXTENSIONS
 
     def test_only_pydicom_available(self):
         """Only DICOM extensions when only pydicom is installed."""
-        with patch.object(format_loaders, "_HEIF_AVAILABLE", False), \
-             patch.object(format_loaders, "_RAWPY_AVAILABLE", False), \
+        with patch.object(format_loaders, "_HEIF_AVAILABLE", False),\
+             patch.object(format_loaders, "_RAWPY_AVAILABLE", False),\
              patch.object(format_loaders, "_PYDICOM_AVAILABLE", True):
             exts = format_loaders.get_supported_extensions()
             assert exts == format_loaders.DICOM_EXTENSIONS
@@ -387,8 +387,8 @@ class TestSupportedExtensions:
 
     def test_is_format_supported_false_when_lib_missing(self):
         """is_format_supported returns False when library not installed."""
-        with patch.object(format_loaders, "_HEIF_AVAILABLE", False), \
-             patch.object(format_loaders, "_RAWPY_AVAILABLE", False), \
+        with patch.object(format_loaders, "_HEIF_AVAILABLE", False),\
+             patch.object(format_loaders, "_RAWPY_AVAILABLE", False),\
              patch.object(format_loaders, "_PYDICOM_AVAILABLE", False):
             assert format_loaders.is_format_supported("/foo/bar.heic") is False
 
@@ -407,8 +407,8 @@ class TestGracefulDegradation:
 
     def test_all_missing_returns_none_for_every_format(self):
         """Every loader returns None when its library is missing."""
-        with patch.object(format_loaders, "_HEIF_AVAILABLE", False), \
-             patch.object(format_loaders, "_RAWPY_AVAILABLE", False), \
+        with patch.object(format_loaders, "_HEIF_AVAILABLE", False),\
+             patch.object(format_loaders, "_RAWPY_AVAILABLE", False),\
              patch.object(format_loaders, "_PYDICOM_AVAILABLE", False):
             format_loaders._warned_heif = False
             format_loaders._warned_rawpy = False

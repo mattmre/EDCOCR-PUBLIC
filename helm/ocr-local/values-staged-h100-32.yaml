@@ -1,0 +1,57 @@
+# Scheduling example for thirty-two AMD64 one-visible-H100 worker pods.
+# The 32 logical GPU owners are process-isolated; native predictor/model
+# memory and real H100 throughput require target-host measurement.
+ocrStagedPage:
+  enabled: true
+  globalBytes: "34359738368"       # 32 GiB decoded-raster reservations fleet-wide
+  maxPageBytes: "268435456"        # 256 MiB/page; not a pod-RSS ceiling
+  maxInflightPagesPerDocument: "64" # at least 32 ready GPU claims from one job
+  render:
+    replicas: 16
+    concurrency: 2                  # 32 CPU render claims; OMP threads=1
+    autoscaling: {enabled: false}
+    resources:
+      requests: {cpu: "2", memory: 4Gi}
+      limits: {cpu: "4", memory: 8Gi}
+    nodeSelector: {kubernetes.io/arch: amd64}
+  finalize:
+    replicas: 16
+    concurrency: 2                  # 32 CPU finalizer claims
+    autoscaling: {enabled: false}
+    resources:
+      requests: {cpu: "2", memory: 4Gi}
+      limits: {cpu: "4", memory: 8Gi}
+    nodeSelector: {kubernetes.io/arch: amd64}
+gpuWorker:
+  replicas: 32
+  maxTasksPerChild: 512             # finite warm-run budget; measure RSS growth
+  autoscaling: {enabled: false}
+  stagedInference:
+    pool: prefork
+    concurrency: 1
+    slotsPerDevice: 1
+    replicasPerKey: 1
+  nodeSelector: {kubernetes.io/arch: amd64}
+tesseractWorker:
+  enabled: true
+  replicas: 16
+  concurrency: 2
+  autoscaling: {enabled: false}
+  nodeSelector: {kubernetes.io/arch: amd64}
+coordinator:
+  env:
+    OCR_TASK_ROUTING: gpu
+# Supply a real RWX shared volume and distinct authenticated fleet ingress.
+storage:
+  backend: nfs
+  nfs:
+    persistence: {enabled: true}
+
+# Planning allowance: 231 coordinator/worker process slots plus headroom.
+# Qualify active PostgreSQL sessions and backend memory on the target fleet.
+postgresql:
+  config:
+    maxConnections: 320
+  resources:
+    requests: {cpu: "2", memory: 4Gi}
+    limits: {cpu: "4", memory: 8Gi}

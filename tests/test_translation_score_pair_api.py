@@ -7,6 +7,7 @@ exercised without the full ``api.main`` stack.
 The COMETKiwi estimator is replaced via the module-level
 ``_get_qe_estimator`` cache so we never need ``unbabel-comet`` installed.
 """
+
 from __future__ import annotations
 
 from typing import Iterator
@@ -39,10 +40,22 @@ def _rate_limit_exceeded_handler(request, exc):
 @pytest.fixture
 def app_no_auth() -> Iterator[FastAPI]:
     """Build an isolated FastAPI app with the translation router only."""
+    from api.identity import AuthIdentity
+
     app = FastAPI()
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_middleware(SlowAPIMiddleware)
+
+    @app.middleware("http")
+    async def _operator_identity(request, call_next):
+        request.state.identity = AuthIdentity(
+            subject="translation-qe-test",
+            role="operator",
+            auth_method="test",
+        )
+        return await call_next(request)
+
     app.include_router(translation_router_mod.router)
     yield app
 
@@ -135,9 +148,7 @@ def test_score_pair_200_with_valid_request(client):
 
 
 def test_score_pair_returns_unavailable_for_empty_input(client):
-    estimator = _make_estimator_stub(
-        score=None, available=False, reason="empty_input"
-    )
+    estimator = _make_estimator_stub(score=None, available=False, reason="empty_input")
     _install_estimator(estimator)
     resp = client.post(
         "/api/v1/translation/score-pair",

@@ -446,7 +446,7 @@ class TestGenerateComparisonTable:
         assert "Total Documents" in table
         assert "Total Pages" in table
         assert "Throughput" in table
-        assert "EDCOCR" in table
+        assert "OCR_LOCAL" in table
 
     def test_contains_pipeline_version(self):
         result = _make_result()

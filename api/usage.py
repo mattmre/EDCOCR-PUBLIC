@@ -26,12 +26,9 @@ def _get_or_create_usage(
     session: Session,
 ) -> UsageRecord:
     """Return existing usage record or create a new one for the period."""
-    query = (
-        session.query(UsageRecord)
-        .filter(
-            UsageRecord.tenant_id == tenant_id,
-            UsageRecord.period == period,
-        )
+    query = session.query(UsageRecord).filter(
+        UsageRecord.tenant_id == tenant_id,
+        UsageRecord.period == period,
     )
     record = query.first()
     if record is None:
@@ -58,6 +55,33 @@ def _get_or_create_usage(
     return record
 
 
+def _increment_usage_counter(
+    tenant_id: str,
+    period: str,
+    field_name: str,
+    delta: int | float,
+    session: Session,
+) -> UsageRecord:
+    """Atomically increment one usage column and return its ORM row.
+
+    A Python read/modify/write loses increments when two API workers update
+    the same monthly row concurrently.  SQLAlchemy's expression update keeps
+    the arithmetic in the database, so each committed increment is retained.
+    """
+    record = _get_or_create_usage(tenant_id, period, session)
+    counter = getattr(UsageRecord, field_name, None)
+    if counter is None:
+        raise ValueError(f"Unknown usage counter: {field_name}")
+    session.query(UsageRecord).filter(UsageRecord.id == record.id).update(
+        {counter: counter + delta},
+        synchronize_session=False,
+    )
+    # The expression UPDATE bypasses the in-memory value; expire just this
+    # attribute so callers using the same session observe the committed value.
+    session.expire(record, [field_name])
+    return record
+
+
 def record_job_submitted(
     tenant_id: str,
     *,
@@ -69,8 +93,7 @@ def record_job_submitted(
         session = get_session_factory()()
     try:
         period = _current_period()
-        record = _get_or_create_usage(tenant_id, period, session)
-        record.jobs_submitted += 1
+        _increment_usage_counter(tenant_id, period, "jobs_submitted", 1, session)
         if own_session:
             session.commit()
         else:
@@ -96,8 +119,9 @@ def record_pages_processed(
         session = get_session_factory()()
     try:
         period = _current_period()
-        record = _get_or_create_usage(tenant_id, period, session)
-        record.pages_processed += page_count
+        _increment_usage_counter(
+            tenant_id, period, "pages_processed", page_count, session
+        )
         if own_session:
             session.commit()
         else:
@@ -123,8 +147,9 @@ def record_storage_used(
         session = get_session_factory()()
     try:
         period = _current_period()
-        record = _get_or_create_usage(tenant_id, period, session)
-        record.storage_bytes_used += bytes_delta
+        _increment_usage_counter(
+            tenant_id, period, "storage_bytes_used", bytes_delta, session
+        )
         if own_session:
             session.commit()
         else:
@@ -149,8 +174,7 @@ def record_api_call(
         session = get_session_factory()()
     try:
         period = _current_period()
-        record = _get_or_create_usage(tenant_id, period, session)
-        record.api_calls += 1
+        _increment_usage_counter(tenant_id, period, "api_calls", 1, session)
         if own_session:
             session.commit()
         else:
@@ -177,8 +201,13 @@ def record_processing_seconds(
         session = get_session_factory()()
     try:
         usage_period = period or _current_period()
-        record = _get_or_create_usage(tenant_id, usage_period, session)
-        record.processing_seconds += max(0.0, float(processing_seconds))
+        _increment_usage_counter(
+            tenant_id,
+            usage_period,
+            "processing_seconds",
+            max(0.0, float(processing_seconds)),
+            session,
+        )
         if own_session:
             session.commit()
         else:

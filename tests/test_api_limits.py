@@ -1,4 +1,4 @@
-"""Tests for api/limits.py rate limiter key extraction.
+"""Tests for api/limits.py rate limiter key extraction (maintenance review).
 
 Verifies that the rate limiter correctly extracts client IPs from
 proxy headers (X-Forwarded-For, X-Real-IP) and falls back to
@@ -27,42 +27,57 @@ def _make_request(headers=None, client_host="127.0.0.1"):
 
 
 class TestGetRealClientIp:
-    """Verify _get_real_client_ip proxy header extraction."""
+    """Verify _get_real_client_ip proxy header extraction (B04 TRUSTED_PROXIES)."""
 
-    def test_xff_single_ip(self):
-        """X-Forwarded-For with a single IP returns that IP."""
+    def test_xff_ignored_without_trusted_proxies(self, monkeypatch):
+        """Without TRUSTED_PROXIES, XFF is ignored (B04)."""
+        monkeypatch.delenv("TRUSTED_PROXIES", raising=False)
+        req = _make_request(
+            headers={"x-forwarded-for": "203.0.113.50"},
+            client_host="10.0.0.1",
+        )
+        # peer only — not spoofed XFF
+        assert _get_real_client_ip(req) != "203.0.113.50"
+
+    def test_xff_single_ip(self, monkeypatch):
+        """X-Forwarded-For with a single IP returns that IP when proxy trusted."""
+        monkeypatch.setenv("TRUSTED_PROXIES", "10.0.0.1")
         req = _make_request(
             headers={"x-forwarded-for": "203.0.113.50"},
             client_host="10.0.0.1",
         )
         assert _get_real_client_ip(req) == "203.0.113.50"
 
-    def test_xff_multiple_ips_returns_leftmost(self):
+    def test_xff_multiple_ips_returns_leftmost(self, monkeypatch):
         """X-Forwarded-For with multiple IPs returns the leftmost (original client)."""
+        monkeypatch.setenv("TRUSTED_PROXIES", "10.0.0.1")
         req = _make_request(
             headers={"x-forwarded-for": "203.0.113.50, 70.41.3.18, 150.172.238.178"},
             client_host="10.0.0.1",
         )
         assert _get_real_client_ip(req) == "203.0.113.50"
 
-    def test_xff_with_whitespace(self):
+    def test_xff_with_whitespace(self, monkeypatch):
         """X-Forwarded-For IPs are trimmed of whitespace."""
+        monkeypatch.setenv("TRUSTED_PROXIES", "10.0.0.1")
         req = _make_request(
             headers={"x-forwarded-for": "  198.51.100.22 , 10.0.0.1"},
             client_host="10.0.0.1",
         )
         assert _get_real_client_ip(req) == "198.51.100.22"
 
-    def test_xrealip_used_when_no_xff(self):
+    def test_xrealip_used_when_no_xff(self, monkeypatch):
         """X-Real-IP is used when X-Forwarded-For is absent."""
+        monkeypatch.setenv("TRUSTED_PROXIES", "10.0.0.1")
         req = _make_request(
             headers={"x-real-ip": "198.51.100.33"},
             client_host="10.0.0.1",
         )
         assert _get_real_client_ip(req) == "198.51.100.33"
 
-    def test_xff_takes_precedence_over_xrealip(self):
+    def test_xff_takes_precedence_over_xrealip(self, monkeypatch):
         """X-Forwarded-For is preferred over X-Real-IP when both present."""
+        monkeypatch.setenv("TRUSTED_PROXIES", "10.0.0.1")
         req = _make_request(
             headers={
                 "x-forwarded-for": "203.0.113.1",
@@ -71,6 +86,15 @@ class TestGetRealClientIp:
             client_host="10.0.0.1",
         )
         assert _get_real_client_ip(req) == "203.0.113.1"
+
+    def test_tenant_shaped_xff_rejected(self, monkeypatch):
+        """tenant_* XFF values never become IP keys (B04)."""
+        monkeypatch.setenv("TRUSTED_PROXIES", "10.0.0.1")
+        req = _make_request(
+            headers={"x-forwarded-for": "tenant_victim"},
+            client_host="10.0.0.1",
+        )
+        assert "tenant_" not in str(_get_real_client_ip(req))
 
     def test_fallback_to_client_host(self):
         """Falls back to request.client.host when no proxy headers are present."""
@@ -104,8 +128,9 @@ class TestGetRealClientIp:
 class TestTenantAwareKeyFunc:
     """Verify _tenant_aware_key_func integration with proxy headers."""
 
-    def test_ip_key_uses_proxy_headers(self):
-        """When not in multi-tenancy mode, key uses proxy-aware IP."""
+    def test_ip_key_uses_proxy_headers(self, monkeypatch):
+        """When not in multi-tenancy mode, key uses namespaced proxy-aware IP."""
+        monkeypatch.setenv("TRUSTED_PROXIES", "10.0.0.1")
         req = _make_request(
             headers={"x-forwarded-for": "203.0.113.99"},
             client_host="10.0.0.1",
@@ -114,7 +139,7 @@ class TestTenantAwareKeyFunc:
             "api.limits.ENABLE_MULTITENANCY", False
         ):
             result = _tenant_aware_key_func(req)
-        assert result == "203.0.113.99"
+        assert result == "ip:203.0.113.99"
 
     def test_tenant_id_overrides_ip(self):
         """When multi-tenancy is active and tenant_id is set, it takes priority."""
@@ -127,4 +152,4 @@ class TestTenantAwareKeyFunc:
             "api.limits.ENABLE_MULTITENANCY", True
         ):
             result = _tenant_aware_key_func(req)
-        assert result == "tenant-abc-123"
+        assert result == "tenant:tenant-abc-123"

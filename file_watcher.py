@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import errno
 import fnmatch
 import http.client
 import logging
@@ -316,8 +317,10 @@ def _submit_pipeline(
         cmd = [
             sys.executable,
             config.pipeline_script,
-            "--source", str(source_dir),
-            "--output", config.output_folder,
+            "--source",
+            str(source_dir),
+            "--output",
+            config.output_folder,
         ]
         if watch_cfg.enable_docintel:
             cmd.append("--enable-docintel")
@@ -410,9 +413,7 @@ def _submit_with_config(
 
     backend = SUBMISSION_BACKENDS.get(watcher_config.submission_mode)
     if not backend:
-        logger.error(
-            "Unknown submission mode: %s", watcher_config.submission_mode
-        )
+        logger.error("Unknown submission mode: %s", watcher_config.submission_mode)
         return False
 
     acquired = submission_semaphore.acquire(timeout=30)
@@ -547,7 +548,9 @@ class FileWatcherHandler(FileSystemEventHandler):
                     return
                 # If file disappeared, bail out
                 if not os.path.exists(file_path):
-                    logger.debug("File disappeared during stability check: %s", file_path)
+                    logger.debug(
+                        "File disappeared during stability check: %s", file_path
+                    )
                     return
         except Exception:
             logger.exception("Stability check error for %s", file_path)
@@ -573,7 +576,9 @@ class FileWatcherHandler(FileSystemEventHandler):
             return
 
         try:
-            candidates = root.rglob("*") if self._watch_cfg.recursive else root.iterdir()
+            candidates = (
+                root.rglob("*") if self._watch_cfg.recursive else root.iterdir()
+            )
         except OSError:
             logger.exception("Failed to enumerate watch path for rescan: %s", root)
             return
@@ -663,6 +668,11 @@ class FileWatcher:
         self._stability_executor: Optional[ThreadPoolExecutor] = None
         self._max_pending_files = max(16, config.max_concurrent_submissions * 8)
         self._observer_lock = threading.Lock()
+        # The monitor thread and operator/test-triggered reconciliation can
+        # inspect the same path concurrently.  Serialize the availability
+        # decision with observer creation/removal so a stale "missing" read
+        # cannot tear down an observer created after the directory returns.
+        self._reconcile_lock = threading.RLock()
         self._monitor_thread: Optional[threading.Thread] = None
 
     @property
@@ -724,6 +734,11 @@ class FileWatcher:
         state.active_mode = ""
 
     def _reconcile_watch_path(self, state: WatchPathRuntime) -> None:
+        """Reconcile one path under the lifecycle lock."""
+        with self._reconcile_lock:
+            self._reconcile_watch_path_locked(state)
+
+    def _reconcile_watch_path_locked(self, state: WatchPathRuntime) -> None:
         """Ensure a watch path has the correct observer lifecycle.
 
         When the watched directory disappears, the observer is stopped and
@@ -773,9 +788,10 @@ class FileWatcher:
             state.recovery_retries += 1
             return
 
-        if state.observer is not None and getattr(
-            state.observer, "is_alive", lambda: False
-        )():
+        if (
+            state.observer is not None
+            and getattr(state.observer, "is_alive", lambda: False)()
+        ):
             state.path_missing = False
             return
 
@@ -805,7 +821,31 @@ class FileWatcher:
             recursive=state.watch_cfg.recursive,
         )
         observer.daemon = True
-        observer.start()
+        try:
+            observer.start()
+        except OSError as exc:
+            if mode != "native" or exc.errno != errno.ENOSPC:
+                raise
+            logger.warning(
+                "Native watch capacity exhausted for %s; using polling mode",
+                state.watch_cfg.path,
+            )
+            try:
+                observer.stop()
+                observer.join(timeout=1)
+            except (RuntimeError, OSError):
+                pass
+            observer, mode = self._create_observer(
+                state.watch_cfg,
+                force_polling=True,
+            )
+            observer.schedule(
+                state.handler,
+                path=state.watch_cfg.path,
+                recursive=state.watch_cfg.recursive,
+            )
+            observer.daemon = True
+            observer.start()
 
         with self._observer_lock:
             self._observers.append(observer)
@@ -846,9 +886,7 @@ class FileWatcher:
         backoff_interval = self._config.path_recovery_interval
 
         while not SHUTDOWN_EVENT.is_set():
-            previously_missing = {
-                id(s) for s in self._watch_states if s.path_missing
-            }
+            previously_missing = {id(s) for s in self._watch_states if s.path_missing}
             try:
                 self._reconcile_watch_paths()
             except Exception:
@@ -942,7 +980,9 @@ class FileWatcher:
             self._config.submission_mode,
         )
 
-    def _submit_remote_file(self, file_path: str, remote_cfg, processed_key: str) -> bool:
+    def _submit_remote_file(
+        self, file_path: str, remote_cfg, processed_key: str
+    ) -> bool:
         """Submit a staged remote file through the configured backend."""
         return _submit_with_config(
             file_path=file_path,
@@ -983,13 +1023,15 @@ class FileWatcher:
         """Return per-path health status for monitoring."""
         result = []
         for wp_rt in self._watch_states:
-            result.append({
-                "path": wp_rt.watch_cfg.path,
-                "active": not wp_rt.path_missing,
-                "observer_mode": wp_rt.active_mode,
-                "recovery_retries": wp_rt.recovery_retries,
-                "observer_deaths": wp_rt.observer_deaths,
-            })
+            result.append(
+                {
+                    "path": wp_rt.watch_cfg.path,
+                    "active": not wp_rt.path_missing,
+                    "observer_mode": wp_rt.active_mode,
+                    "recovery_retries": wp_rt.recovery_retries,
+                    "observer_deaths": wp_rt.observer_deaths,
+                }
+            )
         return result
 
     def wait(self) -> None:
@@ -1008,8 +1050,11 @@ class FileWatcher:
 
 def _setup_signal_handlers() -> None:
     """Install SIGTERM/SIGINT handlers for graceful shutdown."""
+
     def _handler(signum, frame):
-        sig_name = signal.Signals(signum).name if hasattr(signal, "Signals") else str(signum)
+        sig_name = (
+            signal.Signals(signum).name if hasattr(signal, "Signals") else str(signum)
+        )
         logger.info("Received %s, initiating shutdown", sig_name)
         SHUTDOWN_EVENT.set()
 

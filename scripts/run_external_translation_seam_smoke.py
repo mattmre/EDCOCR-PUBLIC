@@ -15,7 +15,8 @@ from typing import Sequence
 from ocr_local.document_bundle import build_document_bundle
 from ocr_local.translation.external_client import (
     DEFAULT_TRANSLATION_SERVICE_URL,
-    TranslationServiceClient)
+    TranslationServiceClient,
+)
 from ocr_local.translation.readiness import external_translation_readiness
 from pipeline_config import create_pipeline_config
 

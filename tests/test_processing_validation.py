@@ -19,6 +19,8 @@ import tempfile
 
 import pytest
 
+import validation as validation_module
+
 # Add project root to path
 from validation import (
     DocumentValidation,
@@ -324,8 +326,30 @@ class TestFinalizeValidation:
         assert result.pages_image_only == 1
         assert result.pages_failed == 1
         assert len(result.ocr_methods_used) == 4
-        # Only pages with conf > 0 count toward overall_confidence
-        assert abs(result.overall_confidence - 0.775) < 0.01
+        # Zero-confidence failed/image-only pages cannot inflate the mean.
+        assert abs(result.overall_confidence - 0.3875) < 0.01
+        assert result.classification == "review_required"
+
+    def test_explicit_page_review_vetoes_high_confidence_label(self):
+        dv = DocumentValidation(
+            document_id="review",
+            source_file="review.pdf",
+            source_page_count=1,
+            output_page_count=1,
+            pages=[{
+                "page_num": 1,
+                "ocr_method": "PaddleOCR",
+                "ocr_confidence": 0.99,
+                "text_length": 100,
+                "has_text": True,
+                "status": "ok",
+                "needs_review": True,
+                "review_reasons": ["independent raster coverage incomplete"],
+            }],
+        )
+        result = finalize_validation(dv)
+        assert result.pages_needing_review == 1
+        assert result.classification == "review_required"
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +438,112 @@ class TestWriteValidationJson:
         # Verify nested directory was created
         expected_dir = os.path.join(str(tmp_path), "EXPORT", "VALIDATION", "deep", "nested")
         assert os.path.isdir(expected_dir)
+
+    def test_write_validation_json_sanitizes_each_subfolder_segment(self, tmp_path):
+        from ocr_distributed.ocr_utils import (
+            build_sidecar_base_name,
+            encode_path_segment,
+        )
+
+        dv = DocumentValidation(
+            document_id="safe_path",
+            source_file="matter:one/trailing. /doc?.pdf",
+        )
+        dv = finalize_validation(dv)
+
+        result = write_validation_json(
+            dv,
+            str(tmp_path),
+            "matter:one/trailing. ",
+            "0.4.0",
+        )
+
+        assert result is not None
+        expected = (
+            tmp_path
+            / "EXPORT"
+            / "VALIDATION"
+            / encode_path_segment("matter:one", empty_fallback="_")
+            / encode_path_segment("trailing. ", empty_fallback="_")
+            / f"{build_sidecar_base_name('doc?.pdf')}.validation.json"
+        )
+        assert os.path.normcase(result) == os.path.normcase(str(expected))
+        # Use os.stat with extended paths on Windows so deep identity-encoded
+        # trees beyond legacy MAX_PATH are still observable.
+        from ocr_distributed.ocr_utils import _extended_fs_path
+
+        assert os.path.isfile(_extended_fs_path(str(expected)))
+
+    def test_write_validation_json_preserves_empty_sanitized_segment(self, tmp_path):
+        from ocr_distributed.ocr_utils import encode_path_segment
+
+        dv = finalize_validation(
+            DocumentValidation(document_id="empty-segment", source_file=".../doc.pdf")
+        )
+
+        result = write_validation_json(dv, str(tmp_path), "...", "0.4.0")
+
+        encoded_empty = encode_path_segment("...", empty_fallback="_")
+        expected = (
+            tmp_path
+            / "EXPORT"
+            / "VALIDATION"
+            / encoded_empty
+            / "doc.validation.json"
+        )
+        assert result is not None
+        assert os.path.normcase(result) == os.path.normcase(str(expected))
+        assert expected.is_file()
+
+    @pytest.mark.parametrize(
+        "source_file",
+        [
+            "matter/doc. .pdf",
+            "matter/photo. .jpg",
+        ],
+    )
+    def test_write_validation_json_matches_canonical_trailing_stem(
+        self, tmp_path, source_file,
+    ):
+        from ocr_distributed.ocr_utils import build_sidecar_base_name
+
+        dv = finalize_validation(
+            DocumentValidation(document_id="canonical", source_file=source_file)
+        )
+
+        result = write_validation_json(dv, str(tmp_path), "matter", "0.4.0")
+
+        assert result is not None
+        expected_name = (
+            f"{build_sidecar_base_name(os.path.basename(source_file))}.validation.json"
+        )
+        assert os.path.basename(result) == expected_name
+
+    def test_write_validation_json_rejects_realpath_prefix_collision(
+        self, tmp_path, monkeypatch,
+    ):
+        dv = finalize_validation(
+            DocumentValidation(document_id="prefix", source_file="matter/doc.pdf")
+        )
+        validation_dir = os.path.join(str(tmp_path), "EXPORT", "VALIDATION")
+        target_dir = os.path.join(validation_dir, "matter")
+        original_realpath = validation_module.os.path.realpath
+
+        def fake_realpath(path):
+            if os.path.normcase(path) == os.path.normcase(validation_dir):
+                return original_realpath(validation_dir)
+            if os.path.normcase(path) == os.path.normcase(target_dir):
+                return original_realpath(validation_dir) + "-outside"
+            return original_realpath(path)
+
+        monkeypatch.setattr(validation_module.os.path, "realpath", fake_realpath)
+
+        assert write_validation_json(
+            dv,
+            str(tmp_path),
+            "matter",
+            "0.4.0",
+        ) is None
 
     def test_write_validation_json_no_subfolder(self, tmp_path):
         dv = DocumentValidation(document_id="root_test", source_file="root_doc.pdf")

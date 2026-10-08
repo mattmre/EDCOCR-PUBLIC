@@ -1,4 +1,4 @@
-"""Tests for Job model alignment between API and coordinator.
+"""Tests for maintenance review: Job model alignment between API and coordinator.
 
 Verifies cross-reference fields and aligned shared fields exist in the
 API Job model (SQLAlchemy / SQLite).

@@ -15,24 +15,33 @@ services:
   ocr-worker:
     build:
       context: ..
-      dockerfile: coordinator/Dockerfile.worker
+      dockerfile: coordinator/Dockerfile.worker.gpu
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        SOURCE_TREE_SHA256: ${SOURCE_TREE_SHA256:-unknown}
     environment:
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:?Set CELERY_BROKER_URL to coordinator RabbitMQ}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:?Set CELERY_RESULT_BACKEND to coordinator Redis}
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to coordinator PostgreSQL}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
+      CELERY_TASK_SIGNING_KEY: ${CELERY_TASK_SIGNING_KEY:?Set CELERY_TASK_SIGNING_KEY in .env}
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY:?Set PII_ENCRYPTION_KEY in .env}
+      WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY:?Set WEBHOOK_SECRET_KEY in .env}
+      S3_PRESIGNED_TASK_KEY: ${S3_PRESIGNED_TASK_KEY:-}
       DJANGO_SETTINGS_MODULE: coordinator.settings
       DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-development}
       PRODUCTION_READINESS_ACK: ${PRODUCTION_READINESS_ACK:-false}
       NFS_ROOT: ${NFS_ROOT:-/shared}
       PYTHONPATH: /app:/app/coordinator
-      WORKER_QUEUES: ${WORKER_QUEUES:-ocr_gpu,cpu_general}
+      WORKER_QUEUES: ${WORKER_QUEUES:-ocr_gpu,cpu_general,nlp_general}
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
       # OCR settings (models pre-baked in Docker image for air-gapped deployment)
       FASTTEXT_MODEL_PATH: ${FASTTEXT_MODEL_PATH:-/app/models/lid.176.bin}
+      # R4-RC-15/51: drain budget must be < stop_grace_period (360s)
+      SHUTDOWN_DRAIN_TIMEOUT_SECONDS: ${SHUTDOWN_DRAIN_TIMEOUT_SECONDS:-300}
     command: >
       celery -A coordinator worker
-      -Q ${WORKER_QUEUES:-ocr_gpu,cpu_general}
+      -Q ${WORKER_QUEUES:-ocr_gpu,cpu_general,nlp_general}
       -c ${WORKER_CONCURRENCY:-4}
       --hostname worker@%h
       -l info
@@ -46,4 +55,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    # R4-RC-15/51: stop_grace must exceed SHUTDOWN_DRAIN_TIMEOUT_SECONDS (300).
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-360s}
     restart: unless-stopped

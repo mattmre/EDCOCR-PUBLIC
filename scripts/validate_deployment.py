@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Deployment validation pack for EDCOCR.
+"""Deployment validation pack for OCR_LOCAL.
 
-Validates a running EDCOCR deployment by checking health, submitting a
+Validates a running OCR_LOCAL deployment by checking health, submitting a
 test job, verifying output contracts, and checking schema compliance.
 
 Usage:
@@ -23,6 +23,13 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from schemas import OUTPUT_TYPES as EXPECTED_SCHEMA_TYPES  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -33,24 +40,6 @@ PROFILE_MULTI_GPU = "multi-gpu"
 PROFILE_KUBERNETES = "kubernetes"
 
 ALL_PROFILES = [PROFILE_SINGLE_NODE, PROFILE_MULTI_GPU, PROFILE_KUBERNETES]
-
-# All 14 expected schema types from schemas/__init__.py
-EXPECTED_SCHEMA_TYPES = (
-    "ocr_text",
-    "searchable_pdf",
-    "structure",
-    "entities",
-    "ner",
-    "extraction",
-    "classification",
-    "validation",
-    "handwriting",
-    "signature",
-    "vertical",
-    "custody",
-    "retrieval",
-    "output_manifest",
-)
 
 DEFAULT_TIMEOUT_SECONDS = 60
 POLL_INTERVAL_SECONDS = 2
@@ -130,6 +119,7 @@ def _have_requests() -> bool:
     """Check if the requests library is available."""
     try:
         import requests  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -343,7 +333,9 @@ def check_detailed_health(
         checks = body.get("checks", {})
         parts = [f"overall={overall}"]
         for name, info in checks.items():
-            sub_status = info.get("status", "unknown") if isinstance(info, dict) else str(info)
+            sub_status = (
+                info.get("status", "unknown") if isinstance(info, dict) else str(info)
+            )
             parts.append(f"{name}={sub_status}")
 
         # Profile-specific checks
@@ -432,21 +424,25 @@ def check_schema_retrieval(base_url: str, api_key: str) -> list[CheckResult]:
             )
             ms = (time.monotonic() - t0) * 1000
             if status != 200:
-                results.append(CheckResult(
-                    name=name,
-                    passed=False,
-                    detail=f"Expected 200, got {status}",
-                    duration_ms=round(ms, 1),
-                ))
+                results.append(
+                    CheckResult(
+                        name=name,
+                        passed=False,
+                        detail=f"Expected 200, got {status}",
+                        duration_ms=round(ms, 1),
+                    )
+                )
                 continue
 
             if not body or not isinstance(body, dict):
-                results.append(CheckResult(
-                    name=name,
-                    passed=False,
-                    detail="Response is not a valid JSON object",
-                    duration_ms=round(ms, 1),
-                ))
+                results.append(
+                    CheckResult(
+                        name=name,
+                        passed=False,
+                        detail="Response is not a valid JSON object",
+                        duration_ms=round(ms, 1),
+                    )
+                )
                 continue
 
             # Minimal JSON Schema validation: must have at least "type" or
@@ -455,28 +451,34 @@ def check_schema_retrieval(base_url: str, api_key: str) -> list[CheckResult]:
                 k in body for k in ("type", "$schema", "properties", "title")
             )
             if not has_schema_markers:
-                results.append(CheckResult(
-                    name=name,
-                    passed=False,
-                    detail="Response lacks JSON Schema markers (type/$schema/properties/title)",
-                    duration_ms=round(ms, 1),
-                ))
+                results.append(
+                    CheckResult(
+                        name=name,
+                        passed=False,
+                        detail="Response lacks JSON Schema markers (type/$schema/properties/title)",
+                        duration_ms=round(ms, 1),
+                    )
+                )
                 continue
 
-            results.append(CheckResult(
-                name=name,
-                passed=True,
-                detail=f"Valid schema: title={body.get('title', 'N/A')}",
-                duration_ms=round(ms, 1),
-            ))
+            results.append(
+                CheckResult(
+                    name=name,
+                    passed=True,
+                    detail=f"Valid schema: title={body.get('title', 'N/A')}",
+                    duration_ms=round(ms, 1),
+                )
+            )
         except Exception as e:
             ms = (time.monotonic() - t0) * 1000
-            results.append(CheckResult(
-                name=name,
-                passed=False,
-                detail=f"Error: {e}",
-                duration_ms=round(ms, 1),
-            ))
+            results.append(
+                CheckResult(
+                    name=name,
+                    passed=False,
+                    detail=f"Error: {e}",
+                    duration_ms=round(ms, 1),
+                )
+            )
     return results
 
 
@@ -535,41 +537,49 @@ def check_job_submission(
         ms = (time.monotonic() - t0) * 1000
     except Exception as e:
         ms = (time.monotonic() - t0) * 1000
-        results.append(CheckResult(
-            name="job_submit",
-            passed=False,
-            detail=f"Submission failed: {e}",
-            duration_ms=round(ms, 1),
-        ))
+        results.append(
+            CheckResult(
+                name="job_submit",
+                passed=False,
+                detail=f"Submission failed: {e}",
+                duration_ms=round(ms, 1),
+            )
+        )
         return results
 
     if status not in (200, 201, 202):
-        results.append(CheckResult(
-            name="job_submit",
-            passed=False,
-            detail=f"Expected 200/201/202, got {status}: {body}",
-            duration_ms=round(ms, 1),
-        ))
+        results.append(
+            CheckResult(
+                name="job_submit",
+                passed=False,
+                detail=f"Expected 200/201/202, got {status}: {body}",
+                duration_ms=round(ms, 1),
+            )
+        )
         return results
 
     job_id = None
     if body:
         job_id = body.get("job_id") or body.get("id")
     if not job_id:
-        results.append(CheckResult(
-            name="job_submit",
-            passed=False,
-            detail=f"No job_id in response: {body}",
-            duration_ms=round(ms, 1),
-        ))
+        results.append(
+            CheckResult(
+                name="job_submit",
+                passed=False,
+                detail=f"No job_id in response: {body}",
+                duration_ms=round(ms, 1),
+            )
+        )
         return results
 
-    results.append(CheckResult(
-        name="job_submit",
-        passed=True,
-        detail=f"Job submitted: {job_id}",
-        duration_ms=round(ms, 1),
-    ))
+    results.append(
+        CheckResult(
+            name="job_submit",
+            passed=True,
+            detail=f"Job submitted: {job_id}",
+            duration_ms=round(ms, 1),
+        )
+    )
 
     # --- Step 2: Poll for completion ---
     t0 = time.monotonic()
@@ -588,69 +598,81 @@ def check_job_submission(
 
     ms = (time.monotonic() - t0) * 1000
     if final_status == "completed":
-        results.append(CheckResult(
-            name="job_completion",
-            passed=True,
-            detail=f"Job completed in {ms / 1000:.1f}s",
-            duration_ms=round(ms, 1),
-        ))
+        results.append(
+            CheckResult(
+                name="job_completion",
+                passed=True,
+                detail=f"Job completed in {ms / 1000:.1f}s",
+                duration_ms=round(ms, 1),
+            )
+        )
     elif final_status == "failed":
-        results.append(CheckResult(
-            name="job_completion",
-            passed=False,
-            detail="Job failed",
-            duration_ms=round(ms, 1),
-        ))
+        results.append(
+            CheckResult(
+                name="job_completion",
+                passed=False,
+                detail="Job failed",
+                duration_ms=round(ms, 1),
+            )
+        )
         return results
     else:
-        results.append(CheckResult(
-            name="job_completion",
-            passed=False,
-            detail=f"Job did not complete within {timeout}s (status: {final_status})",
-            duration_ms=round(ms, 1),
-        ))
+        results.append(
+            CheckResult(
+                name="job_completion",
+                passed=False,
+                detail=f"Job did not complete within {timeout}s (status: {final_status})",
+                duration_ms=round(ms, 1),
+            )
+        )
         return results
 
     # --- Step 3: Verify output manifest ---
     t0 = time.monotonic()
     try:
-        s, manifest, _h = _http_get(
-            f"{base_url}/api/v1/jobs/{job_id}/outputs", api_key
-        )
+        s, manifest, _h = _http_get(f"{base_url}/api/v1/jobs/{job_id}/outputs", api_key)
         ms = (time.monotonic() - t0) * 1000
         if s != 200:
-            results.append(CheckResult(
-                name="job_output_manifest",
-                passed=False,
-                detail=f"Expected 200, got {s}",
-                duration_ms=round(ms, 1),
-            ))
+            results.append(
+                CheckResult(
+                    name="job_output_manifest",
+                    passed=False,
+                    detail=f"Expected 200, got {s}",
+                    duration_ms=round(ms, 1),
+                )
+            )
             return results
 
         if not manifest or "artifacts" not in manifest:
-            results.append(CheckResult(
-                name="job_output_manifest",
-                passed=False,
-                detail="Manifest missing 'artifacts' field",
-                duration_ms=round(ms, 1),
-            ))
+            results.append(
+                CheckResult(
+                    name="job_output_manifest",
+                    passed=False,
+                    detail="Manifest missing 'artifacts' field",
+                    duration_ms=round(ms, 1),
+                )
+            )
             return results
 
         artifact_types = [a.get("output_type") for a in manifest["artifacts"]]
-        results.append(CheckResult(
-            name="job_output_manifest",
-            passed=True,
-            detail=f"Found {len(artifact_types)} artifacts: {artifact_types}",
-            duration_ms=round(ms, 1),
-        ))
+        results.append(
+            CheckResult(
+                name="job_output_manifest",
+                passed=True,
+                detail=f"Found {len(artifact_types)} artifacts: {artifact_types}",
+                duration_ms=round(ms, 1),
+            )
+        )
     except Exception as e:
         ms = (time.monotonic() - t0) * 1000
-        results.append(CheckResult(
-            name="job_output_manifest",
-            passed=False,
-            detail=f"Manifest retrieval failed: {e}",
-            duration_ms=round(ms, 1),
-        ))
+        results.append(
+            CheckResult(
+                name="job_output_manifest",
+                passed=False,
+                detail=f"Manifest retrieval failed: {e}",
+                duration_ms=round(ms, 1),
+            )
+        )
 
     return results
 
@@ -736,9 +758,7 @@ def run_validation(
 
     # 6. Job submission (optional)
     if not skip_job_submit:
-        report.checks.extend(
-            check_job_submission(base_url, api_key, timeout=timeout)
-        )
+        report.checks.extend(check_job_submission(base_url, api_key, timeout=timeout))
 
     return report
 
@@ -751,7 +771,7 @@ def run_validation(
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
-        description="Validate a running EDCOCR deployment.",
+        description="Validate a running OCR_LOCAL deployment.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Profiles:\n"

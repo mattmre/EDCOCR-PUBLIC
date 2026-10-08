@@ -12,9 +12,9 @@ from ocr_local.translation.models import TranslationRequest
 from ocr_local.translation.policy import (
     PolicyDenied,
     compute_policy_hash,
-    load_tenant_policy,
+    get_tenant_policy,
 )
-from ocr_local.translation.router import select_engine
+from ocr_local.translation.router import _rank_candidates, select_engine
 
 TRANSLATION_BUNDLE_SCHEMA_VERSION = "translation-bundle-v1"
 
@@ -31,9 +31,9 @@ def translate_document_bundle(
 ) -> dict[str, Any]:
     """Translate a ``DocumentBundle`` into a schema-valid ``TranslationBundle``.
 
-    ``engine_id`` is optional.  Tests and local contract probes can pass
-    ``"passthrough"`` to exercise the existing dependency-free translation
-    stub; production callers can omit it and use the normal router.
+    ``engine_id`` is optional. Same-language contract probes may explicitly
+    select ``"passthrough"``; cross-language requests must resolve a real
+    eligible engine or fail closed.
     """
 
     if validate_input:
@@ -41,27 +41,50 @@ def translate_document_bundle(
 
     source_language = _source_language(document_bundle)
     source_spans = _source_spans_for_engine(document_bundle)
-    tenant_policy = load_tenant_policy(tenant_id)
+    tenant_policy = get_tenant_policy(tenant_id)
     policy_hash = compute_policy_hash(tenant_policy)
     chain = custody_chain or _NoopChain()
 
+    request = TranslationRequest(
+        src_lang=source_language,
+        tgt_lang=target_language,
+        tenant_id=tenant_id,
+        privilege_flag=bool(
+            document_bundle.get("privilege_flags", {}).get("privileged", False)
+        ),
+    )
     if engine_id is None:
-        request = TranslationRequest(
-            src_lang=source_language,
-            tgt_lang=target_language,
-            tenant_id=tenant_id,
-            privilege_flag=bool(
-                document_bundle.get("privilege_flags", {}).get("privileged", False)
-            ),
-        )
-        try:
-            engine = select_engine(request, tenant_policy, chain)
-        except PolicyDenied as exc:
-            if exc.reason_code != ReasonCode.UNSUPPORTED_LANGUAGE:
-                raise
-            engine = get_engine("passthrough")()
-    else:
+        engine = select_engine(request, tenant_policy, chain)
+    elif engine_id == "passthrough":
+        if source_language != target_language:
+            raise PolicyDenied(
+                ReasonCode.UNSUPPORTED_LANGUAGE,
+                "passthrough is valid only when source and target languages match",
+            )
         engine = get_engine(engine_id)()
+    else:
+        engine_cls = get_engine(engine_id)
+        eligible_ids = {
+            candidate.capability.id
+            for candidate in _rank_candidates(request, tenant_policy)
+        }
+        capability = engine_cls.capability
+        if engine_id not in eligible_ids:
+            raise PolicyDenied(
+                ReasonCode.TENANT_POLICY,
+                f"forced engine {engine_id!r} is not eligible under tenant policy",
+            )
+        if capability.is_cloud and request.privilege_flag:
+            raise PolicyDenied(
+                ReasonCode.PRIVILEGE_BLOCKED,
+                "Privilege-flagged document cannot use a forced cloud engine",
+            )
+        if capability.is_cloud and tenant_policy.residency_region:
+            raise PolicyDenied(
+                ReasonCode.RESIDENCY_VIOLATION,
+                "Tenant residency policy blocks a forced cloud engine",
+            )
+        engine = engine_cls()
 
     translated = engine.translate_spans(
         source_spans,
@@ -104,11 +127,7 @@ def translate_document_bundle(
         ),
         "artifact_manifest": _artifact_manifest(source_bundle_sha256),
         "glossary_hits": sorted(
-            {
-                hit
-                for span in translated_spans
-                for hit in span.get("glossary_hits", [])
-            }
+            {hit for span in translated_spans for hit in span.get("glossary_hits", [])}
         ),
     }
     bundle["model_provenance"]["tenant_policy_hash"] = policy_hash
@@ -138,7 +157,9 @@ def _source_language(document_bundle: Mapping[str, Any]) -> str:
     return "und"
 
 
-def _source_spans_for_engine(document_bundle: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _source_spans_for_engine(
+    document_bundle: Mapping[str, Any],
+) -> list[dict[str, Any]]:
     return [
         {
             "span_id": span["span_id"],
@@ -162,7 +183,9 @@ def _translated_spans(
     source_by_id = {span["span_id"]: span for span in source_spans}
     out: list[dict[str, Any]] = []
     for index, translated_span in enumerate(translated):
-        span_id = _span_value(translated_span, "span_id", source_spans[index]["span_id"])
+        span_id = _span_value(
+            translated_span, "span_id", source_spans[index]["span_id"]
+        )
         source = source_by_id.get(span_id, source_spans[index])
         out.append(
             {
@@ -190,9 +213,7 @@ def _translated_spans(
                     "target_language",
                     target_language,
                 ),
-                "confidence": float(
-                    _span_value(translated_span, "confidence", 1.0)
-                ),
+                "confidence": float(_span_value(translated_span, "confidence", 1.0)),
                 "quality_score": _span_value(translated_span, "quality_score", None),
                 "engine_id": _span_value(translated_span, "engine_id", engine_id),
                 "glossary_hits": list(
@@ -215,7 +236,12 @@ def _provider_family(engine_id: str) -> str:
     lowered = engine_id.lower()
     if engine_id == "passthrough":
         return "passthrough"
-    if "ct2" in lowered or "opus" in lowered or "nllb" in lowered or "madlad" in lowered:
+    if (
+        "ct2" in lowered
+        or "opus" in lowered
+        or "nllb" in lowered
+        or "madlad" in lowered
+    ):
         return "ct2_nmt"
     if "cloud" in lowered or "vertex" in lowered or "gemini" in lowered:
         return "llm_cloud"
@@ -228,7 +254,9 @@ def _model_provenance(engine: Any) -> dict[str, Any]:
     provenance = dict(engine.model_provenance())
     provenance.setdefault("weights_sha256", "unknown")
     provenance.setdefault("runtime", "ocr_local.translation")
-    provenance.setdefault("runtime_version", engine.runtime_info().get("version", "unknown"))
+    provenance.setdefault(
+        "runtime_version", engine.runtime_info().get("version", "unknown")
+    )
     return provenance
 
 

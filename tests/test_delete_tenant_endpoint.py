@@ -13,6 +13,7 @@ Validates that:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -20,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.database import (
+    Batch,
     Job,
     TenantApiKey,
     UsageRecord,
@@ -214,7 +216,9 @@ class TestLitigationHold:
         )
         assert resp.status_code == 409
 
-    def test_litigation_hold_unset_allows_purge(self, platform_admin_client, monkeypatch):
+    def test_litigation_hold_unset_allows_purge(
+        self, platform_admin_client, monkeypatch
+    ):
         """When LITIGATION_HOLD is unset, purge proceeds normally."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
         client, key, tenant = platform_admin_client
@@ -281,7 +285,9 @@ class TestSuccessfulPurge:
         remaining = session.query(Job).filter(Job.tenant_id == tid).count()
         assert remaining == 0
 
-    def test_purge_deletes_usage_records(self, platform_admin_client, session, monkeypatch):
+    def test_purge_deletes_usage_records(
+        self, platform_admin_client, session, monkeypatch
+    ):
         """Purge removes all usage records for the tenant."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
         client, key, tenant = platform_admin_client
@@ -329,9 +335,7 @@ class TestSuccessfulPurge:
         )
 
         pre_count = (
-            session.query(TenantApiKey)
-            .filter(TenantApiKey.tenant_id == tid)
-            .count()
+            session.query(TenantApiKey).filter(TenantApiKey.tenant_id == tid).count()
         )
         assert pre_count >= 3  # at least admin key + 2 extras
 
@@ -346,13 +350,13 @@ class TestSuccessfulPurge:
         # Verify keys are gone
         session.expire_all()
         remaining = (
-            session.query(TenantApiKey)
-            .filter(TenantApiKey.tenant_id == tid)
-            .count()
+            session.query(TenantApiKey).filter(TenantApiKey.tenant_id == tid).count()
         )
         assert remaining == 0
 
-    def test_purge_removes_tenant_record(self, platform_admin_client, session, monkeypatch):
+    def test_purge_removes_tenant_record(
+        self, platform_admin_client, session, monkeypatch
+    ):
         """After purge, the tenant record no longer exists in the database."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
         client, key, tenant = platform_admin_client
@@ -469,6 +473,49 @@ class TestPurgeTenantDataUnit:
         result = purge_tenant_data("tenant_000000000000", session=session)
         assert result is None
 
+    def test_purge_signals_corrupt_legacy_batch_settings(
+        self, sample_tenant, session, monkeypatch, caplog
+    ):
+        """A legacy batch with unreadable settings is skipped WITH signal."""
+        import json
+
+        from api.tenant_manager import purge_tenant_data
+
+        monkeypatch.delenv("LITIGATION_HOLD", raising=False)
+        tid = sample_tenant.tenant_id
+        session.add_all(
+            [
+                Batch(
+                    batch_id="legacy-corrupt-1",
+                    tenant_id=None,
+                    settings_json="{}",
+                ),
+                Batch(
+                    batch_id="legacy-good-1",
+                    tenant_id=None,
+                    settings_json=json.dumps({"tenant_id": tid}),
+                ),
+            ]
+        )
+        session.commit()
+
+        def _flaky_settings(self):
+            if self.batch_id == "legacy-corrupt-1":
+                raise ValueError("corrupt settings blob")
+            return {"tenant_id": tid}
+
+        with patch.object(Batch, "settings", new=property(_flaky_settings)):
+            with caplog.at_level(logging.WARNING, logger="api.tenant_manager"):
+                result = purge_tenant_data(tid, session=session)
+
+        assert result["deleted"]["legacy_batches_skipped"] == 1
+        assert any(
+            "legacy-corrupt-1" in record.getMessage() for record in caplog.records
+        )
+        # Valid row purged normally; corrupt row left in place, not silently dropped.
+        assert session.get(Batch, "legacy-good-1") is None
+        assert session.get(Batch, "legacy-corrupt-1") is not None
+
     def test_purge_removes_all_data(self, sample_tenant, session, monkeypatch):
         """purge_tenant_data removes jobs, usage, keys, and tenant."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
@@ -510,3 +557,39 @@ class TestPurgeTenantDataUnit:
 
         tenant = session.get(Tenant, sample_tenant.tenant_id)
         assert tenant is None
+
+    def test_filesystem_authority_failure_retains_sql_rows_and_fails_closed(
+        self,
+        sample_tenant,
+        session,
+        monkeypatch,
+    ):
+        """A strict FS refusal fences the tenant without deleting its job row."""
+        monkeypatch.delenv("LITIGATION_HOLD", raising=False)
+        from api.database import Tenant
+        from api.tenant_manager import purge_tenant_data
+
+        job = Job(
+            job_id="fs-authority-failure-job",
+            status="completed",
+            source_file="scan.pdf",
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            tenant_id=sample_tenant.tenant_id,
+        )
+        session.add(job)
+        session.commit()
+        monkeypatch.setattr(
+            "api.tenant_manager._purge_fs_job_artifacts",
+            lambda **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("filesystem authority changed")
+            ),
+        )
+
+        with pytest.raises(RuntimeError, match="filesystem authority changed"):
+            purge_tenant_data(sample_tenant.tenant_id, session=session)
+
+        session.expire_all()
+        failed_tenant = session.get(Tenant, sample_tenant.tenant_id)
+        assert failed_tenant is not None
+        assert failed_tenant.status == "purge_failed"
+        assert session.get(Job, job.job_id) is not None

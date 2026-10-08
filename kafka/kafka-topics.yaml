@@ -1,4 +1,4 @@
-# Kafka topic definitions for EDCOCR event bus
+# Kafka topic definitions for OCR_LOCAL event bus
 #
 # Each topic maps to an EventType in api/event_bus.py.
 # Partition counts are tuned for typical OCR pipeline throughput;

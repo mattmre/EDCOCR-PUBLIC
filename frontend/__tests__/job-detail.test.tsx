@@ -5,7 +5,7 @@ import { JobProgress } from "@/components/JobProgress";
 import { Tabs } from "@/components/Tabs";
 import type { Job, JobWSMessage } from "@/lib/types";
 
-vi.mock("next/link", => ({
+vi.mock("next/link", () => ({
   __esModule: true,
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
     <a href={href} {...rest}>
@@ -34,8 +34,8 @@ function jobFixture(partial: Partial<Job> = {}): Job {
   };
 }
 
-describe("JobDetailHeader", => {
-  it("shows the job_id, status, and source filename", => {
+describe("JobDetailHeader", () => {
+  it("shows the job_id, status, and source filename", () => {
     render(<JobDetailHeader job={jobFixture()} />);
     expect(screen.getByTestId("job-detail-id")).toHaveTextContent("job_abcdef012345");
     expect(screen.getByTestId("status-badge")).toHaveTextContent("processing");
@@ -43,7 +43,7 @@ describe("JobDetailHeader", => {
   });
 });
 
-describe("JobProgress", => {
+describe("JobProgress", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -51,7 +51,7 @@ describe("JobProgress", => {
     vi.useRealTimers();
   });
 
-  it("renders REST progress when no WS message has arrived yet", => {
+  it("renders REST progress when no WS message has arrived yet", () => {
     render(
       <JobProgress
         job={jobFixture()}
@@ -64,7 +64,7 @@ describe("JobProgress", => {
     expect(screen.getByTestId("progress-percent")).toHaveTextContent("25.0%");
   });
 
-  it("updates pages and percent when a WS progress frame is supplied", => {
+  it("updates pages and percent when a WS progress frame is supplied", () => {
     const msg: JobWSMessage = {
       type: "progress",
       job_id: "job_abcdef012345",
@@ -85,7 +85,7 @@ describe("JobProgress", => {
     expect(screen.getByTestId("progress-percent")).toHaveTextContent("60.0%");
   });
 
-  it("shows the disconnect banner and a reconnect button when the socket is closed", => {
+  it("shows the disconnect banner and a reconnect button when the socket is closed", () => {
     const onReconnect = vi.fn();
     render(
       <JobProgress
@@ -100,7 +100,7 @@ describe("JobProgress", => {
     expect(onReconnect).toHaveBeenCalledOnce();
   });
 
-  it("hides the reconnect button on a terminal job state", => {
+  it("hides the reconnect button on a terminal job state", () => {
     render(
       <JobProgress
         job={jobFixture({ status: "completed" })}
@@ -113,8 +113,8 @@ describe("JobProgress", => {
   });
 });
 
-describe("Tabs", => {
-  it("switches the visible panel when the tab is clicked", async => {
+describe("Tabs", () => {
+  it("switches the visible panel when the tab is clicked", async () => {
     render(
       <Tabs
         tabs={[

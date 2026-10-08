@@ -1,10 +1,10 @@
-"""Custom exception hierarchy for the EDCOCR SDK."""
+"""Custom exception hierarchy for the OCR_LOCAL SDK."""
 
 from __future__ import annotations
 
 
 class OCRLocalError(Exception):
-    """Base exception for all EDCOCR SDK errors.
+    """Base exception for all OCR_LOCAL SDK errors.
 
     Attributes:
         status_code: HTTP status code that triggered the error (0 if not HTTP-related).

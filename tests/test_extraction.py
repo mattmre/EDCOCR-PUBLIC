@@ -682,21 +682,11 @@ class TestWriteJson:
         assert os.path.isdir(expected_dir)
 
     def test_path_traversal_protection(self, tmp_path):
-        """Path traversal via '..' is neutralized by _sanitize_path_segment.
-
-        The sanitizer strips '.' characters from path segments, turning '..'
-        into '' which is filtered out. The result stays safely inside the
-        extraction directory. This test verifies the output is contained
-        within EXPORT/EXTRACTION/ regardless of traversal attempts.
-        """
+        """Path traversal tokens are rejected."""
         doc = self._make_finalized_doc()
-        extraction_root = os.path.join(str(tmp_path), "EXPORT", "EXTRACTION")
         result = write_extraction_json(doc, str(tmp_path), "../../etc", "0.5.0")
-        # Sanitizer neutralizes ".." so the file is created safely inside
-        # EXPORT/EXTRACTION (possibly in an "etc" subfolder).
-        assert result is not None
-        resolved = os.path.realpath(result)
-        assert resolved.startswith(os.path.realpath(extraction_root))
+        assert result is None
+        assert not (tmp_path / "etc").exists()
 
     def test_empty_subfolder(self, tmp_path):
         doc = self._make_finalized_doc()

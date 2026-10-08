@@ -6,11 +6,11 @@ for JobAdmin, WorkerAdmin, PageResultAdmin, and CustodyEventAdmin.
 Run with: cd coordinator && python -m pytest jobs/tests/test_admin.py -v
 """
 
-
 from unittest.mock import patch
 
 from django.contrib.admin.sites import AdminSite
 from django.test import RequestFactory, TestCase
+from django.utils import timezone
 
 from jobs.admin import (
     CustodyEventAdmin,
@@ -19,7 +19,7 @@ from jobs.admin import (
     PageResultInline,
     WorkerAdmin,
 )
-from jobs.models import CustodyEvent, Job, Worker
+from jobs.models import CustodyEvent, Job, TaskDispatchOutbox, Worker
 
 
 class TestJobAdmin(TestCase):
@@ -93,17 +93,39 @@ class TestJobAdmin(TestCase):
     def _make_admin_request(self):
         """Create a request with messages middleware support for admin actions."""
         from django.contrib.messages.storage.fallback import FallbackStorage
+
         request = self.factory.post("/admin/")
-        request.user = type("User", (), {"has_perm": lambda self, x: True})()
+        request.user = type(
+            "User",
+            (),
+            {
+                "has_perm": lambda self, x: True,
+                "is_staff": True,
+                "is_superuser": True,
+            },
+        )()
         # Attach messages storage so message_user() works
         setattr(request, "session", "session")
         setattr(request, "_messages", FallbackStorage(request))
         return request
 
     def test_retry_failed_jobs_action(self):
-        j1 = Job.objects.create(source_file="/a.pdf", status="failed", error_message="err")
+        j1 = Job.objects.create(
+            source_file="/a.pdf",
+            status="failed",
+            error_message="err",
+            custody_published_at=timezone.now(),
+        )
         j2 = Job.objects.create(source_file="/b.pdf", status="completed")
-        j3 = Job.objects.create(source_file="/c.pdf", status="failed", error_message="err2")
+        j3 = Job.objects.create(
+            source_file="/c.pdf", status="failed", error_message="err2"
+        )
+        old_row = TaskDispatchOutbox.objects.create(
+            job=j1,
+            stage="root_processing",
+            generation="0",
+            task_name="jobs.tasks.process_document",
+        )
         request = self._make_admin_request()
         queryset = Job.objects.all()
         self.admin.retry_failed_jobs(request, queryset)
@@ -112,8 +134,18 @@ class TestJobAdmin(TestCase):
         j3.refresh_from_db()
         assert j1.status == "submitted"
         assert j1.error_message == ""
+        assert j1.custody_published_at is None
         assert j2.status == "completed"  # Not changed
         assert j3.status == "submitted"
+        old_row.refresh_from_db()
+        assert old_row.status == TaskDispatchOutbox.Status.DEAD
+        ingest = TaskDispatchOutbox.objects.get(
+            job=j1,
+            stage="ingest_document",
+            generation=str(j1.dispatch_generation),
+        )
+        assert ingest.status == TaskDispatchOutbox.Status.PENDING
+        assert ingest.task_name == "jobs.tasks.ingest_document"
 
     def test_cancel_running_jobs_action(self):
         j1 = Job.objects.create(source_file="/a.pdf", status="processing")
@@ -194,8 +226,10 @@ class TestCustodyEventAdmin(TestCase):
     def test_event_hash_short_with_hash(self):
         job = Job.objects.create(source_file="/test.pdf")
         event = CustodyEvent.objects.create(
-            document_id="d1", job=job, event_type="test",
-            event_hash="abcdef1234567890abcdef1234567890",
+            document_id="d1",
+            job=job,
+            event_type="test",
+            event_hash="abcdef1234567890abcdef1234567890",  # pragma: allowlist secret
         )
         result = self.admin.event_hash_short(event)
         assert result == "abcdef123456..."
@@ -203,7 +237,9 @@ class TestCustodyEventAdmin(TestCase):
     def test_event_hash_short_empty(self):
         job = Job.objects.create(source_file="/test.pdf")
         event = CustodyEvent.objects.create(
-            document_id="d1", job=job, event_type="test",
+            document_id="d1",
+            job=job,
+            event_type="test",
             event_hash="",
         )
         result = self.admin.event_hash_short(event)
@@ -242,8 +278,17 @@ class TestWorkerAdminActions(TestCase):
 
     def _make_admin_request(self):
         from django.contrib.messages.storage.fallback import FallbackStorage
+
         request = self.factory.post("/admin/")
-        request.user = type("User", (), {"has_perm": lambda self, x: True})()
+        request.user = type(
+            "User",
+            (),
+            {
+                "has_perm": lambda self, x: True,
+                "is_staff": True,
+                "is_superuser": True,
+            },
+        )()
         setattr(request, "session", "session")
         setattr(request, "_messages", FallbackStorage(request))
         return request
@@ -292,9 +337,7 @@ class TestWorkerAdminActions(TestCase):
 
     def test_drain_workers_no_queues_still_drains(self):
         """Worker with empty queues list should still be set to draining."""
-        Worker.objects.create(
-            hostname="w1", status=Worker.Status.ONLINE, queues=[]
-        )
+        Worker.objects.create(hostname="w1", status=Worker.Status.ONLINE, queues=[])
 
         request = self._make_admin_request()
         qs = Worker.objects.all()
@@ -310,13 +353,19 @@ class TestWorkerAdminActions(TestCase):
         request = self._make_admin_request()
         qs = Worker.objects.all()
         with patch("coordinator.celery.app") as mock_app:
-            mock_app.control.cancel_consumer.side_effect = Exception("connection refused")
+            mock_app.control.cancel_consumer.side_effect = Exception(
+                "connection refused"
+            )
             # Should not raise
             self.admin.drain_workers(request, qs)
 
     def test_mark_workers_offline(self):
-        Worker.objects.create(hostname="w1", status=Worker.Status.ONLINE, current_task_id="t1")
-        Worker.objects.create(hostname="w2", status=Worker.Status.DRAINING, current_task_id="t2")
+        Worker.objects.create(
+            hostname="w1", status=Worker.Status.ONLINE, current_task_id="t1"
+        )
+        Worker.objects.create(
+            hostname="w2", status=Worker.Status.DRAINING, current_task_id="t2"
+        )
         Worker.objects.create(hostname="w3", status=Worker.Status.OFFLINE)
 
         request = self._make_admin_request()
@@ -335,7 +384,7 @@ class TestWorkerAdminActions(TestCase):
         request = self._make_admin_request()
         qs = Worker.objects.all()
         with patch("coordinator.celery.app") as mock_app:
-            mock_app.control.ping.return_value = [{"w1": {"ok": "pong"}}]
+            mock_app.control.ping.return_value = [{"cpu-worker@w1": {"ok": "pong"}}]
             self.admin.ping_workers(request, qs)
 
         # Check message was set (1 responsive, 1 unresponsive)
@@ -356,7 +405,7 @@ class TestWorkerAdminActions(TestCase):
         request = self._make_admin_request()
         qs = Worker.objects.all()
         with patch("coordinator.celery.app") as mock_app:
-            mock_app.control.ping.return_value = [{"w1": {"ok": "pong"}}]
+            mock_app.control.ping.return_value = [{"worker@w1": {"ok": "pong"}}]
             self.admin.ping_workers(request, qs)
 
         w1 = Worker.objects.get(hostname="w1")

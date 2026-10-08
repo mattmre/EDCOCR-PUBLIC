@@ -87,9 +87,27 @@ def build_video_frame_plan(
     )
     stride_frames = max(1, int(round(normalized_seconds * _normalize_fps(fps))))
 
-    indices = list(range(0, frame_count, stride_frames))
+    # R4-RC-09: never materialize list(range(0, frame_count, ...)) for huge
+    # containers — build at most max_frames+1 candidate indices first.
+    if frame_count <= 0:
+        return []
     last_frame = frame_count - 1
-    if indices[-1] != last_frame:
+    # Cap candidate generation: take roughly max_frames steps across the file.
+    # Using a larger stride when the naive stride would still explode memory.
+    max_candidates = max(1, int(normalized_max_frames) * 4)
+    naive_count = (frame_count + stride_frames - 1) // stride_frames
+    effective_stride = stride_frames
+    if naive_count > max_candidates:
+        effective_stride = max(
+            stride_frames,
+            max(1, frame_count // max_candidates),
+        )
+    indices: list[int] = []
+    idx = 0
+    while idx < frame_count and len(indices) < max_candidates:
+        indices.append(idx)
+        idx += effective_stride
+    if not indices or indices[-1] != last_frame:
         indices.append(last_frame)
     return _downsample_indices(indices, normalized_max_frames)
 
@@ -188,7 +206,9 @@ def iter_video_frames(
             capture.set(cv2.CAP_PROP_POS_FRAMES, float(frame_index))
             ok, frame = capture.read()
             if not ok or frame is None or getattr(frame, "size", 0) == 0:
-                raise RuntimeError(f"Failed to decode video frame {frame_index} from {path}")
+                raise RuntimeError(
+                    f"Failed to decode video frame {frame_index} from {path}"
+                )
             yield _frame_to_pil(frame)
     finally:
         capture.release()

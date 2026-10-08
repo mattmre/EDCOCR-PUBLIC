@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Form / Component-Piece Detection Sidecar",
+  "description": "Deterministic detection of form fields (key->value pairs with geometry) and checkboxes. Forensic-safe: deterministic:true, advisory:false.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "document_id",
+    "source_file",
+    "deterministic",
+    "advisory",
+    "processing",
+    "document_summary",
+    "pages"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "document_id": { "type": "string" },
+    "source_file": { "type": "string" },
+    "deterministic": { "const": true },
+    "advisory": { "const": false },
+    "processing": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["pipeline_version", "timestamp"],
+      "properties": {
+        "pipeline_version": { "type": "string" },
+        "timestamp": { "type": "string" }
+      }
+    },
+    "document_summary": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["field_count", "checkbox_count"],
+      "properties": {
+        "field_count": { "type": "integer", "minimum": 0 },
+        "checkbox_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["page_num", "fields"],
+        "properties": {
+          "page_num": { "type": "integer", "minimum": 1 },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["key_text", "field_type"],
+              "properties": {
+                "key_text": { "type": "string" },
+                "field_type": { "type": "string", "enum": ["text", "checkbox"] },
+                "value_text": { "type": "string" },
+                "checked": { "type": ["boolean", "null"] },
+                "key_bbox": { "type": ["array", "null"], "items": { "type": "number" } },
+                "value_bbox": { "type": ["array", "null"], "items": { "type": "number" } },
+                "confidence": { "type": "number" },
+                "page_num": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

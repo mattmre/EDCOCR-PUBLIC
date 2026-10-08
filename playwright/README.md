@@ -1,6 +1,6 @@
 # Playwright Scaffold
 
-This directory contains the first Playwright scaffold for EDCOCR.
+This directory contains the first Playwright scaffold for OCR_LOCAL.
 
 ## Current Scope
 
@@ -29,10 +29,18 @@ Set these before running any suite:
   - Example: `http://127.0.0.1:8000`
 - `PLAYWRIGHT_COORDINATOR_BASE_URL`
   - Example: `http://127.0.0.1:8001`
+- `PLAYWRIGHT_FRONTEND_BASE_URL`
+  - Optional external Next operator console base URL (for example
+    `http://127.0.0.1:3100`). When set, Playwright uses that target and does
+    not start a local frontend webServer.
+- `PLAYWRIGHT_AUTO_FRONTEND`
+  - Optional. Set to `true` to auto-provision `frontend/` via Playwright
+    `webServer` on `http://127.0.0.1:3100` when `PLAYWRIGHT_FRONTEND_BASE_URL`
+    is unset. This is the canonical local operator-console gate.
 - `PLAYWRIGHT_OCR_API_KEY`
   - Optional. Used for API routes that require OCR API auth.
 - `PLAYWRIGHT_FEATURE_FLAGS_API_KEY`
-  - Optional. Used for . This may be
+  - Optional. Used for Phase 7 transform/stamp execution coverage. This may be
     the legacy OCR API key or a seeded tenant/platform-admin key.
 - `PLAYWRIGHT_EXPECT_TRANSFORMS_ENABLED`
   - Optional. Explicitly declares whether the target API is running with
@@ -50,11 +58,13 @@ Set these before running any suite:
   - Optional. Explicitly declares whether coordinator metrics endpoints require
     auth in the target environment.
 - `PLAYWRIGHT_FEATURE_SAMPLE_INPUT_PATH`
-  - Optional. Server-visible input PDF path for execution requests.
+  - Optional. Server-visible input PDF path for Phase 7 transform/stamp
+    execution requests.
 - `PLAYWRIGHT_FEATURE_OUTPUT_DIR`
-  - Optional. Server-visible output directory for execution requests.
+  - Optional. Server-visible output directory for Phase 7 transform/stamp
+    execution requests.
 - `PLAYWRIGHT_MULTITENANCY_PLATFORM_ADMIN_KEY`
-  - Optional. Enables live multi-tenancy admin workflow coverage for .
+  - Optional. Enables live multi-tenancy admin workflow coverage for Phase 7.
 - `PLAYWRIGHT_METRICS_API_KEY`
   - Optional. Reserved for coordinator metrics coverage.
 - `PLAYWRIGHT_DJANGO_ADMIN_USER`
@@ -93,6 +103,36 @@ npm run pw:test:ops
 npm run pw:test:smoke
 npm run pw:test
 ```
+
+### Operator console (canonical local mode)
+
+Auto-manage the Next app under `frontend/` and run only the operator-console
+project. Install frontend deps once (`npm ci --prefix frontend` or
+`npm install --prefix frontend`) before the first run.
+
+```bash
+# POSIX
+PLAYWRIGHT_AUTO_FRONTEND=true npm run pw:test:operator-console
+
+# PowerShell
+$env:PLAYWRIGHT_AUTO_FRONTEND="true"; npm run pw:test:operator-console
+```
+
+### Operator console (external URL mode)
+
+Point at an already-running console and skip local webServer provisioning:
+
+```bash
+# POSIX
+PLAYWRIGHT_FRONTEND_BASE_URL=http://127.0.0.1:3100 npm run pw:test:operator-console
+
+# PowerShell
+$env:PLAYWRIGHT_FRONTEND_BASE_URL="http://127.0.0.1:3100"; npm run pw:test:operator-console
+```
+
+Authenticated operator-console coverage uses Playwright route interception
+against the frontend's default FastAPI origin (`http://localhost:8000`). It
+mocks transport only; it does not alter frontend product code.
 
 Generate a normalized markdown and JSON summary from a completed Playwright run:
 
@@ -138,7 +178,9 @@ PLAYWRIGHT_DJANGO_ADMIN_USER=playwright-admin
 PLAYWRIGHT_DJANGO_ADMIN_PASSWORD=playwright-admin-pass
 ```
 
-### The , stamps, and multi-tenancy admin routes.
+### Phase 7 Feature-Flag Matrix Bootstrapping
+
+The Phase 7 suite covers transforms, stamps, and multi-tenancy admin routes.
 Declare the expected server-side feature state explicitly before running it:
 
 ```bash
@@ -167,7 +209,9 @@ PLAYWRIGHT_MULTITENANCY_PLATFORM_ADMIN_KEY=<seeded-api-key>
 PLAYWRIGHT_FEATURE_FLAGS_API_KEY=<seeded-api-key>
 ```
 
-### The , timeout override persistence, and
+### Phase 8 Operational Matrix Bootstrapping
+
+The Phase 8 suite covers auth policy, timeout override persistence, and
 coordinator metrics/prometheus auth behavior.
 
 Declare the expected auth posture explicitly:
@@ -183,7 +227,7 @@ If coordinator metrics auth is enabled, also set:
 PLAYWRIGHT_METRICS_API_KEY=<metrics-api-key>
 ```
 
-, rate-limit burst, and failover
+Phase 8 intentionally defers IP-allowlist, rate-limit burst, and failover
 checks until a more controlled orchestration harness is available.
 
 ## Artifact Retention
@@ -200,17 +244,21 @@ checks until a more controlled orchestration harness is available.
 - Request coverage now includes upload submit/list/status/result/retry/cancel
   lifecycle contracts, while completed-artifact assertions remain deferred until
   a more controlled local processing environment is available.
-- WebSocket message flow. Webhook delivery itself remains deferred to a later
+- Phase 6 async coverage now includes batch request contracts and browser-side
+  WebSocket message flow. Webhook delivery itself remains deferred to a later
   controlled harness, but submit-time validation is covered.
-- can distinguish "feature intentionally disabled" from "feature not configured
+- Phase 7 feature-flag coverage uses explicit expectation env vars so the suite
+  can distinguish "feature intentionally disabled" from "feature not configured
   for this run."
-- metrics posture, and currently limits itself to deterministic request-level
+- Phase 8 ops coverage uses the same explicit expectation pattern for auth and
+  metrics posture, and currently limits itself to deterministic request-level
   checks rather than topology-dependent failover or allowlist scenarios.
 - Seeded admin action coverage is limited to deterministic actions in the local
   coordinator environment; broker-dependent worker actions remain deferred.
-- `.github/workflows/playwright-pr.yml`
-  that always uploads artifacts and emits a normalized markdown summary. Missing
-  environment configuration is reported as `BLOCKED`, not silently green.
-- `scripts/run_phase8_release_gate.py` with staged Playwright
+- Phase 9 adds a dedicated PR workflow in `.github/workflows/playwright-pr.yml`
+  that always uploads artifacts and emits a normalized markdown summary. The
+  operator-console gate runs with `PLAYWRIGHT_AUTO_FRONTEND=true` and local
+  `frontend/` provisioning; it does not depend on repository URL variables.
+- Phase 10 extends `scripts/run_phase8_release_gate.py` with staged Playwright
   policy levels so release gating can progress from advisory to strict without
   rewriting the gate wrapper.

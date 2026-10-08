@@ -24,11 +24,11 @@ def _isolate_db(tmp_path):
         "OCR_SOURCE_DIR": str(source),
         "OCR_API_KEY": operator_placeholder,
         "API_DB_PATH": db_file,
-    }), \
-         patch("api.config.DB_PATH", db_file), \
-         patch("api.database.DB_PATH", db_file), \
-         patch("api.config.SOURCE_FOLDER", str(source)), \
-         patch("api.config.OUTPUT_FOLDER", str(output)), \
+    }),\
+         patch("api.config.DB_PATH", db_file),\
+         patch("api.database.DB_PATH", db_file),\
+         patch("api.config.SOURCE_FOLDER", str(source)),\
+         patch("api.config.OUTPUT_FOLDER", str(output)),\
          patch("api.auth.OCR_API_KEY", "test-key"):
         reset_engine()
         get_engine(db_file)
@@ -73,6 +73,45 @@ class TestBasicHealthUnchanged:
 
 
 class TestDetailedHealth:
+    def test_drain_counts_queued_jobs_and_cancelled_writers(self, client):
+        from api.database import Job, get_session_factory
+
+        with get_session_factory()() as session:
+            session.add_all([
+                Job(job_id="job_drain_queued", source_file="owned.pdf", status="submitted"),
+                Job(job_id="job_drain_cancelled", source_file="owned.pdf", status="cancelled", pid=-1),
+                Job(job_id="job_drain_done", source_file="owned.pdf", status="completed"),
+            ])
+            session.commit()
+        response = client.get("/api/v1/health/detailed")
+        snapshot = response.json()["drain"]
+        assert snapshot["scope"] == "global"
+        assert snapshot["nonterminal_jobs"] == 1
+        assert snapshot["pipeline_writers"] == 1
+        # Periodic reconciliation can be active during this DB fixture.
+        assert snapshot["background_writers"] >= 0
+
+    def test_drain_hidden_without_global_or_tenant_authority(self, client):
+        with patch("api.config.ENABLE_MULTITENANCY", True), patch(
+            "api.authz.is_platform_admin", return_value=False
+        ):
+            response = client.get("/api/v1/health/detailed")
+        assert response.json()["drain"] is None
+
+    def test_terminal_database_rows_do_not_hide_manager_finalization(self, client):
+        from api.job_manager import get_manager
+
+        queue = get_manager()._priority_queue
+        # Reserve a finalization slot without enqueuing a runnable OCR job.
+        with queue._lock:
+            queue._active += 1
+        try:
+            snapshot = client.get("/api/v1/health/detailed").json()["drain"]
+            assert snapshot["nonterminal_jobs"] == 0
+            assert snapshot["manager_tasks"] == 1
+        finally:
+            queue.done()
+
     def test_detailed_returns_200(self, client):
         r = client.get("/api/v1/health/detailed")
         assert r.status_code == 200
@@ -138,10 +177,10 @@ class TestDetailedHealth:
 
     def test_detailed_status_healthy_when_all_pass(self, client):
         from api.models import SubsystemCheck
-        with patch("api.routers.health._check_database") as mock_db, \
-             patch("api.routers.health._check_disk") as mock_disk, \
-             patch("api.routers.health._check_models") as mock_models, \
-             patch("api.routers.health._check_heartbeat") as mock_hb, \
+        with patch("api.routers.health._check_database") as mock_db,\
+             patch("api.routers.health._check_disk") as mock_disk,\
+             patch("api.routers.health._check_models") as mock_models,\
+             patch("api.routers.health._check_heartbeat") as mock_hb,\
              patch("api.routers.health._check_external_translation") as mock_ext:
             mock_db.return_value = SubsystemCheck(status="healthy", message="OK")
             mock_disk.return_value = SubsystemCheck(status="healthy", message="OK")
@@ -239,10 +278,10 @@ class TestSubsystemChecks:
     def test_overall_degraded_propagates(self, client):
         """If worst subsystem is degraded (none unhealthy), overall should be degraded."""
         from api.models import SubsystemCheck
-        with patch("api.routers.health._check_database") as mock_db, \
-             patch("api.routers.health._check_disk") as mock_disk, \
-             patch("api.routers.health._check_models") as mock_models, \
-             patch("api.routers.health._check_heartbeat") as mock_hb, \
+        with patch("api.routers.health._check_database") as mock_db,\
+             patch("api.routers.health._check_disk") as mock_disk,\
+             patch("api.routers.health._check_models") as mock_models,\
+             patch("api.routers.health._check_heartbeat") as mock_hb,\
              patch("api.routers.health._check_external_translation") as mock_ext:
             mock_db.return_value = SubsystemCheck(status="healthy", message="OK")
             mock_disk.return_value = SubsystemCheck(status="healthy", message="OK")

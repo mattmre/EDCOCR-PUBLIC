@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib.util
 import json
 import logging
 import sys
@@ -43,110 +44,37 @@ _PROJECT_ROOT = _SCRIPT_DIR.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-logger = logging.getLogger(__name__)
+_TEXT_METRICS_PATH = _PROJECT_ROOT / "ocr_distributed" / "text_metrics.py"
+_TEXT_METRICS_SPEC = importlib.util.spec_from_file_location(
+    "_ocr_local_text_metrics",
+    _TEXT_METRICS_PATH,
+)
+if _TEXT_METRICS_SPEC is None or _TEXT_METRICS_SPEC.loader is None:
+    raise ImportError(f"Unable to load text metrics from {_TEXT_METRICS_PATH}")
 
-# ---------------------------------------------------------------------------
-# Edit distance (Levenshtein)
-# ---------------------------------------------------------------------------
+_TEXT_METRICS = importlib.util.module_from_spec(_TEXT_METRICS_SPEC)
+_TEXT_METRICS_SPEC.loader.exec_module(_TEXT_METRICS)
+
+character_error_rate = _TEXT_METRICS.character_error_rate
+edit_distance = _TEXT_METRICS.edit_distance
+word_error_rate = _TEXT_METRICS.word_error_rate
+
+logger = logging.getLogger(__name__)
 
 
 def levenshtein_distance(s1: str, s2: str) -> int:
-    """Compute the Levenshtein edit distance between two strings.
-
-    Uses dynamic programming (Wagner-Fischer algorithm) with O(min(m,n))
-    space optimization.
-
-    Args:
-        s1: First string.
-        s2: Second string.
-
-    Returns:
-        Minimum number of single-character edits (insertions, deletions,
-        substitutions) to transform s1 into s2.
-    """
-    if len(s1) < len(s2):
-        return levenshtein_distance(s2, s1)
-
-    if not s2:
-        return len(s1)
-
-    prev_row = list(range(len(s2) + 1))
-
-    for i, c1 in enumerate(s1):
-        curr_row = [i + 1]
-        for j, c2 in enumerate(s2):
-            insertions = prev_row[j + 1] + 1
-            deletions = curr_row[j] + 1
-            substitutions = prev_row[j] + (0 if c1 == c2 else 1)
-            curr_row.append(min(insertions, deletions, substitutions))
-        prev_row = curr_row
-
-    return prev_row[-1]
-
-
-# ---------------------------------------------------------------------------
-# Error rate metrics
-# ---------------------------------------------------------------------------
+    """Compatibility wrapper around the canonical text metrics module."""
+    return edit_distance(s1, s2)
 
 
 def compute_cer(reference: str, hypothesis: str) -> float:
-    """Compute Character Error Rate (CER).
-
-    CER = edit_distance(ref, hyp) / len(ref)
-
-    Args:
-        reference: Ground truth text.
-        hypothesis: Predicted text.
-
-    Returns:
-        CER as a float (0.0 = perfect, can exceed 1.0 for insertions).
-    """
-    if not reference:
-        return 0.0 if not hypothesis else 1.0
-
-    dist = levenshtein_distance(reference, hypothesis)
-    return dist / len(reference)
+    """Compatibility wrapper around canonical Character Error Rate."""
+    return character_error_rate(reference, hypothesis)
 
 
 def compute_wer(reference: str, hypothesis: str) -> float:
-    """Compute Word Error Rate (WER).
-
-    WER = edit_distance(ref_words, hyp_words) / len(ref_words)
-    using word-level Levenshtein.
-
-    Args:
-        reference: Ground truth text.
-        hypothesis: Predicted text.
-
-    Returns:
-        WER as a float (0.0 = perfect).
-    """
-    ref_words = reference.split()
-    hyp_words = hypothesis.split()
-
-    if not ref_words:
-        return 0.0 if not hyp_words else 1.0
-
-    # Use word-level DP
-    m = len(ref_words)
-    n = len(hyp_words)
-
-    dp = [[0] * (n + 1) for _ in range(m + 1)]
-    for i in range(m + 1):
-        dp[i][0] = i
-    for j in range(n + 1):
-        dp[0][j] = j
-
-    for i in range(1, m + 1):
-        for j in range(1, n + 1):
-            cost = 0 if ref_words[i - 1] == hyp_words[j - 1] else 1
-            dp[i][j] = min(
-                dp[i - 1][j] + 1,       # deletion
-                dp[i][j - 1] + 1,       # insertion
-                dp[i - 1][j - 1] + cost,  # substitution
-            )
-
-    return dp[m][n] / m
+    """Compatibility wrapper around canonical Word Error Rate."""
+    return word_error_rate(reference, hypothesis)
 
 
 def compute_precision_recall_f1(

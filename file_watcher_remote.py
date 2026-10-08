@@ -86,7 +86,7 @@ class RemoteIngestPoller:
         base = self._remote_cfg.poll_interval_seconds
         if self._consecutive_failures == 0:
             return base
-        backoff = base * (2 ** self._consecutive_failures)
+        backoff = base * (2**self._consecutive_failures)
         return min(backoff, _MAX_BACKOFF_SECONDS)
 
     @staticmethod
@@ -157,11 +157,14 @@ class RemoteIngestPoller:
                     continue
                 staged_path = self._download_ftp_file(client, entry)
                 try:
-                    if self._submit_file(
-                        str(staged_path),
-                        self._remote_cfg,
-                        self._processed_key(entry),
-                    ) and self._remote_cfg.delete_after_fetch:
+                    if (
+                        self._submit_file(
+                            str(staged_path),
+                            self._remote_cfg,
+                            self._processed_key(entry),
+                        )
+                        and self._remote_cfg.delete_after_fetch
+                    ):
                         client.delete(entry.name)
                 finally:
                     self._cleanup_staged_file(staged_path)
@@ -210,7 +213,9 @@ class RemoteIngestPoller:
                 )
             return entries
         except Exception:
-            logger.debug("MLSD unavailable for %s, falling back to NLST", self._remote_cfg.host)
+            logger.debug(
+                "MLSD unavailable for %s, falling back to NLST", self._remote_cfg.host
+            )
 
         for name in client.nlst():
             if name in {".", ".."}:
@@ -254,11 +259,14 @@ class RemoteIngestPoller:
                         continue
                     staged_path = self._download_sftp_file(sftp, entry)
                     try:
-                        if self._submit_file(
-                            str(staged_path),
-                            self._remote_cfg,
-                            self._processed_key(entry),
-                        ) and self._remote_cfg.delete_after_fetch:
+                        if (
+                            self._submit_file(
+                                str(staged_path),
+                                self._remote_cfg,
+                                self._processed_key(entry),
+                            )
+                            and self._remote_cfg.delete_after_fetch
+                        ):
                             sftp.remove(entry.remote_path)
                     finally:
                         self._cleanup_staged_file(staged_path)
@@ -269,7 +277,20 @@ class RemoteIngestPoller:
 
     def _connect_sftp_client(self):
         """Open and authenticate an SFTP client using Paramiko."""
+        import os
+
         import paramiko
+
+        # S2-03: production fail-closed even if config validation was skipped.
+        if self._remote_cfg.allow_unknown_host:
+            deployment = os.environ.get("DEPLOYMENT_ENV", "development").strip().lower()
+            known = (self._remote_cfg.known_hosts_path or "").strip()
+            ack = os.environ.get("SFTP_ALLOW_UNKNOWN_HOST_ACK", "").strip()
+            if deployment == "production" and not known and ack != "I_ACCEPT_MITM_RISK":
+                raise RuntimeError(
+                    "SFTP AutoAdd refused in production without known_hosts_path "
+                    "or SFTP_ALLOW_UNKNOWN_HOST_ACK=I_ACCEPT_MITM_RISK (S2-03)"
+                )
 
         client = paramiko.SSHClient()
         if self._remote_cfg.known_hosts_path:
@@ -356,7 +377,10 @@ class RemoteIngestPoller:
 
     def _cleanup_staged_file(self, staged_path: Path) -> None:
         """Remove staged local files after submission attempts."""
-        for candidate in (staged_path, staged_path.with_suffix(staged_path.suffix + ".part")):
+        for candidate in (
+            staged_path,
+            staged_path.with_suffix(staged_path.suffix + ".part"),
+        ):
             try:
                 candidate.unlink(missing_ok=True)
             except Exception:

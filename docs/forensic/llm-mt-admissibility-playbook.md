@@ -1,3 +1,5 @@
+> Design/reference material. Optional deployment and feature claims require the acceptance checks in [candidate scope](../release-candidate.md).
+
 # LLM-MT Admissibility Playbook
 
 **Status**: P1 deliverable (E-X-005, tracked under )
@@ -16,7 +18,7 @@ The playbook answers, in order, ten questions a federal court is likely to ask u
 
 ## Scope and operating assumptions
 
-- Machine translation output covered by this playbook is produced by the pipeline defined in `docs/planning/2026-04-24-translation-swarm/02-plan-B-translation-pipeline.md`.
+- Machine translation output covered by this playbook is produced by the pipeline defined in `docs/release-candidate.md`.
 - The authoritative OCR text layer is produced by CTC-only OCR (PaddleOCR + Tesseract fallback). There is **no generative text in the OCR layer**; this is the forensic-AI boundary contract's central invariant.
 - "Certified translation" in this document is a **pipeline artifact** (`certified: true` on the translation sidecar after TRANSLATION_REVIEWED). It is not synonymous with a sworn translation by a court-certified translator; the playbook explicitly distinguishes the two (see Step 4).
 - All custody events referenced are defined in `docs/forensic/custody-schema-v1.json`.
@@ -230,8 +232,8 @@ Anticipated cross-examination questions and the evidence-bundle artifacts that a
 - `docs/forensic/custody-schema-v1.json` -- authoritative custody event schema
 - `docs/forensic/evidence-bundle-specification.md` -- courtroom evidence bundle format
 - `docs/architecture/forensic-ai-boundary-contract.md` -- forensic-core vs. AI-adjacent boundary contract
-- `docs/planning/2026-04-24-translation-swarm/02-plan-B-translation-pipeline.md` --  translation pipeline design
-- `docs/planning/2026-04-24-translation-swarm/panels/panel-03-forensic-ediscovery.md` -- panel of record
+- `docs/release-candidate.md` --  translation pipeline design
+- `docs/release-candidate.md` -- panel of record
 
 ---
 

@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 # Oracle OKE Cluster Module
-# EDCOCR — Cloud-Native Deployment
+# Industrial Adaptive OCR — Cloud-Native Deployment
 #
 # Provisions:
 #   - VCN with public/private subnets and security lists

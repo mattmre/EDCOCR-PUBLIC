@@ -1,5 +1,5 @@
 # =============================================================================
-#  -- Federation overlay example (C2 expanded)
+# Plan C Phase 1 -- Federation overlay example (C2 expanded)
 #
 # Three-cluster federation example demonstrating the C2 dynamic peer registry
 # alongside the C1 static `upstreamClusters` block (kept for backward

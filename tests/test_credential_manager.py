@@ -225,7 +225,9 @@ class TestVaultBackend:
         mock_hvac = mock.MagicMock()
         mock_client = mock.MagicMock()
         mock_hvac.Client.return_value = mock_client
-        mock_client.secrets.kv.v2.read_secret_version.side_effect = Exception("Vault error")
+        mock_client.secrets.kv.v2.read_secret_version.side_effect = Exception(
+            "Vault error"
+        )
         with mock.patch.dict(
             os.environ, {"VAULT_ADDR": "https://vault:8200", "VAULT_TOKEN": "tok"}
         ):
@@ -235,8 +237,12 @@ class TestVaultBackend:
     def test_get_no_hvac_installed(self):
         backend = VaultBackend()
         # Ensure hvac cannot be imported
-        with mock.patch.dict(os.environ, {"VAULT_ADDR": "https://vault:8200", "VAULT_TOKEN": "tok"}):
-            with mock.patch("builtins.__import__", side_effect=_make_import_blocker("hvac")):
+        with mock.patch.dict(
+            os.environ, {"VAULT_ADDR": "https://vault:8200", "VAULT_TOKEN": "tok"}
+        ):
+            with mock.patch(
+                "builtins.__import__", side_effect=_make_import_blocker("hvac")
+            ):
                 assert backend.get("POSTGRES_PASSWORD") is None
 
     def test_vault_namespace_passed(self):
@@ -264,7 +270,9 @@ class TestVaultBackend:
 
 def _make_import_blocker(blocked_module: str):
     """Create an __import__ side_effect that blocks a specific module."""
-    real_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+    real_import = (
+        __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+    )
 
     def _blocker(name, *args, **kwargs):
         if name == blocked_module:
@@ -294,6 +302,14 @@ class TestAWSSecretsBackend:
         backend = AWSSecretsBackend()
         with mock.patch.dict(os.environ, {}, clear=True):
             assert backend.available() is False
+
+    def test_get_without_config_does_not_construct_aws_client(self):
+        backend = AWSSecretsBackend()
+        mock_boto3 = mock.MagicMock()
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.dict("sys.modules", {"boto3": mock_boto3}):
+                assert backend.get("POSTGRES_PASSWORD") is None
+        mock_boto3.client.assert_not_called()
 
     def test_available_with_config(self):
         backend = AWSSecretsBackend()
@@ -384,7 +400,10 @@ class TestFileBackend:
         cred_file.write_text(json.dumps(creds), encoding="utf-8")
         with mock.patch.dict(
             os.environ,
-            {"CREDENTIAL_FILE_PATH": str(cred_file), "CREDENTIAL_FILE_ENCODING": "plain"},
+            {
+                "CREDENTIAL_FILE_PATH": str(cred_file),
+                "CREDENTIAL_FILE_ENCODING": "plain",
+            },
         ):
             assert backend.get("POSTGRES_PASSWORD") == "file_pw"
             assert backend.get("S3_ACCESS_KEY") == "file_ak"
@@ -398,7 +417,10 @@ class TestFileBackend:
         cred_file.write_bytes(encoded)
         with mock.patch.dict(
             os.environ,
-            {"CREDENTIAL_FILE_PATH": str(cred_file), "CREDENTIAL_FILE_ENCODING": "base64"},
+            {
+                "CREDENTIAL_FILE_PATH": str(cred_file),
+                "CREDENTIAL_FILE_ENCODING": "base64",
+            },
         ):
             assert backend.get("DJANGO_SECRET_KEY") == "b64_django_key"
 
@@ -790,9 +812,7 @@ class TestValidationReport:
         assert {e.name for e in errors} == {"K2", "K3"}
 
     def test_summary_pass(self):
-        report = ValidationReport(
-            results=[CredentialValidationResult("K1", "ok", "")]
-        )
+        report = ValidationReport(results=[CredentialValidationResult("K1", "ok", "")])
         assert "PASS" in report.summary()
 
     def test_summary_fail(self):
@@ -1011,9 +1031,7 @@ class TestVaultKVVersions:
         mock_hvac = mock.MagicMock()
         mock_client = mock.MagicMock()
         mock_hvac.Client.return_value = mock_client
-        mock_client.secrets.kv.v1.read_secret.return_value = {
-            "data": {"KEY": "val"}
-        }
+        mock_client.secrets.kv.v1.read_secret.return_value = {"data": {"KEY": "val"}}
         with mock.patch.dict(
             os.environ,
             {
@@ -1097,10 +1115,25 @@ class TestAWSKMSBackend:
         backend = AWSKMSBackend()
         mock_boto3 = mock.MagicMock()
         # Remove all KMS_ENC_ prefixed vars
-        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("KMS_ENC_")}
+        clean_env = {
+            k: v for k, v in os.environ.items() if not k.startswith("KMS_ENC_")
+        }
         with mock.patch.dict(os.environ, clean_env, clear=True):
             with mock.patch.dict("sys.modules", {"boto3": mock_boto3}):
                 assert backend.available() is False
+
+    def test_get_without_config_does_not_construct_kms_client(self):
+        backend = AWSKMSBackend()
+        mock_boto3 = mock.MagicMock()
+        clean_env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("KMS_ENC_")
+        }
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            with mock.patch.dict("sys.modules", {"boto3": mock_boto3}):
+                assert backend.get("DB_PASS") is None
+        mock_boto3.client.assert_not_called()
 
     def test_available_with_kms_env_vars(self):
         backend = AWSKMSBackend()
@@ -1127,17 +1160,23 @@ class TestAWSKMSBackend:
         ):
             with mock.patch.dict(
                 "sys.modules",
-                {"boto3": mock_boto3, "botocore": mock.MagicMock(), "botocore.exceptions": mock_botocore_exceptions},
+                {
+                    "boto3": mock_boto3,
+                    "botocore": mock.MagicMock(),
+                    "botocore.exceptions": mock_botocore_exceptions,
+                },
             ):
                 # Mock ClientError to be a real-ish exception class
                 mock_botocore_exceptions.ClientError = type(
                     "ClientError",
                     (Exception,),
-                    {"__init__": lambda self, resp, op: (
-                        super(type(self), self).__init__(str(resp)),
-                        setattr(self, "response", resp),
-                        setattr(self, "operation_name", op),
-                    )[-1]},
+                    {
+                        "__init__": lambda self, resp, op: (
+                            super(type(self), self).__init__(str(resp)),
+                            setattr(self, "response", resp),
+                            setattr(self, "operation_name", op),
+                        )[-1]
+                    },
                 )
                 assert backend.get("DB_PASS") == "my_secret_password"
 
@@ -1205,7 +1244,9 @@ class TestAWSKMSBackend:
                     "botocore.exceptions": mock_botocore_exc,
                 },
             ):
-                with pytest.raises(CredentialError, match="IAM permissions are missing"):
+                with pytest.raises(
+                    CredentialError, match="IAM permissions are missing"
+                ):
                     backend.get("SECRET")
 
     def test_transient_error_retries_with_backoff(self):

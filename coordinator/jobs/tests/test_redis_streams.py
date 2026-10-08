@@ -1,6 +1,8 @@
 import json
 
-from jobs.redis_streams import RedisStreamClient
+import pytest
+
+from jobs.redis_streams import RedisStreamClient, validate_stream_name
 
 
 class FakeRedis:
@@ -13,7 +15,12 @@ class FakeRedis:
         return "1710000000000-0"
 
     def xread(self, streams, count=1, block=0):
-        return [("stream", [("1710000000000-0", {"chunk_id": "doc:1"})]), streams, count, block]
+        return [
+            ("stream", [("1710000000000-0", {"chunk_id": "doc:1"})]),
+            streams,
+            count,
+            block,
+        ]
 
     def set(self, key, value, ex=None):
         if isinstance(value, str):
@@ -31,11 +38,11 @@ class FakeRedis:
 
 def test_publish_chunk_serializes_non_scalar_fields(monkeypatch):
     fake = FakeRedis()
-    monkeypatch.setattr("jobs.redis_streams.redis.from_url", lambda url: fake)
+    monkeypatch.setattr("jobs.redis_streams.create_redis_client", lambda url: fake)
 
     client = RedisStreamClient("redis://redis:6379/0")
     msg_id = client.publish_chunk(
-        "ctx-stream",
+        "ocr:ctx-stream",
         "job-1:3",
         {"page": 3, "layout": {"type": "table"}, "score": 0.91},
     )
@@ -43,7 +50,7 @@ def test_publish_chunk_serializes_non_scalar_fields(monkeypatch):
     assert msg_id == "1710000000000-0"
     assert fake.stream_entries == [
         (
-            "ctx-stream",
+            "ocr:ctx-stream",
             {
                 "page": 3,
                 "layout": json.dumps({"type": "table"}),
@@ -56,19 +63,19 @@ def test_publish_chunk_serializes_non_scalar_fields(monkeypatch):
 
 def test_read_chunk_passes_stream_arguments(monkeypatch):
     fake = FakeRedis()
-    monkeypatch.setattr("jobs.redis_streams.redis.from_url", lambda url: fake)
+    monkeypatch.setattr("jobs.redis_streams.create_redis_client", lambda url: fake)
 
     client = RedisStreamClient("redis://redis:6379/0")
-    result = client.read_chunk("ctx-stream", last_id="1-0", count=2, block=50)
+    result = client.read_chunk("ocr:ctx-stream", last_id="1-0", count=2, block=50)
 
-    assert result[1] == {"ctx-stream": "1-0"}
+    assert result[1] == {"ocr:ctx-stream": "1-0"}
     assert result[2] == 2
     assert result[3] == 50
 
 
 def test_chunk_cache_round_trip(monkeypatch):
     fake = FakeRedis()
-    monkeypatch.setattr("jobs.redis_streams.redis.from_url", lambda url: fake)
+    monkeypatch.setattr("jobs.redis_streams.create_redis_client", lambda url: fake)
 
     client = RedisStreamClient("redis://redis:6379/0")
 
@@ -76,3 +83,19 @@ def test_chunk_cache_round_trip(monkeypatch):
     assert client.get_chunk_cache("job-1:3") == '{"text":"hello"}'
     assert client.delete_chunk_cache("job-1:3") == 1
     assert client.get_chunk_cache("job-1:3") is None
+
+
+def test_validate_stream_name_refuses_freeform():
+    with pytest.raises(ValueError, match="PH2-16"):
+        validate_stream_name("ctx-stream")
+    with pytest.raises(ValueError, match="PH2-16"):
+        validate_stream_name("../evil")
+    assert validate_stream_name("ocr:job-context:abc") == "ocr:job-context:abc"
+
+
+def test_publish_refuses_invalid_stream(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr("jobs.redis_streams.create_redis_client", lambda url: fake)
+    client = RedisStreamClient("redis://redis:6379/0")
+    with pytest.raises(ValueError, match="PH2-16"):
+        client.publish_chunk("free-form", "c1", {"x": 1})

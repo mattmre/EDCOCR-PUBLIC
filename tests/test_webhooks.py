@@ -24,11 +24,29 @@ def client(tmp_path):
     source.mkdir()
     output.mkdir()
 
-    with patch("api.config.SOURCE_FOLDER", str(source)), \
-         patch("api.config.OUTPUT_FOLDER", str(output)), \
-         patch("api.config.WEBHOOK_ALLOW_HTTP", True), \
-         patch("api.config.WEBHOOK_ALLOW_PRIVATE", True), \
-         patch("api.job_manager.config") as mock_config:
+    from api import event_store
+
+    event_store.reset_event_store()
+    with (
+        patch("api.config.SOURCE_FOLDER", str(source)),
+        patch("api.config.OUTPUT_FOLDER", str(output)),
+        patch("api.config.EVENT_STORE_PATH", str(output / "event_store.db")),
+        patch("api.config.OCR_API_KEY", ""),
+        patch("api.config.ALLOW_UNAUTHENTICATED", True),
+        # These integration cases exercise the mutation API in the
+        # single-tenant compatibility mode.  The suite-wide anonymous role
+        # is deliberately viewer; opt this fixture into the least privileged
+        # mutation role explicitly instead of weakening production auth.
+        patch("api.config.ANONYMOUS_ROLE", "operator"),
+        patch("api.auth.OCR_API_KEY", ""),
+        patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+        patch("api.auth.ANONYMOUS_ROLE", "operator"),
+        patch("api.config.ENABLE_MULTITENANCY", False),
+        patch("api.auth.ENABLE_MULTITENANCY", False),
+        patch("api.config.WEBHOOK_ALLOW_HTTP", True),
+        patch("api.config.WEBHOOK_ALLOW_PRIVATE", True),
+        patch("api.job_manager.config") as mock_config,
+    ):
         mock_config.SOURCE_FOLDER = str(source)
         mock_config.OUTPUT_FOLDER = str(output)
         mock_config.PIPELINE_SCRIPT = "echo"
@@ -46,7 +64,10 @@ def client(tmp_path):
 
         from fastapi.testclient import TestClient
 
-        yield TestClient(app)
+        try:
+            yield TestClient(app)
+        finally:
+            event_store.reset_event_store()
 
 
 @pytest.fixture()
@@ -293,9 +314,7 @@ class TestWebhookPayload:
     def test_payload_processing_fields(self):
         from api.webhooks import build_webhook_payload
 
-        job = self._make_job(
-            processing_time=123.4, pages_completed=5, total_pages=8
-        )
+        job = self._make_job(processing_time=123.4, pages_completed=5, total_pages=8)
         payload = build_webhook_payload(job, "job.completed")
 
         proc = payload["processing"]
@@ -348,13 +367,9 @@ class TestWebhookDelivery:
             status=kwargs.get("status", "completed"),
             source_file=kwargs.get("source_file", "test.pdf"),
             priority="normal",
-            webhook_url=kwargs.get(
-                "webhook_url", "https://example.com/webhook"
-            ),
+            webhook_url=kwargs.get("webhook_url", "https://example.com/webhook"),
             webhook_secret=kwargs.get("webhook_secret", "test-secret"),
-            started_at=datetime(2025, 1, 1, tzinfo=timezone.utc).replace(
-                tzinfo=None
-            ),
+            started_at=datetime(2025, 1, 1, tzinfo=timezone.utc).replace(tzinfo=None),
             completed_at=datetime(2025, 1, 1, 0, 5, tzinfo=timezone.utc).replace(
                 tzinfo=None
             ),
@@ -411,8 +426,10 @@ class TestWebhookDelivery:
                 raise ConnectionError("Connection refused")
             return mock_response
 
-        with patch("api.webhooks._safe_opener.open", side_effect=mock_urlopen), \
-             patch("time.sleep"):
+        with (
+            patch("api.webhooks._safe_opener.open", side_effect=mock_urlopen),
+            patch("time.sleep"),
+        ):
             deliver_webhook(job_id, factory, webhook_max_retries=3)
 
         session = factory()
@@ -431,8 +448,10 @@ class TestWebhookDelivery:
         def mock_urlopen(*args, **kwargs):
             raise ConnectionError("Connection refused")
 
-        with patch("api.webhooks._safe_opener.open", side_effect=mock_urlopen), \
-             patch("time.sleep"):
+        with (
+            patch("api.webhooks._safe_opener.open", side_effect=mock_urlopen),
+            patch("time.sleep"),
+        ):
             deliver_webhook(job_id, factory, webhook_max_retries=2)
 
         session = factory()
@@ -499,13 +518,9 @@ class TestWebhookDelivery:
 
         assert captured_request is not None
         assert captured_request.get_header("Content-type") == "application/json"
-        assert (
-            captured_request.get_header("X-webhook-event") == "job.completed"
-        )
+        assert captured_request.get_header("X-webhook-event") == "job.completed"
         assert captured_request.get_header("X-webhook-job-id") == job_id
-        assert captured_request.get_header("X-webhook-signature").startswith(
-            "sha256="
-        )
+        assert captured_request.get_header("X-webhook-signature").startswith("sha256=")
         assert captured_request.get_header("X-webhook-timestamp") is not None
 
     def test_delivery_skips_non_terminal_status(self):
@@ -584,9 +599,7 @@ class TestWebhookIntegration:
         assert decrypt_webhook_secret(job.webhook_secret) == "my-secret"
         session.close()
 
-    def test_submit_without_webhook_preserves_behavior(
-        self, client, sample_pdf
-    ):
+    def test_submit_without_webhook_preserves_behavior(self, client, sample_pdf):
         with open(sample_pdf, "rb") as f:
             resp = client.post(
                 "/api/v1/jobs",
@@ -608,7 +621,10 @@ class TestWebhookIntegration:
         # Submit job with webhook
         # Prevent async pipeline thread from racing this test's manual
         # status transitions (which can intermittently produce 409 on retry).
-        with patch("api.job_manager.JobManager._run_pipeline", return_value=None):
+        with (
+            patch("api.job_manager.JobManager._run_pipeline", return_value=None),
+            patch("api.job_manager.JobManager._ensure_workers", return_value=None),
+        ):
             with open(sample_pdf, "rb") as f:
                 resp = client.post(
                     "/api/v1/jobs",

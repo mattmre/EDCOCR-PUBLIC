@@ -1,3 +1,95 @@
+{{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
+{{- fail "federation.mtls.enabled is unsupported: certificates alone do not configure mutual TLS listeners or reconciler identity; use an independently configured and verified external transport" }}
+{{- end }}
+{{- if .Values.postgresql.clientTls.enabled }}
+{{- $_ := required "postgresql.clientTls.caSecretName is required when client TLS is enabled" .Values.postgresql.clientTls.caSecretName }}
+{{- end }}
+{{- if .Values.rabbitmq.clientTls.enabled }}
+{{- $_ := required "rabbitmq.clientTls.caSecretName is required when client TLS is enabled" .Values.rabbitmq.clientTls.caSecretName }}
+{{- if and (not .Values.tls.enabled) (not .Values.secrets.celeryBrokerUrl) }}
+{{- fail "rabbitmq.clientTls.enabled requires tls.enabled=true for the bundled broker, or an explicit external TLS secrets.celeryBrokerUrl; client TLS alone does not configure a broker TLS listener" }}
+{{- end }}
+{{- end }}
+{{- if .Values.redis.clientTls.enabled }}
+{{- $_ := required "redis.clientTls.caSecretName is required when client TLS is enabled" .Values.redis.clientTls.caSecretName }}
+{{- end }}
+{{- if .Values.ocrCapabilitySeparation.enabled }}
+{{- if not .Values.cpuOcrWorker.enabled }}
+{{- fail "ocrCapabilitySeparation requires cpuOcrWorker.enabled=true" }}
+{{- end }}
+{{- if not .Values.tesseractWorker.enabled }}
+{{- fail "ocrCapabilitySeparation requires tesseractWorker.enabled=true" }}
+{{- end }}
+{{- end }}
+{{- if or (lt (int .Values.ocrStagedPage.leaseSeconds) 20) (gt (int .Values.ocrStagedPage.leaseSeconds) 3600) }}
+{{- fail "ocrStagedPage.leaseSeconds must be between 20 and 3600" }}
+{{- end }}
+{{- if or (lt (int .Values.ocrStagedPage.recoveryIntervalSeconds) 5) (gt (int .Values.ocrStagedPage.recoveryIntervalSeconds) 300) }}
+{{- fail "ocrStagedPage.recoveryIntervalSeconds must be between 5 and 300" }}
+{{- end }}
+{{- if eq .Values.storage.backend "s3" }}
+{{- if not (has .Values.storage.s3.authMode (list "static" "iam")) }}
+{{- fail "storage.s3.authMode must be static or iam" }}
+{{- end }}
+{{- if eq .Values.storage.s3.authMode "iam" }}
+{{- if not .Values.storage.s3.presignedAllowedHosts }}
+{{- fail "IAM presigned mode requires explicit storage.s3.presignedAllowedHosts for signed URL endpoints" }}
+{{- end }}
+{{- range .Values.storage.s3.presignedAllowedHosts }}
+{{- if not (regexMatch "^[a-zA-Z0-9][a-zA-Z0-9.-]*(:[0-9]+)?$" .) }}
+{{- fail "storage.s3.presignedAllowedHosts requires exact hostnames, optionally with ports" }}
+{{- end }}
+{{- end }}
+{{- if or .Values.secrets.s3AccessKey .Values.secrets.s3SecretKey .Values.secrets.s3SessionToken }}
+{{- fail "IAM mode must not receive explicit S3 credentials" }}
+{{- end }}
+{{- $_ := required "IAM mode requires an existing storage.s3.controlPlaneServiceAccount" .Values.storage.s3.controlPlaneServiceAccount }}
+{{- if or (eq .Values.storage.s3.controlPlaneServiceAccount (include "ocr-local.serviceAccountName" .)) (eq .Values.storage.s3.controlPlaneServiceAccount "default") }}
+{{- fail "IAM control-plane service account must differ from the credential-free worker account and default" }}
+{{- end }}
+{{- if or (not .Values.storage.s3.usePresignedUrls) .Values.storage.workerInjectS3Credentials (not .Values.workerSecurity.leastSecretEnv) }}
+{{- fail "IAM mode requires presigned URLs and least-secret workers without SDK credentials" }}
+{{- end }}
+{{- end }}
+{{- $mount := trimSuffix "/" .Values.workerSecurity.stagingVolume.mountPath }}
+{{- $cache := trimSuffix "/" .Values.storage.s3.cacheDir }}
+{{- if or (eq $mount "") (not (hasPrefix (printf "%s/" $mount) $cache)) (contains ".." $cache) }}
+{{- fail "storage.s3.cacheDir must be beneath workerSecurity.stagingVolume.mountPath (protected memory or encrypted PVC)" }}
+{{- end }}
+{{- $size := "" }}
+{{- if eq .Values.workerSecurity.stagingVolume.type "emptyDir" }}
+{{- $size = .Values.workerSecurity.stagingVolume.emptyDir.sizeLimit }}
+{{- else if eq .Values.workerSecurity.stagingVolume.type "pvc" }}
+{{- if not .Values.workerSecurity.stagingVolume.pvc.storageClass }}
+{{- fail "S3 cache PVC requires an explicit encrypted staging storageClass" }}
+{{- end }}
+{{- $size = .Values.workerSecurity.stagingVolume.pvc.size }}
+{{- else }}
+{{- fail "S3 cache requires protected emptyDir or encrypted PVC staging" }}
+{{- end }}
+{{- if not (regexMatch "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|K|M|G|T)$" $size) }}
+{{- fail "protected staging size must be a Kubernetes binary or decimal quantity for S3 cache validation" }}
+{{- end }}
+{{- $quantity := float64 (regexFind "^[0-9]+(\\.[0-9]+)?" $size) }}
+{{- $capacityGiB := $quantity }}
+{{- if hasSuffix "Mi" $size }}{{- $capacityGiB = divf $quantity 1024 }}{{- end }}
+{{- if hasSuffix "Ki" $size }}{{- $capacityGiB = divf $quantity 1048576 }}{{- end }}
+{{- if hasSuffix "Ti" $size }}{{- $capacityGiB = mulf $quantity 1024 }}{{- end }}
+{{- if hasSuffix "K" $size }}{{- $capacityGiB = divf (mulf $quantity 1000) 1073741824 }}{{- end }}
+{{- if hasSuffix "M" $size }}{{- $capacityGiB = divf (mulf $quantity 1000000) 1073741824 }}{{- end }}
+{{- if hasSuffix "G" $size }}{{- $capacityGiB = divf (mulf $quantity 1000000000) 1073741824 }}{{- end }}
+{{- if hasSuffix "T" $size }}{{- $capacityGiB = divf (mulf $quantity 1000000000000) 1073741824 }}{{- end }}
+{{- $cacheGiB := float64 .Values.storage.s3.cacheMaxSizeGB }}
+{{- $objectGiB := float64 .Values.storage.s3.cacheMaxObjectGB }}
+{{- $headroom := 0.8 }}
+{{- if eq .Values.workerSecurity.stagingVolume.type "emptyDir" }}{{- $headroom = 0.5 }}{{- end }}
+{{- if or (le $cacheGiB 0.0) (gt $cacheGiB (mulf $capacityGiB $headroom)) }}
+{{- fail "storage.s3.cacheMaxSizeGB exceeds protected staging capacity/headroom" }}
+{{- end }}
+{{- if or (le $objectGiB 0.0) (gt $objectGiB (divf $cacheGiB 2)) }}
+{{- fail "storage.s3.cacheMaxObjectGB must fit within the immutable source half of the cache" }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,27 +98,68 @@ metadata:
     {{- include "ocr-local.labels" . | nindent 4 }}
 data:
   # ---- Django / Coordinator ----
-  DJANGO_SETTINGS_MODULE: "coordinator.coordinator.settings"
+  DJANGO_SETTINGS_MODULE: "coordinator.settings"
   DJANGO_DEBUG: {{ .Values.coordinator.env.DJANGO_DEBUG | quote }}
   DJANGO_ALLOWED_HOSTS: {{ .Values.coordinator.env.DJANGO_ALLOWED_HOSTS | quote }}
   DEPLOYMENT_ENV: {{ .Values.coordinator.env.DEPLOYMENT_ENV | quote }}
   PRODUCTION_READINESS_ACK: {{ .Values.coordinator.env.PRODUCTION_READINESS_ACK | quote }}
+  ENABLE_TRANSLATION: {{ .Values.coordinator.env.ENABLE_TRANSLATION | default "false" | quote }}
+  ENABLE_TRANSLATION_API: {{ .Values.coordinator.env.ENABLE_TRANSLATION_API | default "false" | quote }}
+  ENABLE_HANDWRITING_MT: {{ .Values.coordinator.env.ENABLE_HANDWRITING_MT | default "false" | quote }}
+  OCR_TRANSLATION_ENFORCE_PROVENANCE: {{ .Values.coordinator.env.OCR_TRANSLATION_ENFORCE_PROVENANCE | default "true" | quote }}
+  DATABASE_SCHEMA: {{ .Values.coordinator.env.DATABASE_SCHEMA | quote }}
+  OCR_TASK_ROUTING: {{ .Values.coordinator.env.OCR_TASK_ROUTING | quote }}
+  OCR_STAGED_PAGE_OCR_ENABLED: {{ .Values.ocrStagedPage.enabled | quote }}
+  OCR_FAIR_FANOUT_ENABLED: {{ or .Values.ocrStagedPage.enabled (eq .Values.coordinator.env.OCR_FAIR_FANOUT_ENABLED "true") | quote }}
+  OCR_MAX_INFLIGHT_PAGES_PER_DOCUMENT: {{ ternary .Values.ocrStagedPage.maxInflightPagesPerDocument .Values.coordinator.env.OCR_MAX_INFLIGHT_PAGES_PER_DOCUMENT .Values.ocrStagedPage.enabled | quote }}
+  OCR_STAGE_GLOBAL_BYTES: {{ .Values.ocrStagedPage.globalBytes | quote }}
+  OCR_STAGE_MAX_PAGE_BYTES: {{ .Values.ocrStagedPage.maxPageBytes | quote }}
+  OCR_STAGE_MAX_CAPACITY_WAIT_SECONDS: {{ .Values.ocrStagedPage.maxCapacityWaitSeconds | quote }}
+  OCR_STAGE_LEASE_SECONDS: {{ .Values.ocrStagedPage.leaseSeconds | quote }}
+  OCR_STAGE_RECOVERY_INTERVAL_SECONDS: {{ .Values.ocrStagedPage.recoveryIntervalSeconds | quote }}
+  OCR_SEPARATE_TESSERACT_LANE: {{ .Values.ocrCapabilitySeparation.enabled | quote }}
+  ALLOW_DEGRADED_NER: {{ .Values.coordinator.env.ALLOW_DEGRADED_NER | quote }}
+  OCR_COORDINATOR_HEALTH_TENANT_ID: {{ required "coordinator.healthTenantId must be set" .Values.coordinator.healthTenantId | quote }}
 
-  # ---- External EXTERNAL_TRANSLATION seam (default OFF) ----
-  EXTERNAL_TRANSLATION_PREFER: {{ .Values.externalTranslation.preferExternal | quote }}
-  EXTERNAL_TRANSLATION_URL: {{ .Values.externalTranslation.url | quote }}
-  EXTERNAL_TRANSLATION_PROVIDER_ID: {{ .Values.externalTranslation.providerId | quote }}
-  EXTERNAL_TRANSLATION_TIMEOUT_SECONDS: {{ .Values.externalTranslation.timeoutSeconds | quote }}
-  EXTERNAL_TRANSLATION_READINESS_PATH: {{ .Values.externalTranslation.readinessPath | quote }}
+  # ---- External EDC_TRANSLATION seam (default OFF) ----
+  EDC_TRANSLATION_PREFER_EXTERNAL: {{ .Values.edcTranslation.preferExternal | quote }}
+  EDC_TRANSLATION_URL: {{ .Values.edcTranslation.url | quote }}
+  EDC_TRANSLATION_PROVIDER_ID: {{ .Values.edcTranslation.providerId | quote }}
+  EDC_TRANSLATION_TIMEOUT_SECONDS: {{ .Values.edcTranslation.timeoutSeconds | quote }}
+  EDC_TRANSLATION_READINESS_PATH: {{ .Values.edcTranslation.readinessPath | quote }}
+
+  # ---- Review certification strong-auth verifier ----
+  REVIEW_STRONG_AUTH_VERIFIER_URL: {{ .Values.reviewStrongAuth.verifierUrl | quote }}
+  {{- if .Values.reviewStrongAuth.caSecretName }}
+  REVIEW_STRONG_AUTH_CA_FILE: "/etc/review-auth/ca.crt"
+  {{- end }}
 
   # ---- Storage ----
   STORAGE_BACKEND: {{ .Values.storage.backend | quote }}
+  S3_AUTH_MODE: {{ .Values.storage.s3.authMode | quote }}
+  S3_PRESIGNED_ALLOWED_HOSTS: {{ join "," .Values.storage.s3.presignedAllowedHosts | quote }}
+  {{- if .Values.storage.nfs.persistence.enabled }}
+  NFS_ROOT: {{ .Values.storage.nfs.mountPath | default "/shared" | quote }}
+  {{- else }}
   NFS_ROOT: {{ .Values.storage.nfs.path | quote }}
+  {{- end }}
   S3_CACHE_DIR: {{ .Values.storage.s3.cacheDir | quote }}
   S3_CACHE_MAX_SIZE_GB: {{ .Values.storage.s3.cacheMaxSizeGB | quote }}
+  S3_CACHE_MAX_OBJECT_GB: {{ .Values.storage.s3.cacheMaxObjectGB | quote }}
+  S3_USE_PRESIGNED_URLS: {{ .Values.storage.s3.usePresignedUrls | quote }}
+  {{- if .Values.storage.s3.caSecretName }}
+  AWS_CA_BUNDLE: {{ .Values.storage.s3.caMountPath | quote }}
+  {{- end }}
 
   # ---- Celery / RabbitMQ ----
   CELERY_USE_QUORUM_QUEUES: {{ .Values.rabbitmq.quorumQueues | quote }}
+  {{- if .Values.secrets.celeryTaskSigningKey }}
+  ENABLE_CELERY_TASK_SIGNING: "true"
+  {{- end }}
+  {{- if .Values.redis.sentinel.enabled }}
+  REDIS_SENTINEL_MASTER_NAME: {{ .Values.redis.sentinel.masterName | quote }}
+  REDIS_SENTINEL_NODES: {{ include "ocr-local.redisSentinelNodes" . | quote }}
+  {{- end }}
 
   # ---- Assembly tuning ----
   ASSEMBLY_STREAMING_THRESHOLD_PAGES: {{ .Values.assembly.streamingThresholdPages | quote }}
@@ -38,10 +171,16 @@ data:
   AUDIT_LOG_RETENTION_DAYS: {{ .Values.cleanup.auditLogRetentionDays | default 2555 | quote }}
   OUTPUT_RETENTION_DAYS: {{ .Values.cleanup.outputRetentionDays | default 90 | quote }}
 
-  {{- if .Values.tls.enabled }}
-  # ---- Inter-service TLS ----
+  # ---- Dependency-specific client TLS ----
+  {{- if or .Values.tls.enabled .Values.postgresql.clientTls.enabled }}
   DATABASE_SSLMODE: "verify-full"
-  DATABASE_SSLROOTCERT: "/etc/tls/ca.crt"
+  DATABASE_SSLROOTCERT: {{ ternary .Values.postgresql.clientTls.caMountPath "/etc/tls/ca.crt" .Values.postgresql.clientTls.enabled | quote }}
+  {{- end }}
+  {{- if or .Values.tls.enabled .Values.rabbitmq.clientTls.enabled }}
   CELERY_BROKER_USE_SSL: "true"
+  CELERY_BROKER_SSL_CA: {{ ternary .Values.rabbitmq.clientTls.caMountPath "/etc/tls/ca.crt" .Values.rabbitmq.clientTls.enabled | quote }}
+  {{- end }}
+  {{- if or .Values.tls.enabled .Values.redis.clientTls.enabled }}
   REDIS_SSL: "true"
+  REDIS_SSL_CA: {{ ternary .Values.redis.clientTls.caMountPath "/etc/tls/ca.crt" .Values.redis.clientTls.enabled | quote }}
   {{- end }}

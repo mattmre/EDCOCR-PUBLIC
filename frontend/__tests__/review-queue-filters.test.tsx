@@ -6,8 +6,8 @@ import {
 } from "@/components/ReviewQueueFilters";
 import type { ReviewQueueFilters } from "@/lib/types";
 
-describe("<ReviewQueueFiltersBar />", => {
-  it("renders the default pending chip as pressed", => {
+describe("<ReviewQueueFiltersBar />", () => {
+  it("renders the default pending chip as pressed", () => {
     render(
       <ReviewQueueFiltersBar
         value={EMPTY_REVIEW_FILTER_STATE}
@@ -24,7 +24,7 @@ describe("<ReviewQueueFiltersBar />", => {
     );
   });
 
-  it("toggles status chips on and off", => {
+  it("toggles status chips on and off", () => {
     const handleChange = vi.fn();
     render(
       <ReviewQueueFiltersBar
@@ -55,7 +55,7 @@ describe("<ReviewQueueFiltersBar />", => {
     });
   });
 
-  it("emits the reason filter on dropdown change", => {
+  it("emits the reason filter on dropdown change", () => {
     const handleChange = vi.fn();
     render(
       <ReviewQueueFiltersBar
@@ -72,7 +72,7 @@ describe("<ReviewQueueFiltersBar />", => {
     });
   });
 
-  it("debounces the search input before emitting onChange", async => {
+  it("debounces the search input before emitting onChange", async () => {
     const handleChange = vi.fn();
     render(
       <ReviewQueueFiltersBar
@@ -87,7 +87,8 @@ describe("<ReviewQueueFiltersBar />", => {
     fireEvent.change(input, { target: { value: "job_abc" } });
 
     expect(handleChange).not.toHaveBeenCalled();
-    await waitFor( => {
+    await waitFor(
+      () => {
         expect(handleChange).toHaveBeenCalledTimes(1);
       },
       { timeout: 1000 }
@@ -98,7 +99,7 @@ describe("<ReviewQueueFiltersBar />", => {
     });
   });
 
-  it("clears all filters via the clear button", => {
+  it("clears all filters via the clear button", () => {
     const handleChange = vi.fn();
     const populated: ReviewQueueFilters = {
       status: ["approved", "rejected"],

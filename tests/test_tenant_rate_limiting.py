@@ -12,14 +12,9 @@ Validates:
 
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock
 
 import pytest
-
-# Ensure multi-tenancy and test DB path are configured before importing API modules
-os.environ.setdefault("ENABLE_MULTITENANCY", "true")
-os.environ.setdefault("ALLOW_UNAUTHENTICATED", "true")
 
 
 @pytest.fixture(autouse=True)
@@ -223,7 +218,9 @@ class TestDynamicLimitResolver:
         resolver = _make_dynamic_limit_resolver(lambda: "60/minute")
         assert resolver(tenant_id) == "200/minute"
 
-    def test_falls_back_to_default_when_no_tenant_config(self, _create_tenant, monkeypatch):
+    def test_falls_back_to_default_when_no_tenant_config(
+        self, _create_tenant, monkeypatch
+    ):
         monkeypatch.setattr("api.tenant_rate_limiter.ENABLE_MULTITENANCY", True)
 
         from api.tenant_rate_limiter import _make_dynamic_limit_resolver
@@ -281,7 +278,7 @@ class TestLimitsKeyFunc:
 
         request = MagicMock()
         request.state.tenant_id = "tenant_abc123def456"
-        assert _tenant_aware_key_func(request) == "tenant_abc123def456"
+        assert _tenant_aware_key_func(request) == "tenant:tenant_abc123def456"
 
     def test_key_func_returns_ip_when_no_tenant(self, monkeypatch):
         monkeypatch.setattr("api.limits.ENABLE_MULTITENANCY", True)
@@ -295,7 +292,7 @@ class TestLimitsKeyFunc:
         request.headers = {}
 
         result = _tenant_aware_key_func(request)
-        assert result == "10.0.0.5"
+        assert result == "ip:10.0.0.5"
 
 
 # ---------------------------------------------------------------------------
@@ -311,26 +308,37 @@ class TestAdminRateLimitEndpoints:
         """Create a test client with multi-tenancy enabled."""
         monkeypatch.setenv("ENABLE_MULTITENANCY", "true")
         monkeypatch.setenv("ALLOW_UNAUTHENTICATED", "true")
+        monkeypatch.setenv("OCR_API_KEY", "admin-test-key")
 
         # Reload config to pick up env vars
         import importlib
 
         import api.config
+
         importlib.reload(api.config)
         monkeypatch.setattr("api.config.ENABLE_MULTITENANCY", True)
+        monkeypatch.setattr("api.config.OCR_API_KEY", "admin-test-key")
+        monkeypatch.setattr("api.config.ANONYMOUS_ROLE", "viewer")
+        monkeypatch.setattr("api.config.ALLOW_UNAUTHENTICATED", True)
 
         # Patch auth middleware to always pass for admin tests
         from api.main import create_app
 
         # Patch the ENABLE_MULTITENANCY in all needed places
         monkeypatch.setattr("api.auth.ENABLE_MULTITENANCY", True)
+        monkeypatch.setattr("api.auth.OCR_API_KEY", "admin-test-key")
         monkeypatch.setattr("api.main.ENABLE_MULTITENANCY", True)
+        # The admin router also guards requests with its import-time feature
+        # flag.  Keep that seam synchronized after reloading api.config;
+        # otherwise this fixture can return a misleading 404 only when a
+        # prior test has reloaded config with multitenancy disabled.
+        monkeypatch.setattr("api.routers.admin.ENABLE_MULTITENANCY", True)
 
         app = create_app()
 
         from starlette.testclient import TestClient
 
-        self.client = TestClient(app)
+        self.client = TestClient(app, headers={"X-API-Key": "admin-test-key"})
 
     @pytest.fixture()
     def tenant_id(self, _create_tenant):
@@ -432,9 +440,7 @@ class TestTenantRateLimitModel:
         tenant_id = _create_tenant()
         session = get_session_factory()()
         try:
-            row = TenantRateLimit(
-                tenant_id=tenant_id, rate_limit="100/minute"
-            )
+            row = TenantRateLimit(tenant_id=tenant_id, rate_limit="100/minute")
             session.add(row)
             session.commit()
 
@@ -450,9 +456,7 @@ class TestTenantRateLimitModel:
         tenant_id = _create_tenant()
         session = get_session_factory()()
         try:
-            row = TenantRateLimit(
-                tenant_id=tenant_id, rate_limit="100/minute"
-            )
+            row = TenantRateLimit(tenant_id=tenant_id, rate_limit="100/minute")
             session.add(row)
             session.commit()
 

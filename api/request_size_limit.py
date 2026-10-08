@@ -1,93 +1,107 @@
-"""Request body size limit middleware.
+"""Request body size limit middleware (maintenance review).
 
-Rejects requests whose declared ``Content-Length`` exceeds a configured
-maximum before any downstream handler reads the body.  This blocks cheap
-DoS vectors against JSON endpoints that do not perform their own
-streaming/upload-aware size checks.
-
-File-upload endpoints (``multipart/form-data``) are exempt because they
-are already gated by ``MAX_UPLOAD_SIZE_MB`` at the application layer.
-
-Configuration
--------------
-``MAX_REQUEST_BODY_SIZE`` env var (bytes).  Default: ``10485760`` (10 MB).
-Set to ``0`` to disable the check (not recommended).
+Rejects oversized non-multipart requests before application handlers read them.
+Both declared ``Content-Length`` and chunked ASGI request bodies are bounded.
+Multipart uploads retain their separate ``MAX_UPLOAD_SIZE_MB`` policy.
 """
 
 from __future__ import annotations
 
+import json
 import logging
-
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
 
 logger = logging.getLogger(__name__)
 
 
-class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject oversized requests based on the ``Content-Length`` header.
+class _RequestBodyTooLarge(Exception):
+    """Internal control-flow signal for chunked request rejection."""
 
-    The middleware is intentionally conservative:
 
-    - Requests without a ``Content-Length`` header are passed through
-      (chunked/streaming bodies are still gated by the underlying
-      ASGI server and endpoint-level validation).
-    - Multipart uploads are exempt so the existing upload size policy
-      (``MAX_UPLOAD_SIZE_MB``) remains authoritative for file ingest.
-    - An oversized request returns HTTP ``413 Payload Too Large`` with
-      a structured JSON body so API clients get a machine-readable error.
-    """
+class RequestSizeLimitMiddleware:
+    """Reject oversized requests using declared and streamed byte counts."""
 
     def __init__(self, app, max_size: int = 10 * 1024 * 1024) -> None:
-        super().__init__(app)
+        self.app = app
         self.max_size = max_size
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
-        if self.max_size <= 0:
-            return await call_next(request)
+    async def _send_error(self, send, status_code: int) -> None:
+        content = {
+            "error": "request_too_large"
+            if status_code == 413
+            else "invalid_content_length",
+            "message": (
+                f"Request body exceeds maximum allowed size of {self.max_size} bytes."
+                if status_code == 413
+                else "Malformed Content-Length header."
+            ),
+        }
+        if status_code == 413:
+            content["max_size"] = self.max_size
+        body = json.dumps(content).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
 
-        # Exempt multipart uploads -- they have their own size policy.
-        content_type = request.headers.get("content-type", "").lower()
-        if content_type.startswith("multipart/"):
-            return await call_next(request)
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or self.max_size <= 0:
+            await self.app(scope, receive, send)
+            return
 
-        content_length_raw = request.headers.get("content-length")
-        if content_length_raw is None:
-            return await call_next(request)
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        # Multipart uploads have a separate application-level upload policy.
+        if headers.get(b"content-type", b"").lower().startswith(b"multipart/"):
+            await self.app(scope, receive, send)
+            return
+
+        content_length_raw = headers.get(b"content-length")
+        if content_length_raw is not None:
+            try:
+                content_length = int(content_length_raw)
+            except (TypeError, ValueError):
+                await self._send_error(send, 400)
+                return
+            if content_length < 0:
+                await self._send_error(send, 400)
+                return
+            if content_length > self.max_size:
+                logger.warning(
+                    "Rejected oversized request: %d bytes > %d bytes",
+                    content_length,
+                    self.max_size,
+                )
+                await self._send_error(send, 413)
+                return
+
+        total_bytes = 0
+        response_started = False
+
+        async def limited_receive():
+            nonlocal total_bytes
+            message = await receive()
+            if message.get("type") == "http.request":
+                total_bytes += len(message.get("body", b""))
+                if total_bytes > self.max_size:
+                    raise _RequestBodyTooLarge
+            return message
+
+        async def tracked_send(message):
+            nonlocal response_started
+            if message.get("type") == "http.response.start":
+                response_started = True
+            await send(message)
 
         try:
-            content_length = int(content_length_raw)
-        except ValueError:
-            # Malformed header -- reject rather than guess.
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": "invalid_content_length",
-                    "message": "Malformed Content-Length header.",
-                },
-            )
-
-        if content_length > self.max_size:
-            logger.warning(
-                "Rejected oversized request: %d bytes > %d bytes (%s %s)",
-                content_length,
-                self.max_size,
-                request.method,
-                request.url.path,
-            )
-            return JSONResponse(
-                status_code=413,
-                content={
-                    "error": "request_too_large",
-                    "message": (
-                        f"Request body exceeds maximum allowed size "
-                        f"of {self.max_size} bytes."
-                    ),
-                    "max_size": self.max_size,
-                },
-            )
-
-        return await call_next(request)
+            await self.app(scope, limited_receive, tracked_send)
+        except _RequestBodyTooLarge:
+            if not response_started:
+                await self._send_error(send, 413)
+            else:
+                raise

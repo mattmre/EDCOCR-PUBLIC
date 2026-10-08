@@ -1,10 +1,12 @@
-"""Tests for the standardized pagination dependency.
+"""Tests for the standardized pagination dependency (maintenance review).
 
 Verifies that all list endpoints accept limit/offset (canonical) and
 page/per_page (backward-compatible aliases) and that max limit is enforced.
 """
 
 from __future__ import annotations
+
+from unittest.mock import patch
 
 import pytest
 
@@ -54,6 +56,23 @@ class TestNormalizePagination:
     def test_max_limit_constant(self):
         assert MAX_PAGE_LIMIT == 200
 
+    def test_direct_inputs_are_bounded(self):
+        with pytest.raises(ValueError, match="limit"):
+            normalize_pagination(limit=0, offset=0)
+        with pytest.raises(ValueError, match="page"):
+            normalize_pagination(limit=50, offset=0, page=0)
+        with pytest.raises(ValueError, match="per_page"):
+            normalize_pagination(limit=50, offset=0, per_page=201)
+
+    def test_dependency_maps_legacy_validation_to_422(self):
+        from fastapi import HTTPException
+
+        from api.deps import pagination_params
+
+        with pytest.raises(HTTPException) as exc_info:
+            pagination_params(50, 0, page=0, per_page=None)
+        assert exc_info.value.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # Integration tests: list_jobs endpoint pagination
@@ -78,11 +97,23 @@ class TestJobsListPagination:
 
         from api.main import create_app
 
-        app = create_app()
-        app.state.limiter.enabled = False
-        app.state.limiter.reset()
-        c = TestClient(app)
-        yield c
+        # Auth configuration is imported as module constants.  Patch both
+        # sides explicitly so this fixture remains valid after tests that
+        # exercise an authenticated app; environment changes alone do not
+        # undo a previously imported API key.
+        with (
+            patch("api.config.OCR_API_KEY", ""),
+            patch("api.auth.OCR_API_KEY", ""),
+            patch("api.config.ALLOW_UNAUTHENTICATED", True),
+            patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+            patch("api.config.ENABLE_MULTITENANCY", False),
+            patch("api.auth.ENABLE_MULTITENANCY", False),
+        ):
+            app = create_app()
+            app.state.limiter.enabled = False
+            app.state.limiter.reset()
+            c = TestClient(app)
+            yield c
 
     def test_default_pagination(self, client):
         resp = client.get("/api/v1/jobs")

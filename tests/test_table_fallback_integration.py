@@ -29,6 +29,7 @@ class TestTableFallbackImportAvailability(unittest.TestCase):
     def test_table_fallback_module_importable(self):
         """table_fallback module should be importable."""
         import table_fallback
+
         self.assertTrue(hasattr(table_fallback, "TableRegion"))
         self.assertTrue(hasattr(table_fallback, "analyze_page_tables"))
         self.assertTrue(hasattr(table_fallback, "finalize_table_fallback"))
@@ -89,12 +90,14 @@ class TestDocIntelBboxConversion(unittest.TestCase):
                 rb = region.get("bbox", [0, 0, 0, 0])
                 if len(rb) == 4:
                     x1, y1, x2, y2 = rb
-                    table_regions.append(TableRegion(
-                        bbox=(x1, y1, x2 - x1, y2 - y1),
-                        page_number=1,
-                        original_confidence=region.get("confidence", 0.0),
-                        original_engine="paddle",
-                    ))
+                    table_regions.append(
+                        TableRegion(
+                            bbox=(x1, y1, x2 - x1, y2 - y1),
+                            page_number=1,
+                            original_confidence=region.get("confidence", 0.0),
+                            original_engine="paddle",
+                        )
+                    )
 
         self.assertEqual(len(table_regions), 2)
         self.assertEqual(table_regions[0].bbox, (50, 100, 400, 200))
@@ -117,10 +120,12 @@ class TestDocIntelBboxConversion(unittest.TestCase):
                 rb = region.get("bbox", [0, 0, 0, 0])
                 if len(rb) == 4:
                     x1, y1, x2, y2 = rb
-                    table_regions.append(TableRegion(
-                        bbox=(x1, y1, x2 - x1, y2 - y1),
-                        page_number=1,
-                    ))
+                    table_regions.append(
+                        TableRegion(
+                            bbox=(x1, y1, x2 - x1, y2 - y1),
+                            page_number=1,
+                        )
+                    )
         self.assertEqual(len(table_regions), 0)
 
     def test_empty_structure_data(self):
@@ -142,8 +147,12 @@ class TestWorkerTableFallbackAnalysis(unittest.TestCase):
         lines = []
         for i in range(n):
             text = f"Line {i}"
-            box = [[50, 100 + i * 20], [450, 100 + i * 20],
-                   [450, 118 + i * 20], [50, 118 + i * 20]]
+            box = [
+                [50, 100 + i * 20],
+                [450, 100 + i * 20],
+                [450, 118 + i * 20],
+                [50, 118 + i * 20],
+            ]
             lines.append((text, box, confidence))
         return lines
 
@@ -281,10 +290,16 @@ class TestTableFallbackFinalization(unittest.TestCase):
     def test_finalize_with_pages(self):
         """finalize_table_fallback should aggregate page analyses."""
         pages = [
-            PageTableFallbackAnalysis(page_number=1, table_count=2, fallback_triggered=1),
-            PageTableFallbackAnalysis(page_number=2, table_count=1, fallback_triggered=0),
+            PageTableFallbackAnalysis(
+                page_number=1, table_count=2, fallback_triggered=1
+            ),
+            PageTableFallbackAnalysis(
+                page_number=2, table_count=1, fallback_triggered=0
+            ),
         ]
-        summary = finalize_table_fallback(pages, document_id="doc_1", source_file="test.pdf")
+        summary = finalize_table_fallback(
+            pages, document_id="doc_1", source_file="test.pdf"
+        )
 
         self.assertIsInstance(summary, DocumentTableFallbackSummary)
         self.assertEqual(summary.document_id, "doc_1")
@@ -303,14 +318,18 @@ class TestTableFallbackFinalization(unittest.TestCase):
         """The lambda pattern used in assembler should work with _finalize_and_write_feature."""
         # Simulate the lambda call pattern from assembler
         page_analyses = [
-            PageTableFallbackAnalysis(page_number=1, table_count=3, fallback_triggered=2),
+            PageTableFallbackAnalysis(
+                page_number=1, table_count=3, fallback_triggered=2
+            ),
         ]
         doc_id = "doc_test"
         doc_path = "test.pdf"
 
         def finalize_fn(analyses):
             return finalize_table_fallback(
-                analyses, document_id=doc_id, source_file=doc_path,
+                analyses,
+                document_id=doc_id,
+                source_file=doc_path,
             )
 
         result = finalize_fn(page_analyses)
@@ -405,6 +424,7 @@ class TestFeatureGating(unittest.TestCase):
     def test_env_var_default_disabled(self):
         """ENABLE_TABLE_FALLBACK should default to False."""
         from table_fallback import ENABLE_TABLE_FALLBACK
+
         # The default (when env var is not set to "true") should be False
         # We can't easily test this without controlling the env, but we can verify
         # the constant exists
@@ -422,16 +442,17 @@ class TestFeatureGating(unittest.TestCase):
         self.assertIn("ENABLE_TABLE_FALLBACK", source)
         self.assertIn("_TABLE_FALLBACK_AVAILABLE", source)
 
-    def test_structure_data_required(self):
-        """Worker should only analyze tables when structure_data is available."""
+    def test_table_analysis_requires_structure_or_paddle_line_evidence(self):
+        """Worker requires structural or Paddle-line evidence before fallback."""
         src_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "ocr_gpu_async.py",
         )
         with open(src_path, "r", encoding="utf-8") as f:
             source = f.read()
-        # The worker gate should check structure_data
-        self.assertIn("and structure_data", source)
+        self.assertIn(
+            "attempt.structure_data is not None or attempt.paddle_lines", source
+        )
 
 
 class TestEndToEndTableFallbackFlow(unittest.TestCase):
@@ -457,12 +478,14 @@ class TestEndToEndTableFallbackFlow(unittest.TestCase):
                 rb = region.get("bbox", [0, 0, 0, 0])
                 if len(rb) == 4:
                     x1, y1, x2, y2 = rb
-                    table_regions.append(TableRegion(
-                        bbox=(x1, y1, x2 - x1, y2 - y1),
-                        page_number=1,
-                        original_confidence=region.get("confidence", 0.0),
-                        original_engine="paddle",
-                    ))
+                    table_regions.append(
+                        TableRegion(
+                            bbox=(x1, y1, x2 - x1, y2 - y1),
+                            page_number=1,
+                            original_confidence=region.get("confidence", 0.0),
+                            original_engine="paddle",
+                        )
+                    )
 
         self.assertEqual(len(table_regions), 2)
 
@@ -490,7 +513,9 @@ class TestEndToEndTableFallbackFlow(unittest.TestCase):
                 page_analyses.append(page_tf)
 
         summary = finalize_table_fallback(
-            page_analyses, document_id="doc_test", source_file="test.pdf",
+            page_analyses,
+            document_id="doc_test",
+            source_file="test.pdf",
         )
         self.assertEqual(summary.total_tables, 2)
 

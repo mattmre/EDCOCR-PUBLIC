@@ -4,12 +4,14 @@ Pure-Python tests for ``apply_glossary`` and its helpers -- no Django
 required.  Tests for the Django-backed ``load_tenant_glossary`` are
 guarded with ``pytest.importorskip("django")`` and use Django fixtures.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
 import pytest
 
+import ocr_local.translation.glossary as glossary_module
 from ocr_local.translation.glossary import (
     GlossaryEntry,
     GlossaryHit,
@@ -118,7 +120,9 @@ def test_apply_glossary_chained_replacement_within_span():
 def test_apply_glossary_records_span_index():
     text = "Party"
     out, hits = apply_glossary(
-        text, [_entry(source="Party", target="Partie")], span_index=7,
+        text,
+        [_entry(source="Party", target="Partie")],
+        span_index=7,
     )
     assert out == "Partie"
     assert hits[0].span_index == 7
@@ -193,6 +197,36 @@ def test_apply_glossary_regex_input_too_large_skipped():
     assert hits == []
 
 
+def test_apply_glossary_regex_timeout_fails_closed(monkeypatch, caplog):
+    """Catastrophic backtracking is bounded and cannot partially replace."""
+    monkeypatch.setattr(glossary_module, "_REGEX_TIMEOUT_SECONDS", 0.001)
+    text = "a" * 10_000 + "!"
+
+    with caplog.at_level("WARNING"):
+        out, hits = apply_glossary(
+            text,
+            [_entry(source=r"(a+)+$", target="x", is_regex=True)],
+        )
+
+    assert out == text
+    assert hits == []
+    assert "match exceeded" in caplog.text
+
+
+def test_apply_glossary_regex_engine_unavailable_fails_closed(monkeypatch):
+    """Regex entries are skipped rather than falling back to unbounded re."""
+    monkeypatch.setattr(glossary_module, "_regex", None)
+
+    text = "Order #123"
+    out, hits = apply_glossary(
+        text,
+        [_entry(source=r"#\d+", target="(redacted)", is_regex=True)],
+    )
+
+    assert out == text
+    assert hits == []
+
+
 def test_apply_glossary_regex_backref_supported():
     """Regex target_term supports backreferences via match.expand."""
     out, hits = apply_glossary(
@@ -201,6 +235,37 @@ def test_apply_glossary_regex_backref_supported():
     )
     assert out == "100 USD and 250 USD"
     assert len(hits) == 2
+
+
+def test_apply_glossary_regex_output_growth_fails_closed(caplog):
+    """A bounded match must not amplify a span beyond the output budget."""
+    text = "a" * 3_000
+    entry = _entry(
+        source="a",
+        target="x" * 500,
+        is_regex=True,
+    )
+
+    with caplog.at_level("WARNING"):
+        out, hits = apply_glossary(text, [entry])
+
+    assert out == text
+    assert hits == []
+    assert "hit/output safety limit" in caplog.text
+
+
+def test_apply_glossary_regex_hit_budget_fails_closed(monkeypatch):
+    """The per-entry hit budget prevents unbounded hit-list growth."""
+    monkeypatch.setattr(glossary_module, "_MAX_GLOSSARY_HITS_PER_ENTRY", 2)
+    text = "abc"
+
+    out, hits = apply_glossary(
+        text,
+        [_entry(source=".", target="x", is_regex=True)],
+    )
+
+    assert out == text
+    assert hits == []
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +301,10 @@ def test_load_tenant_glossary_no_django_returns_empty(monkeypatch):
 def test_emit_glossary_applied_for_span_no_hits_is_noop():
     chain = MagicMock()
     emit_glossary_applied_for_span(
-        chain, glossary_id="g1", glossary_hash="h1", hits=[],
+        chain,
+        glossary_id="g1",
+        glossary_hash="h1",
+        hits=[],
     )
     assert not chain.log_event.called
 

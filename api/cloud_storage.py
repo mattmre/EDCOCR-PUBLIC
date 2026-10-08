@@ -5,6 +5,12 @@ listing, and deleting files across multiple cloud providers. Extends
 the existing S3/MinIO support with Azure Blob and GCS connectors.
 
 All cloud SDK imports are lazy — modules work without SDKs installed.
+
+**Claim status (wire-or-hide):** HIDE / experimental library.
+This module is **not** mounted on the production FastAPI router as a
+first-class surface. Do not claim Azure/GCS job I/O as live product
+capability until a mount + E2E PR lands.
+See ``docs/analysis/dead-code-20260729/WIRE-OR-HIDE-TRIAGE.md``.
 """
 
 import logging
@@ -36,6 +42,7 @@ class StorageProvider(Enum):
 @dataclass
 class StorageObject:
     """Metadata for a stored object."""
+
     key: str
     size: int = 0
     last_modified: str = ""
@@ -57,6 +64,7 @@ class StorageObject:
 @dataclass
 class StorageConfig:
     """Configuration for a storage backend."""
+
     provider: StorageProvider = StorageProvider.LOCAL
     # Common
     bucket: str = ""
@@ -91,14 +99,18 @@ class StorageConfig:
             config.region = os.environ.get("S3_REGION", "")
             config.prefix = os.environ.get("S3_PREFIX", "")
         elif config.provider == StorageProvider.AZURE_BLOB:
-            config.connection_string = _get_credential("AZURE_STORAGE_CONNECTION_STRING", "")
+            config.connection_string = _get_credential(
+                "AZURE_STORAGE_CONNECTION_STRING", ""
+            )
             config.account_name = os.environ.get("AZURE_STORAGE_ACCOUNT", "")
             config.account_key = _get_credential("AZURE_STORAGE_KEY", "")
             config.container_name = os.environ.get("AZURE_CONTAINER_NAME", "")
             config.prefix = os.environ.get("AZURE_PREFIX", "")
         elif config.provider == StorageProvider.GCS:
             config.project_id = os.environ.get("GCS_PROJECT_ID", "")
-            config.credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+            config.credentials_path = os.environ.get(
+                "GOOGLE_APPLICATION_CREDENTIALS", ""
+            )
             config.bucket = os.environ.get("GCS_BUCKET", "")
             config.prefix = os.environ.get("GCS_PREFIX", "")
         elif config.provider == StorageProvider.LOCAL:
@@ -148,7 +160,15 @@ class LocalStorageBackend(StorageBackend):
         self.base_path = base_path
 
     def _full_path(self, key: str) -> str:
-        return os.path.join(self.base_path, key.replace("/", os.sep))
+        root = os.path.realpath(os.path.abspath(os.path.expanduser(self.base_path)))
+        candidate = os.path.realpath(os.path.join(root, key.replace("/", os.sep)))
+        try:
+            contained = os.path.commonpath((root, candidate)) == root
+        except ValueError as exc:
+            raise ValueError(f"Storage key escapes local storage root: {key}") from exc
+        if not contained:
+            raise ValueError(f"Storage key escapes local storage root: {key}")
+        return candidate
 
     def upload(self, key: str, data: bytes, content_type: str = "") -> StorageObject:
         path = self._full_path(key)
@@ -181,13 +201,24 @@ class LocalStorageBackend(StorageBackend):
 
     def list_objects(self, prefix: str = "") -> list:
         results = []
-        search_path = self._full_path(prefix) if prefix else self.base_path
+        base_root = os.path.realpath(
+            os.path.abspath(os.path.expanduser(self.base_path))
+        )
+        search_path = self._full_path(prefix) if prefix else base_root
         if not os.path.exists(search_path):
             return results
         for root, dirs, files in os.walk(search_path):
             for fname in files:
                 full = os.path.join(root, fname)
-                rel = os.path.relpath(full, self.base_path).replace(os.sep, "/")
+                try:
+                    if (
+                        os.path.commonpath((base_root, os.path.realpath(full)))
+                        != base_root
+                    ):
+                        continue
+                except ValueError:
+                    continue
+                rel = os.path.relpath(full, base_root).replace(os.sep, "/")
                 size = os.path.getsize(full)
                 results.append(StorageObject(key=rel, size=size, provider="local"))
         return results
@@ -206,9 +237,14 @@ class LocalStorageBackend(StorageBackend):
 class AzureBlobBackend(StorageBackend):
     """Azure Blob Storage backend. Requires azure-storage-blob package."""
 
-    def __init__(self, connection_string: str = "", account_name: str = "",
-                 account_key: str = "", container_name: str = "",
-                 prefix: str = ""):
+    def __init__(
+        self,
+        connection_string: str = "",
+        account_name: str = "",
+        account_key: str = "",
+        container_name: str = "",
+        prefix: str = "",
+    ):
         self.container_name = container_name
         self.prefix = prefix
         self._client = None
@@ -226,10 +262,14 @@ class AzureBlobBackend(StorageBackend):
                     "Install with: pip install azure-storage-blob"
                 )
             if self._connection_string:
-                service = BlobServiceClient.from_connection_string(self._connection_string)
+                service = BlobServiceClient.from_connection_string(
+                    self._connection_string
+                )
             else:
                 url = f"https://{self._account_name}.blob.core.windows.net"
-                service = BlobServiceClient(account_url=url, credential=self._account_key)
+                service = BlobServiceClient(
+                    account_url=url, credential=self._account_key
+                )
             self._client = service.get_container_client(self.container_name)
         return self._client
 
@@ -242,9 +282,12 @@ class AzureBlobBackend(StorageBackend):
         kwargs = {}
         if content_type:
             from azure.storage.blob import ContentSettings
+
             kwargs["content_settings"] = ContentSettings(content_type=content_type)
         client.upload_blob(blob_key, data, overwrite=True, **kwargs)
-        return StorageObject(key=key, size=len(data), content_type=content_type, provider="azure_blob")
+        return StorageObject(
+            key=key, size=len(data), content_type=content_type, provider="azure_blob"
+        )
 
     def download(self, key: str) -> bytes:
         client = self._get_client()
@@ -275,15 +318,19 @@ class AzureBlobBackend(StorageBackend):
         for blob in client.list_blobs(name_starts_with=search):
             key = blob.name
             if self.prefix and key.startswith(f"{self.prefix}/"):
-                key = key[len(self.prefix) + 1:]
-            results.append(StorageObject(
-                key=key,
-                size=blob.size,
-                last_modified=str(blob.last_modified) if blob.last_modified else "",
-                content_type=blob.content_settings.content_type if blob.content_settings else "",
-                etag=blob.etag or "",
-                provider="azure_blob",
-            ))
+                key = key[len(self.prefix) + 1 :]
+            results.append(
+                StorageObject(
+                    key=key,
+                    size=blob.size,
+                    last_modified=str(blob.last_modified) if blob.last_modified else "",
+                    content_type=blob.content_settings.content_type
+                    if blob.content_settings
+                    else "",
+                    etag=blob.etag or "",
+                    provider="azure_blob",
+                )
+            )
         return results
 
     def get_metadata(self, key: str) -> StorageObject:
@@ -294,7 +341,9 @@ class AzureBlobBackend(StorageBackend):
             key=key,
             size=props.size,
             last_modified=str(props.last_modified) if props.last_modified else "",
-            content_type=props.content_settings.content_type if props.content_settings else "",
+            content_type=props.content_settings.content_type
+            if props.content_settings
+            else "",
             etag=props.etag or "",
             provider="azure_blob",
         )
@@ -303,8 +352,13 @@ class AzureBlobBackend(StorageBackend):
 class GcsBackend(StorageBackend):
     """Google Cloud Storage backend. Requires google-cloud-storage package."""
 
-    def __init__(self, project_id: str = "", credentials_path: str = "",
-                 bucket_name: str = "", prefix: str = ""):
+    def __init__(
+        self,
+        project_id: str = "",
+        credentials_path: str = "",
+        bucket_name: str = "",
+        prefix: str = "",
+    ):
         self.bucket_name = bucket_name
         self.prefix = prefix
         self._client = None
@@ -325,7 +379,10 @@ class GcsBackend(StorageBackend):
                 kwargs["project"] = self._project_id
             if self._credentials_path:
                 from google.oauth2 import service_account
-                creds = service_account.Credentials.from_service_account_file(self._credentials_path)
+
+                creds = service_account.Credentials.from_service_account_file(
+                    self._credentials_path
+                )
                 kwargs["credentials"] = creds
             client = storage.Client(**kwargs)
             self._client = client.bucket(self.bucket_name)
@@ -337,8 +394,12 @@ class GcsBackend(StorageBackend):
     def upload(self, key: str, data: bytes, content_type: str = "") -> StorageObject:
         bucket = self._get_client()
         blob = bucket.blob(self._prefixed_key(key))
-        blob.upload_from_string(data, content_type=content_type or "application/octet-stream")
-        return StorageObject(key=key, size=len(data), content_type=content_type, provider="gcs")
+        blob.upload_from_string(
+            data, content_type=content_type or "application/octet-stream"
+        )
+        return StorageObject(
+            key=key, size=len(data), content_type=content_type, provider="gcs"
+        )
 
     def download(self, key: str) -> bytes:
         bucket = self._get_client()
@@ -366,15 +427,17 @@ class GcsBackend(StorageBackend):
         for blob in bucket.list_blobs(prefix=search):
             key = blob.name
             if self.prefix and key.startswith(f"{self.prefix}/"):
-                key = key[len(self.prefix) + 1:]
-            results.append(StorageObject(
-                key=key,
-                size=blob.size or 0,
-                last_modified=str(blob.updated) if blob.updated else "",
-                content_type=blob.content_type or "",
-                etag=blob.etag or "",
-                provider="gcs",
-            ))
+                key = key[len(self.prefix) + 1 :]
+            results.append(
+                StorageObject(
+                    key=key,
+                    size=blob.size or 0,
+                    last_modified=str(blob.updated) if blob.updated else "",
+                    content_type=blob.content_type or "",
+                    etag=blob.etag or "",
+                    provider="gcs",
+                )
+            )
         return results
 
     def get_metadata(self, key: str) -> StorageObject:

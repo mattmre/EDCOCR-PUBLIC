@@ -1,7 +1,6 @@
 """Transform operation API endpoints."""
 
 import logging
-import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -12,7 +11,7 @@ from api import config
 from api.identity import require_role
 from api.limits import get_default_rate, limiter
 from api.models import ErrorResponse
-from api.path_safety import ensure_path_within_roots
+from api.path_safety import bind_authorized_operation_io, ensure_path_within_roots
 from custody_hooks import (
     create_custody_chain_for_operation,
     get_custody_diagnostics_summary,
@@ -116,7 +115,10 @@ def _ensure_registry_initialized():
     responses={403: {"model": ErrorResponse}},
 )
 @limiter.limit(get_default_rate())
-async def list_transforms(request: Request):
+async def list_transforms(
+    request: Request,
+    _auth: None = Depends(require_role("admin", "operator", "viewer")),
+):
     """List all available transform operations with metadata."""
     _check_feature_enabled()
 
@@ -145,7 +147,11 @@ async def list_transforms(request: Request):
     responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
 @limiter.limit(get_default_rate())
-async def get_transform_metadata(request: Request, operation_id: str):
+async def get_transform_metadata(
+    request: Request,
+    operation_id: str,
+    _auth: None = Depends(require_role("admin", "operator", "viewer")),
+):
     """Get metadata for a specific transform operation."""
     _check_feature_enabled()
 
@@ -190,11 +196,15 @@ async def execute_transform(
     _auth: None = Depends(require_role("admin", "operator")),
 ):
     """Execute a transform operation on a server-side file.
-    
+
     This endpoint performs synchronous execution suitable for short operations.
     For long-running transforms, consider using the job queue instead.
     """
     _check_feature_enabled()
+
+    from api.authz import require_platform_admin_for_shared_paths
+
+    require_platform_admin_for_shared_paths(request)
 
     registry = _ensure_registry_initialized()
 
@@ -224,21 +234,87 @@ async def execute_transform(
         )
     )
 
-    # Validate input file exists
-    if not os.path.isfile(input_path):
+    # RC-09: sandbox every path-bearing params key (output_dir/input_files/source_pdf).
+    from api.path_safety import sandbox_params_paths
+
+    safe_params = sandbox_params_paths(
+        dict(req.params or {}),
+        read_roots=(config.SOURCE_FOLDER, config.OUTPUT_FOLDER),
+        write_roots=(config.OUTPUT_FOLDER,),
+    )
+
+    try:
+        operation_io = bind_authorized_operation_io(
+            input_path=input_path,
+            output_path=output_path,
+            read_roots=(config.SOURCE_FOLDER, config.OUTPUT_FOLDER),
+            write_root=config.OUTPUT_FOLDER,
+        )
+    except FileNotFoundError as exc:
         raise HTTPException(
             status_code=404,
             detail={
                 "error": "input_not_found",
-                "message": f"Input file not found: {input_path}",
+                "message": "Input file not found.",
             },
-        )
+        ) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "input_unavailable",
+                "message": "Input or output path cannot be bound safely.",
+            },
+        ) from exc
 
-    # Build transform config
+    try:
+        try:
+            safe_params = operation_io.bind_path_params(
+                safe_params,
+                read_roots=(config.SOURCE_FOLDER, config.OUTPUT_FOLDER),
+                write_root=config.OUTPUT_FOLDER,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "input_not_found",
+                    "message": "Input file not found.",
+                },
+            ) from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "input_unavailable",
+                    "message": "Input or output path cannot be bound safely.",
+                },
+            ) from exc
+        return _execute_bound_transform(
+            operation=operation,
+            req=req,
+            safe_params=safe_params,
+            input_path=input_path,
+            output_path=output_path,
+            operation_io=operation_io,
+        )
+    finally:
+        operation_io.close()
+
+
+def _execute_bound_transform(
+    *,
+    operation,
+    req: TransformExecuteRequest,
+    safe_params: dict[str, Any],
+    input_path: str,
+    output_path: str,
+    operation_io,
+):
     try:
         transform_config = TransformConfig(
             operation_name=req.operation_id,
-            params=req.params,
+            params=safe_params,
             validate_input=req.validate_input,
             preserve_metadata=req.preserve_metadata,
         )
@@ -251,7 +327,6 @@ async def execute_transform(
             },
         )
 
-    # Validate config
     validation_errors = operation.validate_config(transform_config)
     if validation_errors:
         raise HTTPException(
@@ -263,21 +338,22 @@ async def execute_transform(
             },
         )
 
-    # Ensure output directory exists
-    output_dir = Path(output_path).parent
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Initialize custody chain
+    custody_dir = str(Path(config.OUTPUT_FOLDER) / "EXPORT" / "CUSTODY" / "ops")
+    Path(custody_dir).mkdir(parents=True, exist_ok=True)
     custody_chain = create_custody_chain_for_operation(
         input_path=input_path,
-        custody_dir="",  # Disable file output for API operations
+        custody_dir=custody_dir,
+        document_id=operation_io.document_id,
     )
-    
-    # Execute transform
+
     try:
-        result = operation.execute(input_path, output_path, transform_config)
+        operation_io.assert_snapshot_unchanged()
+        result = operation.execute(
+            operation_io.input_exec_path,
+            operation_io.output_exec_path,
+            transform_config,
+        )
     except TransformValidationError as exc:
-        # Record failure in custody chain
         custody_diag = record_transform_lifecycle(
             custody_chain=custody_chain,
             operation_id=req.operation_id,
@@ -286,8 +362,9 @@ async def execute_transform(
             params=req.params,
             success=False,
             error_message=str(exc),
+            input_hash=operation_io.input_hash,
+            input_nlink=operation_io.input_nlink,
         )
-        
         raise HTTPException(
             status_code=400,
             detail={
@@ -298,8 +375,6 @@ async def execute_transform(
         )
     except TransformError as exc:
         logger.error(f"Transform execution error: {exc}", exc_info=True)
-        
-        # Record failure in custody chain
         custody_diag = record_transform_lifecycle(
             custody_chain=custody_chain,
             operation_id=req.operation_id,
@@ -308,20 +383,19 @@ async def execute_transform(
             params=req.params,
             success=False,
             error_message=str(exc),
+            input_hash=operation_io.input_hash,
+            input_nlink=operation_io.input_nlink,
         )
-        
         raise HTTPException(
             status_code=500,
             detail={
                 "error": "execution_failed",
-                "message": str(exc),
+                "message": "Transform execution failed; inspect the custody record.",
                 "custody": get_custody_diagnostics_summary(custody_diag),
             },
         )
     except Exception as exc:
         logger.error(f"Unexpected transform error: {exc}", exc_info=True)
-        
-        # Record failure in custody chain
         custody_diag = record_transform_lifecycle(
             custody_chain=custody_chain,
             operation_id=req.operation_id,
@@ -330,8 +404,9 @@ async def execute_transform(
             params=req.params,
             success=False,
             error_message=f"Unexpected error: {type(exc).__name__}",
+            input_hash=operation_io.input_hash,
+            input_nlink=operation_io.input_nlink,
         )
-        
         raise HTTPException(
             status_code=500,
             detail={
@@ -340,24 +415,51 @@ async def execute_transform(
                 "custody": get_custody_diagnostics_summary(custody_diag),
             },
         )
-    
-    # Validate output if operation succeeded
-    if result.success and result.output_path:
-        validation_passed, validation_diag = validate_transform_output(result.output_path)
-        
-        if not validation_passed:
-            # Record failure in custody chain
+
+    output_hash = None
+    if result.success:
+        try:
+            output_hash = operation_io.hash_output()
+        except (OSError, ValueError) as exc:
             custody_diag = record_transform_lifecycle(
                 custody_chain=custody_chain,
                 operation_id=req.operation_id,
                 input_path=input_path,
-                output_path=result.output_path,
+                output_path=None,
                 params=req.params,
                 success=False,
-                error_message=f"Validation gate failed: {validation_diag.get('message', 'Unknown')}",
-                metadata=result.metadata,
+                error_message=str(exc),
+                input_hash=operation_io.input_hash,
+                input_nlink=operation_io.input_nlink,
             )
-            
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "output_changed",
+                    "message": "Transform output left the authorized parent.",
+                    "custody": get_custody_diagnostics_summary(custody_diag),
+                },
+            ) from exc
+        validation_passed, validation_diag = validate_transform_output(
+            operation_io.output_exec_path
+        )
+        if not validation_passed:
+            custody_diag = record_transform_lifecycle(
+                custody_chain=custody_chain,
+                operation_id=req.operation_id,
+                input_path=input_path,
+                output_path=output_path,
+                params=req.params,
+                success=False,
+                error_message=(
+                    "Validation gate failed: "
+                    f"{validation_diag.get('message', 'Unknown')}"
+                ),
+                metadata=result.metadata,
+                input_hash=operation_io.input_hash,
+                output_hash=output_hash,
+                input_nlink=operation_io.input_nlink,
+            )
             raise HTTPException(
                 status_code=500,
                 detail={
@@ -367,30 +469,45 @@ async def execute_transform(
                     "custody": get_custody_diagnostics_summary(custody_diag),
                 },
             )
-    
-    # Record success in custody chain
+
     custody_diag = record_transform_lifecycle(
         custody_chain=custody_chain,
         operation_id=req.operation_id,
         input_path=input_path,
-        output_path=result.output_path,
+        output_path=output_path if result.success else None,
         params=req.params,
         success=result.success,
         error_message=result.error_message,
         metadata=result.metadata,
+        input_hash=operation_io.input_hash,
+        output_hash=output_hash,
+        input_nlink=operation_io.input_nlink,
     )
-    
-    # Enrich metadata with custody and validation diagnostics
+    custody_summary = get_custody_diagnostics_summary(custody_diag)
+    if result.success and not custody_summary.get("custody_durable", False):
+        logger.critical(
+            "Transform %s produced output without a durable custody record",
+            req.operation_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "custody_persistence_failed",
+                "message": (
+                    "Transform output was not released because its forensic "
+                    "custody record is not durable."
+                ),
+                "custody": custody_summary,
+            },
+        )
     enriched_metadata = {
         **result.metadata,
-        "custody": get_custody_diagnostics_summary(custody_diag),
+        "custody": custody_summary,
     }
-
-    # Build response
     return TransformExecuteResponse(
         success=result.success,
         operation_id=req.operation_id,
-        output_path=result.output_path,
+        output_path=output_path if result.success else result.output_path,
         error_message=result.error_message,
         metadata=enriched_metadata,
         pages_processed=result.pages_processed,

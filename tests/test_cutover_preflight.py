@@ -14,6 +14,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 # Ensure scripts/ is importable
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
@@ -379,59 +381,103 @@ class TestDeploymentState:
 # ---------------------------------------------------------------------------
 
 class TestPipelineDrain:
-    def test_skip_when_no_coordinator_url(self):
-        results = check_pipeline_drain({})
-        assert results[0]["status"] == SKIP
+    @staticmethod
+    def response(payload):
+        response = MagicMock()
+        response.read.return_value = json.dumps(payload).encode()
+        response.__enter__.return_value = response
+        return response
 
-    def test_skip_when_coordinator_unreachable(self):
-        env = {"COORDINATOR_URL": "http://unreachable:8000"}
-        # urlopen will fail since host doesn't exist
-        results = check_pipeline_drain(env)
-        assert results[0]["status"] == SKIP
+    @staticmethod
+    def snapshot(jobs=0, writers=0, scope="global", background=0):
+        return {"drain": {"scope": scope, "nonterminal_jobs": jobs,
+                          "pipeline_writers": writers, "background_writers": background,
+                          "manager_tasks": 0}}
 
-    def test_pass_when_no_active_jobs(self):
-        env = {"COORDINATOR_URL": "http://localhost:8000"}
-        response_data = json.dumps({"active_jobs": 0}).encode()
-        with patch("urllib.request.urlopen") as mock_urlopen:
-            mock_resp = MagicMock()
-            mock_resp.read.return_value = response_data
-            mock_resp.__enter__ = lambda s: s
-            mock_resp.__exit__ = MagicMock(return_value=False)
-            mock_urlopen.return_value = mock_resp
-            results = check_pipeline_drain(env)
-        assert results[0]["status"] == PASS
+    def test_optional_missing_endpoint_skips(self):
+        assert check_pipeline_drain({})[0]["status"] == SKIP
 
-    def test_warn_when_active_jobs(self):
-        env = {"COORDINATOR_URL": "http://localhost:8000"}
-        response_data = json.dumps({"active_jobs": 5}).encode()
-        with patch("urllib.request.urlopen") as mock_urlopen:
-            mock_resp = MagicMock()
-            mock_resp.read.return_value = response_data
-            mock_resp.__enter__ = lambda s: s
-            mock_resp.__exit__ = MagicMock(return_value=False)
-            mock_urlopen.return_value = mock_resp
-            results = check_pipeline_drain(env)
-        assert results[0]["status"] == WARN
-        assert "5" in results[0]["details"]
+    def test_required_missing_endpoint_fails(self):
+        assert check_pipeline_drain({}, require_drain=True)[0]["status"] == FAIL
 
-    def test_fail_when_require_drain(self):
-        env = {"COORDINATOR_URL": "http://localhost:8000"}
-        response_data = json.dumps({"active_jobs": 3}).encode()
-        with patch("urllib.request.urlopen") as mock_urlopen:
-            mock_resp = MagicMock()
-            mock_resp.read.return_value = response_data
-            mock_resp.__enter__ = lambda s: s
-            mock_resp.__exit__ = MagicMock(return_value=False)
-            mock_urlopen.return_value = mock_resp
-            results = check_pipeline_drain(env, require_drain=True)
-        assert results[0]["status"] == FAIL
+    @pytest.mark.parametrize("required,expected", [(False, WARN), (True, FAIL)])
+    def test_unreachable_is_never_ready(self, required, expected):
+        with patch("urllib.request.OpenerDirector.open", side_effect=OSError):
+            results = check_pipeline_drain({"API_HOST": "localhost"}, required)
+        assert results[0]["status"] == expected
+        assert compute_verdict(results) != "READY"
 
-    def test_api_host_fallback(self):
-        env = {"API_HOST": "localhost", "API_PORT": "9000"}
-        with patch("urllib.request.urlopen") as mock_urlopen:
-            mock_urlopen.side_effect = Exception("unreachable")
-            results = check_pipeline_drain(env)
-        assert results[0]["status"] == SKIP
+    def test_pass_requires_explicit_global_empty_snapshot(self):
+        with patch("urllib.request.OpenerDirector.open", return_value=self.response(self.snapshot())) as opened:
+            result = check_pipeline_drain({"API_HOST": "localhost", "API_PORT": "9000",
+                                          "OCR_API_KEY": "owned-fixture-key"}, True)
+        assert result[0]["status"] == PASS
+        request = opened.call_args.args[0]
+        assert request.full_url == "http://localhost:9000/api/v1/health/detailed"
+        assert request.get_header("X-api-key") == "owned-fixture-key"
+        assert "broker" in result[0]["remediation"]
+
+    @pytest.mark.parametrize("jobs,writers", [(5, 0), (0, 1), (2, 3)])
+    @pytest.mark.parametrize("required,expected", [(False, WARN), (True, FAIL)])
+    def test_unfinished_jobs_and_cancelled_writer_fences_block(self, jobs, writers, required, expected):
+        with patch("urllib.request.OpenerDirector.open", return_value=self.response(self.snapshot(jobs, writers))):
+            result = check_pipeline_drain({"COORDINATOR_URL": "http://localhost:8000"}, required)
+        assert result[0]["status"] == expected
+
+    @pytest.mark.parametrize("payload", [
+        {}, {"status": "healthy"}, {"active_jobs": 0}, {"active_jobs": 0, "queued_jobs": 8},
+        {"drain": None}, [], None,
+        {"drain": {"scope": "tenant", "nonterminal_jobs": 0, "pipeline_writers": 0}},
+        {"drain": {"scope": "global", "nonterminal_jobs": 0}},
+        {"drain": {"scope": "global", "nonterminal_jobs": "0", "pipeline_writers": 0}},
+        {"drain": {"scope": "global", "nonterminal_jobs": False, "pipeline_writers": 0}},
+        {"drain": {"scope": "global", "nonterminal_jobs": -1, "pipeline_writers": 0}},
+    ])
+    def test_unknown_or_tenant_state_cannot_satisfy_required_drain(self, payload):
+        with patch("urllib.request.OpenerDirector.open", return_value=self.response(payload)):
+            result = check_pipeline_drain({"API_HOST": "localhost"}, True)
+        assert result[0]["status"] == FAIL
+        assert compute_verdict(result) == "NOT READY"
+
+    def test_malformed_or_oversized_response_fails(self):
+        for body in (b"not-json", b"x" * (1024 * 1024 + 1)):
+            response = self.response({})
+            response.read.return_value = body
+            with patch("urllib.request.OpenerDirector.open", return_value=response):
+                assert check_pipeline_drain({"API_HOST": "localhost"}, True)[0]["status"] == FAIL
+
+    def test_background_writer_alone_blocks_cutover(self):
+        with patch("urllib.request.OpenerDirector.open", return_value=self.response(self.snapshot(background=1))):
+            assert check_pipeline_drain({"API_HOST": "localhost"}, True)[0]["status"] == FAIL
+
+    def test_live_redirect_does_not_forward_operator_credential(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from threading import Thread
+
+        seen = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.path)
+                self.send_response(302)
+                self.send_header("Location", "/must-not-follow")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = check_pipeline_drain({"API_HOST": "127.0.0.1",
+                "API_PORT": str(server.server_port), "OCR_API_KEY": "owned-fixture"}, True)
+            assert result[0]["status"] == FAIL
+            assert seen == ["/api/v1/health/detailed"]
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 # ---------------------------------------------------------------------------
@@ -606,7 +652,7 @@ class TestComputeVerdict:
             {"status": PASS, "name": "a", "details": "ok", "remediation": None},
             {"status": SKIP, "name": "b", "details": "skip", "remediation": None},
         ]
-        assert compute_verdict(results) == "READY"
+        assert compute_verdict(results) == "PARTIAL"
 
     def test_any_fail(self):
         results = [
@@ -630,7 +676,7 @@ class TestComputeVerdict:
         assert compute_verdict(results) == "PARTIAL"
 
     def test_empty_results(self):
-        assert compute_verdict([]) == "READY"
+        assert compute_verdict([]) == "PARTIAL"
 
 
 # ---------------------------------------------------------------------------

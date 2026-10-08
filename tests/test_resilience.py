@@ -1,4 +1,4 @@
-"""Tests for pipeline resilience fixes  and ."""
+"""Tests for pipeline resilience fixes maintenance review and maintenance review."""
 
 import queue
 import threading
@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 
 class TestAssemblerExitRace(unittest.TestCase):
-    """Assembler should not exit when a message arrives during the drain pause."""
+    """maintenance review: Assembler should not exit when a message arrives during the drain pause."""
 
     def test_assembler_second_empty_check_requeues_late_message(self):
         """When a message arrives during the drain pause window, the second
@@ -40,7 +40,7 @@ class TestAssemblerExitRace(unittest.TestCase):
                 assembly_queue.get(timeout=0.01)
             except queue.Empty:
                 if image_queue.empty() and assembly_queue.empty() and stop_event.is_set():
-                    # brief drain pause
+                    # maintenance review: brief drain pause
                     time.sleep(0.05)
                     if not assembly_queue.empty():
                         continued = True
@@ -72,7 +72,7 @@ class TestAssemblerExitRace(unittest.TestCase):
 
 
 class TestGpuOomDetection(unittest.TestCase):
-    """GPU OOM errors should be detected and handled specifically."""
+    """maintenance review: GPU OOM errors should be detected and handled specifically."""
 
     @staticmethod
     def _classify_oom(exception):
@@ -137,7 +137,7 @@ class TestGpuOomDetection(unittest.TestCase):
         cache = {"en": ("mock_engine", "mock_lock"), "fr": ("fr_engine", "fr_lock")}
         cache_lock = threading.Lock()
 
-        # Simulate the eviction logic from the  fix
+        # Simulate the eviction logic from the maintenance review fix
         lang_hint = "en"
         try:
             with cache_lock:

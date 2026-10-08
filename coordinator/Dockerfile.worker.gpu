@@ -1,0 +1,150 @@
+# GPU OCR worker. The base supplies the exact CUDA 12.6/cuDNN 9.5 user-space
+# runtime; NVIDIA Container Toolkit injects the host-driver interface at start.
+ARG CUDA_BASE_IMAGE=nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04@sha256:8aef630a54bc5c5146ae5ce68e6af5caa3df0fb690bb91544175c91f307e4356
+
+FROM python:3.11-slim-bookworm AS model-preload
+
+ENV HOME=/home/ocr
+ENV PADDLE_HOME=/home/ocr/.paddle
+ENV PADDLEOCR_HOME=/home/ocr/.paddleocr
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /home/ocr/.paddle /home/ocr/.paddleocr && \
+    python3 -m pip install --no-cache-dir --upgrade "pip==26.2.1" && \
+    python3 -m pip install --no-cache-dir \
+        "protobuf==7.35.1" \
+        "paddlepaddle==3.0.0" \
+        "paddleocr==2.9.1"
+
+COPY download_models.py /tmp/download_models.py
+ARG SKIP_MODEL_PRELOAD=0
+RUN SKIP_MODEL_PRELOAD=${SKIP_MODEL_PRELOAD} \
+    python3 /tmp/download_models.py --cpu-only && rm /tmp/download_models.py
+
+FROM ${CUDA_BASE_IMAGE} AS runtime
+ARG TARGETARCH
+ARG SOURCE_REVISION
+ARG SOURCE_TREE_SHA256
+RUN if [ "${TARGETARCH}" != "amd64" ]; then \
+      printf '%s\n' 'ERROR: Paddle CUDA 12.6 worker is supported on linux/amd64 only; use the CPU worker on this architecture' >&2; exit 1; fi
+RUN if ! printf '%s' "${SOURCE_REVISION}" | grep -Eq '^[0-9a-f]{40,64}$' || \
+       ! printf '%s' "${SOURCE_TREE_SHA256}" | grep -Eq '^[0-9a-f]{64}$'; then \
+      printf '%s\n' 'ERROR: use scripts/with_runtime_source.sh worker to build this image' >&2; exit 1; fi
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      io.ocr_local.runtime-source-sha256="${SOURCE_TREE_SHA256}" \
+      io.ocr_local.runtime-profile="worker"
+
+ENV HOME=/home/ocr
+ENV PADDLE_HOME=/home/ocr/.paddle
+ENV PADDLEOCR_HOME=/home/ocr/.paddleocr
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    fonts-noto-core \
+    ghostscript \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    libzbar0 \
+    nfs-common \
+    tini \
+    poppler-utils \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3.12-venv \
+    tesseract-ocr-all \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv /opt/ocr-venv && \
+    /opt/ocr-venv/bin/python -c "import sys; assert sys.version_info >= (3, 12)"
+ENV PATH=/opt/ocr-venv/bin:${PATH}
+
+RUN mkdir -p /app/fonts/noto /app/models /home/ocr/.paddle /home/ocr/.paddleocr && \
+    for f in \
+        NotoSans-Regular.ttf \
+        NotoSansArabic-Regular.ttf \
+        NotoSansDevanagari-Regular.ttf \
+        NotoSansTamil-Regular.ttf \
+        NotoSansTelugu-Regular.ttf \
+        NotoSansKannada-Regular.ttf \
+        NotoSansGeorgian-Regular.ttf \
+        NotoSansThai-Regular.ttf \
+        NotoSansBengali-Regular.ttf; \
+    do \
+        [ -f "/usr/share/fonts/truetype/noto/$f" ] && \
+            ln -sf "/usr/share/fonts/truetype/noto/$f" "/app/fonts/noto/$f"; \
+    done
+
+RUN curl -fSL "https://github.com/notofonts/noto-cjk/raw/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf" \
+         -o /app/fonts/noto/NotoSansCJKsc-Regular.otf && \
+    curl -fSL "https://github.com/notofonts/noto-cjk/raw/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf" \
+         -o /app/fonts/noto/NotoSansCJKtc-Regular.otf && \
+    curl -fSL "https://github.com/notofonts/noto-cjk/raw/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf" \
+         -o /app/fonts/noto/NotoSansCJKjp-Regular.otf && \
+    curl -fSL "https://github.com/notofonts/noto-cjk/raw/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf" \
+         -o /app/fonts/noto/NotoSansCJKkr-Regular.otf
+
+WORKDIR /app
+
+COPY coordinator/requirements.txt /app/coordinator-requirements.txt
+COPY requirements.txt /app/ocr-requirements.txt
+
+# The shared root requirements intentionally pin the qualified CPU wheel.
+# Replace it in the same layer with the matching official CUDA 12.6 wheel.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    PIP_CACHE_DIR=/root/.cache/pip python3 -m pip install --upgrade "pip==26.2.1" && \
+    PIP_CACHE_DIR=/root/.cache/pip python3 -m pip install \
+        -r /app/coordinator-requirements.txt \
+        -r /app/ocr-requirements.txt && \
+    python3 -m pip uninstall -y paddlepaddle && \
+    PIP_CACHE_DIR=/root/.cache/pip python3 -m pip install --no-deps \
+        --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ \
+        paddlepaddle-gpu==3.0.0 && \
+    python3 -c "from importlib.metadata import version; assert version('paddlepaddle-gpu') == '3.0.0'; import sys; assert sys.version_info >= (3, 12)"
+
+COPY scripts/harden_imgaug_runtime.py /tmp/harden_imgaug_runtime.py
+RUN python3 /tmp/harden_imgaug_runtime.py && rm /tmp/harden_imgaug_runtime.py
+
+COPY --from=model-preload /home/ocr/.paddle /home/ocr/.paddle
+COPY --from=model-preload /home/ocr/.paddleocr /home/ocr/.paddleocr
+
+ADD https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin /app/models/lid.176.bin
+ENV FASTTEXT_MODEL_PATH=/app/models/lid.176.bin
+
+COPY . /app/
+
+ENV PYTHONPATH=/app:/app/coordinator
+ENV DJANGO_SETTINGS_MODULE=coordinator.settings
+ENV OCR_INFERENCE_BACKEND=paddle
+
+RUN apt-get update && apt-get purge -y --auto-remove build-essential python3-dev && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd -r -g 1000 ocr && \
+    useradd -r -u 1000 -g ocr -d /home/ocr -s /sbin/nologin ocr && \
+    chmod 755 /app/coordinator/gpu_worker_entrypoint.sh && \
+    chown -R ocr:ocr /home/ocr /app/models
+
+
+# Pre-bake spaCy NER model (en_core_web_sm) for air-gapped entity extraction
+RUN python3 -m spacy download en_core_web_sm &&     python3 -c "import spacy; spacy.load('en_core_web_sm'); print('SPACY_BAKE_OK')"
+
+USER ocr
+
+HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
+    CMD python3 /app/coordinator/worker_healthcheck.py
+
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/app/coordinator/gpu_worker_entrypoint.sh"]
+
+CMD ["celery", "-A", "coordinator", "worker", \
+     "-Q", "ocr_gpu", \
+     "-c", "4", \
+     "--hostname", "worker-gpu@%h", \
+     "-l", "info"]

@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Air-gapped deployment bundle script for EDCOCR distributed pipeline.
+# Air-gapped deployment bundle script for OCR_LOCAL distributed pipeline.
 #
 # Creates a tarball containing all Docker images needed to deploy the
 # distributed OCR pipeline on a network with no internet access.
 #
 # Usage:
 #   # Build images first:
+#   export SOURCE_REVISION="$(git rev-parse HEAD)"
+#   export SOURCE_TREE_SHA256="$(python3 scripts/runtime_source_fingerprint.py --profile coordinator)"
 #   cd coordinator && docker compose -f docker-compose.coordinator.yml build
-#   docker build -f coordinator/Dockerfile.worker -t ocr-worker:latest .
+#   bash scripts/with_runtime_source.sh worker docker build -f coordinator/Dockerfile.worker.gpu -t ocr-worker:latest .
 #
 #   # Create bundle:
 #   ./scripts/airgap-bundle.sh
@@ -19,12 +21,33 @@
 
 set -euo pipefail
 
-BUNDLE_DATE=$(date +%Y%m%d)
+: "${SOURCE_REVISION:?Export SOURCE_REVISION from git rev-parse HEAD before building and bundling}"
+: "${SOURCE_TREE_SHA256:?Export SOURCE_TREE_SHA256 with scripts/runtime_source_fingerprint.py --profile coordinator before building and bundling}"
+: "${WORKER_SOURCE_TREE_SHA256:?Export WORKER_SOURCE_TREE_SHA256 with scripts/runtime_source_fingerprint.py --profile worker before building and bundling}"
+if [[ ! "${SOURCE_REVISION}" =~ ^[[:xdigit:]]{40,64}$ ]]; then
+    echo "ERROR: SOURCE_REVISION must be the full hexadecimal git commit ID." >&2
+    exit 1
+fi
+if [[ ! "${SOURCE_TREE_SHA256}" =~ ^[[:xdigit:]]{64}$ ]]; then
+    echo "ERROR: SOURCE_TREE_SHA256 must be the 64-character coordinator profile fingerprint." >&2
+    exit 1
+fi
+if [[ ! "${WORKER_SOURCE_TREE_SHA256}" =~ ^[[:xdigit:]]{64}$ ]]; then
+    echo "ERROR: WORKER_SOURCE_TREE_SHA256 must be the 64-character worker profile fingerprint." >&2
+    exit 1
+fi
+
+BUNDLE_DATE=$(date +%Y%m%dT%H%M%SZ)
 BUNDLE_NAME="ocr_local_airgap_bundle_${BUNDLE_DATE}"
 BUNDLE_DIR="${BUNDLE_NAME}"
 BUNDLE_TAR="${BUNDLE_NAME}.tar.gz"
 
-echo "=== EDCOCR Air-Gapped Bundle Builder ==="
+if [[ -e "$BUNDLE_DIR" || -e "$BUNDLE_TAR" ]]; then
+    echo "ERROR: refusing to replace an existing bundle" >&2
+    exit 1
+fi
+
+echo "=== OCR_LOCAL Air-Gapped Bundle Builder ==="
 echo ""
 
 # Infrastructure images
@@ -63,13 +86,42 @@ for img in "${APP_IMAGES[@]}"; do
     if docker image inspect "$img" >/dev/null 2>&1; then
         echo "  Found: $img"
     else
-        echo "  MISSING: $img — build with 'docker compose build' first"
+        echo "  MISSING: $img — build with 'docker compose build' first" >&2
+        exit 1
     fi
 done
 
 echo ""
 echo "Step 3: Creating bundle directory..."
-mkdir -p "$BUNDLE_DIR"
+mkdir "$BUNDLE_DIR"
+
+# Bind exact images before writing a large archive. Missing/mismatched
+# coordinator labels cannot become a seemingly qualified offline bundle.
+docker image inspect "${INFRA_IMAGES[@]}" "${APP_IMAGES[@]}" > "$BUNDLE_DIR/image-inspect.json"
+python3 - "$BUNDLE_DIR/image-inspect.json" <<'PYCODE'
+import json, os, sys
+from pathlib import Path
+rows = json.loads(Path(sys.argv[1]).read_text())
+for row in rows:
+    tags = row.get("RepoTags") or []
+    if any(tag.startswith("coordinator-") for tag in tags):
+        labels = row.get("Config", {}).get("Labels") or {}
+        if (labels.get("org.opencontainers.image.revision") != os.environ["SOURCE_REVISION"]
+                or labels.get("io.ocr_local.runtime-source-sha256") != os.environ["SOURCE_TREE_SHA256"]
+                or labels.get("io.ocr_local.runtime-profile") != "coordinator"):
+            raise SystemExit("ERROR: bundled coordinator source identity mismatch")
+    if "ocr-worker:latest" in tags:
+        labels = row.get("Config", {}).get("Labels") or {}
+        if (labels.get("org.opencontainers.image.revision") != os.environ["SOURCE_REVISION"]
+                or labels.get("io.ocr_local.runtime-source-sha256") != os.environ["WORKER_SOURCE_TREE_SHA256"]
+                or labels.get("io.ocr_local.runtime-profile") != "worker"):
+            raise SystemExit("ERROR: bundled worker source identity mismatch")
+manifest = [{"id": row["Id"], "tags": row.get("RepoTags") or [],
+             "platform": row.get("Os", "") + "/" + row.get("Architecture", ""),
+             "labels": row.get("Config", {}).get("Labels") or {}} for row in rows]
+Path(sys.argv[1]).with_name("image-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+Path(sys.argv[1]).unlink()
+PYCODE
 
 echo "Step 4: Saving Docker images..."
 ALL_IMAGES=("${INFRA_IMAGES[@]}" "${APP_IMAGES[@]}")
@@ -89,14 +141,38 @@ echo "  Saving ${#EXISTING_IMAGES[@]} images to ${BUNDLE_DIR}/images.tar..."
 docker save "${EXISTING_IMAGES[@]}" -o "${BUNDLE_DIR}/images.tar"
 
 echo "Step 5: Copying deployment files..."
-cp coordinator/docker-compose.coordinator.yml "${BUNDLE_DIR}/"
-cp coordinator/docker-compose.worker.yml "${BUNDLE_DIR}/"
+# Preserve placeholders without serializing the build host's credentials.
+# Explicit image references and no build blocks make the offline files usable
+# from any project/directory name with --no-build --pull never.
+for role in coordinator worker; do
+    docker compose -f "coordinator/docker-compose.${role}.yml" config --no-interpolate --no-path-resolution --format json > "$BUNDLE_DIR/docker-compose.${role}.yml"
+done
+python3 - "$BUNDLE_DIR" <<'PYCODE'
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+for role in ("coordinator", "worker"):
+    path = root / ("docker-compose." + role + ".yml")
+    data = json.loads(path.read_text())
+    services = data["services"]
+    for name in list(services):
+        if name == "edc-translation":
+            del services[name]  # optional external app is not in this bundle
+            continue
+        service = services[name]
+        if "build" in service:
+            del service["build"]
+            service["image"] = "ocr-worker:latest" if role == "worker" else "coordinator-" + name + ":latest"
+    path.write_text(json.dumps(data, indent=2) + "\n")
+PYCODE
+mkdir -p "${BUNDLE_DIR}/rabbitmq"
+cp coordinator/rabbitmq/definitions.json "${BUNDLE_DIR}/rabbitmq/definitions.json"
 cp scripts/airgap-deploy.sh "${BUNDLE_DIR}/"
 chmod +x "${BUNDLE_DIR}/airgap-deploy.sh"
 
 # Create a .env template
 cat > "${BUNDLE_DIR}/.env.template" << 'ENVEOF'
-# Required secrets for EDCOCR distributed pipeline
+# Required secrets for OCR_LOCAL distributed pipeline
 # Copy this file to .env and fill in values before deploying.
 POSTGRES_PASSWORD=changeme
 RABBITMQ_PASSWORD=changeme
@@ -104,6 +180,22 @@ REDIS_PASSWORD=changeme
 DJANGO_SECRET_KEY=changeme-use-a-long-random-string
 FLOWER_PASSWORD=changeme
 NFS_ROOT=/shared
+CELERY_TASK_SIGNING_KEY=
+PII_ENCRYPTION_KEY=
+WEBHOOK_SECRET_KEY=
+# Worker nodes also require operator-supplied coordinator connection URLs:
+CELERY_BROKER_URL=
+CELERY_RESULT_BACKEND=
+DATABASE_URL=
+ENVEOF
+
+# The offline deploy compose still parses build args even though it uses the
+# prebuilt images. Carry the source identity through .env so target-side
+# compose commands work without source checkout or helper script.
+cat >> "${BUNDLE_DIR}/.env.template" << ENVEOF
+SOURCE_REVISION=${SOURCE_REVISION}
+SOURCE_TREE_SHA256=${SOURCE_TREE_SHA256}
+WORKER_SOURCE_TREE_SHA256=${WORKER_SOURCE_TREE_SHA256}
 ENVEOF
 
 echo "Step 6: Creating tarball..."

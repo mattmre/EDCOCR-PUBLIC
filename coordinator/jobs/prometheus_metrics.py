@@ -8,6 +8,7 @@ with tier-specific TTLs to reduce database load under frequent scrapes.
 import hashlib
 import json
 import math
+import threading
 
 from django.utils import timezone
 from prometheus_client import CollectorRegistry, generate_latest
@@ -19,15 +20,64 @@ from prometheus_client.core import (
 
 from .metrics_cache import _cache
 
+# R4-RC-07/08: optional tenant pin for scrape collection (thread-local).
+_metrics_tenant_ctx = threading.local()
+
+
+def _metrics_tenant_id() -> str | None:
+    tid = getattr(_metrics_tenant_ctx, "tenant_id", None)
+    if tid is None:
+        return None
+    tid_s = str(tid).strip()
+    return tid_s or None
+
+
+def _cache_key(tier: str) -> str:
+    """Namespace scrape cache by tenant so warm/hot/cold cannot cross-tenant leak."""
+    tid = _metrics_tenant_id()
+    # Explicit fleet key when unscoped (lab / non-MT); never reuse tenant buckets.
+    return f"{tier}:{tid if tid else '__fleet__'}"
+
+
+def _jobs_qs():
+    """Job queryset optionally pinned to tenant_id from get_metrics_text()."""
+    from .models import Job
+
+    qs = Job.objects.all()
+    tid = _metrics_tenant_id()
+    if tid:
+        qs = qs.filter(tenant_id=tid)
+    return qs
+
+
+def _pages_qs(**filters):
+    from .models import PageResult
+
+    qs = PageResult.objects.all()
+    tid = _metrics_tenant_id()
+    if tid:
+        qs = qs.filter(job__tenant_id=tid)
+    if filters:
+        qs = qs.filter(**filters)
+    return qs
+
+
 # Registry isolated from default to avoid double-registration in tests.
 # auto_describe is False because PipelineCollector provides its own describe().
 REGISTRY = CollectorRegistry(auto_describe=False)
 
 # Known page statuses to bound cardinality of ocr_pages_by_status metric.
-_KNOWN_PAGE_STATUSES = ("ok", "fallback", "image_only", "completed", "failed", "pending")
+_KNOWN_PAGE_STATUSES = (
+    "ok",
+    "fallback",
+    "image_only",
+    "completed",
+    "failed",
+    "pending",
+)
 
 # TTL tiers (seconds) for scrape caching.
-_TTL_HOT = 15   # Fast-changing: error rates, completion rate, stuck jobs
+_TTL_HOT = 15  # Fast-changing: error rates, completion rate, stuck jobs
 _TTL_WARM = 30  # Moderate: job counts, worker counts, page stats
 _TTL_COLD = 60  # Slow-changing: custody chain verification
 
@@ -72,27 +122,57 @@ class PipelineCollector:
         time, which would fail before Django migrations have run.
         """
         yield GaugeMetricFamily("ocr_jobs_total", "Total jobs by status")
-        yield GaugeMetricFamily("ocr_job_error_rate_1h", "Job failure rate over the last hour")
+        yield GaugeMetricFamily(
+            "ocr_job_error_rate_1h", "Job failure rate over the last hour"
+        )
         yield GaugeMetricFamily("ocr_workers_total", "Total workers by status")
-        yield GaugeMetricFamily("ocr_gpu_workers_available", "GPU workers online or busy")
-        yield CounterMetricFamily("ocr_pages_processed_total", "Total pages processed by engine and status")
-        yield GaugeMetricFamily("ocr_page_processing_time_avg_ms", "Average page processing time")
+        yield GaugeMetricFamily(
+            "ocr_gpu_workers_available", "GPU workers online or busy"
+        )
+        yield CounterMetricFamily(
+            "ocr_pages_processed_total", "Total pages processed by engine and status"
+        )
+        yield GaugeMetricFamily(
+            "ocr_page_processing_time_avg_ms", "Average page processing time"
+        )
         yield GaugeMetricFamily("ocr_pages_by_status", "Pages by processing status")
-        yield GaugeMetricFamily("ocr_custody_violations_total", "Custody chain violations in the last hour")
-        yield GaugeMetricFamily("ocr_s3_job_error_rate_1h", "S3 job failure rate last hour")
-        yield GaugeMetricFamily("ocr_job_completion_rate_1h", "Job completion rate last hour")
-        yield GaugeMetricFamily("ocr_jobs_by_storage_backend", "Jobs by storage backend")
-        yield GaugeMetricFamily("ocr_jobs_stuck_total", "Jobs stuck in processing/ingesting over 1 hour")
-        yield GaugeMetricFamily("ocr_page_processing_time_p95_ms", "95th percentile page processing time")
-        yield GaugeMetricFamily("ocr_page_processing_time_p99_ms", "99th percentile page processing time")
+        yield GaugeMetricFamily(
+            "ocr_custody_violations_total", "Custody chain violations in the last hour"
+        )
+        yield GaugeMetricFamily(
+            "ocr_s3_job_error_rate_1h", "S3 job failure rate last hour"
+        )
+        yield GaugeMetricFamily(
+            "ocr_job_completion_rate_1h", "Job completion rate last hour"
+        )
+        yield GaugeMetricFamily(
+            "ocr_jobs_by_storage_backend", "Jobs by storage backend"
+        )
+        yield GaugeMetricFamily(
+            "ocr_jobs_stuck_total", "Jobs stuck in processing/ingesting over 1 hour"
+        )
+        yield GaugeMetricFamily(
+            "ocr_page_processing_time_p95_ms", "95th percentile page processing time"
+        )
+        yield GaugeMetricFamily(
+            "ocr_page_processing_time_p99_ms", "99th percentile page processing time"
+        )
         yield GaugeMetricFamily("ocr_queue_depth", "Depth per pipeline stage queue")
-        yield GaugeMetricFamily("ocr_dpi_escalation_total", "Pages that needed DPI escalation retry")
+        yield GaugeMetricFamily(
+            "ocr_dpi_escalation_total", "Pages that needed DPI escalation retry"
+        )
         yield GaugeMetricFamily("ocr_pages_by_engine", "Pages processed per OCR engine")
         # Tenant-scoped metrics
         yield GaugeMetricFamily("ocr_tenant_jobs_total", "Jobs by tenant and status")
-        yield GaugeMetricFamily("ocr_tenant_pages_processed", "Pages processed per tenant")
-        yield GaugeMetricFamily("ocr_tenant_error_rate", "Per-tenant error rate (1h window)")
-        yield GaugeMetricFamily("ocr_tenant_processing_time_avg_ms", "Average processing time per tenant")
+        yield GaugeMetricFamily(
+            "ocr_tenant_pages_processed", "Pages processed per tenant"
+        )
+        yield GaugeMetricFamily(
+            "ocr_tenant_error_rate", "Per-tenant error rate (1h window)"
+        )
+        yield GaugeMetricFamily(
+            "ocr_tenant_processing_time_avg_ms", "Average processing time per tenant"
+        )
         yield HistogramMetricFamily(
             "ocr_processing_duration_seconds",
             "Processing duration per page in seconds",
@@ -103,10 +183,11 @@ class PipelineCollector:
         """Collect moderate-frequency metrics: job/worker counts, page stats."""
         from django.db.models import Avg, Count
 
-        from .models import Job, PageResult, Worker
+        from .models import Job, Worker
 
         job_counts = dict(
-            Job.objects.values_list("status")
+            _jobs_qs()
+            .values_list("status")
             .annotate(c=Count("pk"))
             .values_list("status", "c")
         )
@@ -123,20 +204,21 @@ class PipelineCollector:
         ).count()
 
         page_statuses = ("ok", "fallback", "image_only", "completed")
-        page_stats = PageResult.objects.filter(status__in=page_statuses).aggregate(
+        page_stats = _pages_qs(status__in=page_statuses).aggregate(
             total=Count("id"),
             avg_time_ms=Avg("processing_time_ms"),
         )
 
         page_status_counts = dict(
-            PageResult.objects.filter(status__in=_KNOWN_PAGE_STATUSES)
+            _pages_qs(status__in=_KNOWN_PAGE_STATUSES)
             .values_list("status")
             .annotate(c=Count("pk"))
             .values_list("status", "c")
         )
 
         backend_counts = dict(
-            Job.objects.values_list("storage_backend_used")
+            _jobs_qs()
+            .values_list("storage_backend_used")
             .annotate(c=Count("pk"))
             .values_list("storage_backend_used", "c")
         )
@@ -145,7 +227,7 @@ class PipelineCollector:
         # Fetch processing times from completed pages for percentile calculation.
         # Limit to recent 10k pages for bounded memory usage.
         processing_times = list(
-            PageResult.objects.filter(
+            _pages_qs(
                 status__in=page_statuses,
                 processing_time_ms__gt=0,
             )
@@ -158,40 +240,44 @@ class PipelineCollector:
         # --- Queue depth (M-11) ---
         # Approximate queue depth per pipeline stage from Job/PageResult status.
         # The 'queue' label uses the 6 logical pipeline stage names.
-        processing_count = Job.objects.filter(status=Job.Status.PROCESSING).count()
+        processing_count = _jobs_qs().filter(status=Job.Status.PROCESSING).count()
         # Split GPU vs CPU processing by checking assigned_worker against
         # Worker capabilities.  Workers with gpu_available=True are GPU workers.
         gpu_hostnames = set(
-            Worker.objects.filter(gpu_available=True)
-            .values_list("hostname", flat=True)
+            Worker.objects.filter(gpu_available=True).values_list("hostname", flat=True)
         )
-        gpu_processing = Job.objects.filter(
-            status=Job.Status.PROCESSING,
-            assigned_worker__in=gpu_hostnames,
-        ).count() if gpu_hostnames else 0
+        gpu_processing = (
+            _jobs_qs()
+            .filter(
+                status=Job.Status.PROCESSING,
+                assigned_worker__in=gpu_hostnames,
+            )
+            .count()
+            if gpu_hostnames
+            else 0
+        )
         cpu_processing = processing_count - gpu_processing
 
         queue_depths = {
-            "extraction": Job.objects.filter(status=Job.Status.INGESTING).count(),
+            "extraction": _jobs_qs().filter(status=Job.Status.INGESTING).count(),
             "ocr_gpu": gpu_processing,
             "ocr_cpu": cpu_processing,
-            "compression": Job.objects.filter(status="compressing").count()
+            "compression": _jobs_qs().filter(status="compressing").count()
             if hasattr(Job.Status, "COMPRESSING")
             else 0,
-            "nlp": PageResult.objects.filter(status="nlp_pending").count(),
-            "assembly": Job.objects.filter(status=Job.Status.ASSEMBLING).count(),
+            "nlp": _pages_qs(status="nlp_pending").count(),
+            "assembly": _jobs_qs().filter(status=Job.Status.ASSEMBLING).count(),
         }
 
         # --- DPI escalation count ---
         # Pages with status="fallback" are those that needed DPI escalation
         # (Tesseract fallback after PaddleOCR low confidence).
-        dpi_escalation_count = PageResult.objects.filter(
-            status="fallback"
-        ).count()
+        dpi_escalation_count = _pages_qs(status="fallback").count()
 
         # --- Pages by engine (ocr_method) ---
         engine_counts = dict(
-            PageResult.objects.exclude(ocr_method="")
+            _pages_qs()
+            .exclude(ocr_method="")
             .values_list("ocr_method")
             .annotate(c=Count("pk"))
             .values_list("ocr_method", "c")
@@ -211,20 +297,27 @@ class PipelineCollector:
             "imageonly": "onnx",  # image-only pages lack a true engine
         }
         throughput_rows = list(
-            PageResult.objects.exclude(ocr_method="")
+            _pages_qs()
+            .exclude(ocr_method="")
             .filter(status__in=list(_success_statuses | _failed_statuses))
             .values("ocr_method", "status")
             .annotate(c=Count("pk"))
         )
         page_throughput: dict[tuple[str, str], int] = {}
         for row in throughput_rows:
-            raw_engine = (row["ocr_method"] or "").lower().replace(" ", "").replace("-", "").replace("_", "")
+            raw_engine = (
+                (row["ocr_method"] or "")
+                .lower()
+                .replace(" ", "")
+                .replace("-", "")
+                .replace("_", "")
+            )
             engine_label = _engine_map.get(raw_engine, raw_engine)
             status_label = "success" if row["status"] in _success_statuses else "failed"
             key = (engine_label, status_label)
             page_throughput[key] = page_throughput.get(key, 0) + row["c"]
         # Also count failed pages that have no ocr_method set
-        failed_no_engine = PageResult.objects.filter(
+        failed_no_engine = _pages_qs(
             status__in=list(_failed_statuses),
             ocr_method="",
         ).count()
@@ -235,14 +328,15 @@ class PipelineCollector:
         # --- Tenant-scoped metrics ---
         # Job counts grouped by tenant_id and status (exclude empty tenant_id)
         tenant_job_rows = list(
-            Job.objects.exclude(tenant_id="")
+            _jobs_qs()
+            .exclude(tenant_id="")
             .values("tenant_id", "status")
             .annotate(c=Count("pk"))
         )
 
         # Pages processed per tenant
         tenant_pages_rows = list(
-            PageResult.objects.filter(
+            _pages_qs(
                 status__in=page_statuses,
                 job__tenant_id__gt="",
             )
@@ -252,7 +346,7 @@ class PipelineCollector:
 
         # Avg processing time per tenant
         tenant_avg_time_rows = list(
-            PageResult.objects.filter(
+            _pages_qs(
                 status__in=page_statuses,
                 processing_time_ms__gt=0,
                 job__tenant_id__gt="",
@@ -267,11 +361,12 @@ class PipelineCollector:
         now = timezone.now()
         one_day_ago = now - timezone.timedelta(hours=24)
         hist_rows = list(
-            PageResult.objects.filter(
+            _pages_qs(
                 processing_time_ms__gt=0,
                 job__created_at__gte=one_day_ago,
+            ).values_list(
+                "status", "ocr_method", "processing_time_ms", "job__tenant_id"
             )
-            .values_list("status", "ocr_method", "processing_time_ms", "job__tenant_id")
         )
 
         # Build histogram data: group by (status, engine, tenant_id) and compute buckets.
@@ -292,15 +387,16 @@ class PipelineCollector:
                 bucket_counts.append(sum(1 for v in values_sec if v <= bound))
             total_count = len(values_sec)
             total_sum = sum(values_sec)
-            histogram_data.append({
-                "status": hist_status,
-                "engine": hist_engine,
-                "tenant_id": hist_tenant,
-                "bucket_counts": bucket_counts,
-                "count": total_count,
-                "sum": round(total_sum, 3),
-            })
-
+            histogram_data.append(
+                {
+                    "status": hist_status,
+                    "engine": hist_engine,
+                    "tenant_id": hist_tenant,
+                    "bucket_counts": bucket_counts,
+                    "count": total_count,
+                    "sum": round(total_sum, 3),
+                }
+            )
 
         return {
             "job_counts": job_counts,
@@ -331,13 +427,13 @@ class PipelineCollector:
         now = timezone.now()
         one_hour_ago = now - timezone.timedelta(hours=1)
 
-        recent_jobs = Job.objects.filter(created_at__gte=one_hour_ago)
+        recent_jobs = _jobs_qs().filter(created_at__gte=one_hour_ago)
         recent_failed = recent_jobs.filter(status=Job.Status.FAILED).count()
         recent_total = recent_jobs.count()
         error_rate = round(recent_failed / recent_total, 4) if recent_total > 0 else 0.0
 
         # S3 error rate
-        s3_recent = Job.objects.filter(
+        s3_recent = _jobs_qs().filter(
             created_at__gte=one_hour_ago,
             storage_backend_used="s3",
         )
@@ -348,14 +444,20 @@ class PipelineCollector:
         # Completion rate
         recent_completed = recent_jobs.filter(status=Job.Status.COMPLETED).count()
         terminal_total = recent_completed + recent_failed
-        completion_rate = round(recent_completed / terminal_total, 4) if terminal_total > 0 else 1.0
+        completion_rate = (
+            round(recent_completed / terminal_total, 4) if terminal_total > 0 else 1.0
+        )
 
         # Stuck jobs
-        stuck_count = Job.objects.filter(
-            status__in=[Job.Status.PROCESSING, Job.Status.INGESTING],
-            started_at__isnull=False,
-            started_at__lt=one_hour_ago,
-        ).count()
+        stuck_count = (
+            _jobs_qs()
+            .filter(
+                status__in=[Job.Status.PROCESSING, Job.Status.INGESTING],
+                started_at__isnull=False,
+                started_at__lt=one_hour_ago,
+            )
+            .count()
+        )
 
         # Per-tenant error rates (1h window)
         tenant_error_rows = []
@@ -392,18 +494,23 @@ class PipelineCollector:
         one_hour_ago = now - timezone.timedelta(hours=1)
 
         violations = 0
-        recent_doc_ids = list(
-            CustodyEvent.objects.filter(
-                chain_finalized=True,
-                timestamp__gte=one_hour_ago,
-            )
-            .values_list("document_id", flat=True)
-            .distinct()[:100]
+        chain_qs = CustodyEvent.objects.filter(
+            chain_finalized=True,
+            timestamp__gte=one_hour_ago,
         )
-        for doc_id in recent_doc_ids:
+        # R4-RC-07/08: pin custody cold path to tenant when scrape is scoped
+        tid = _metrics_tenant_id()
+        if tid:
+            chain_qs = chain_qs.filter(job__tenant_id=tid)
+        recent_chains = list(
+            chain_qs.values_list("job_id", "document_id").distinct()[:100]
+        )
+        for job_id, doc_id in recent_chains:
             events = CustodyEvent.objects.filter(
-                document_id=doc_id, chain_finalized=True
-            ).order_by("timestamp")
+                job_id=job_id,
+                document_id=doc_id,
+                chain_finalized=True,
+            ).order_by("id")
             prev_hash = None
             for event in events:
                 event_dict = {
@@ -422,10 +529,13 @@ class PipelineCollector:
         return violations
 
     def collect(self):
-        # Fetch all three tiers through the cache
-        warm = _cache.get_or_compute("warm", _TTL_WARM, self._collect_warm)
-        hot = _cache.get_or_compute("hot", _TTL_HOT, self._collect_hot)
-        violations = _cache.get_or_compute("cold", _TTL_COLD, self._collect_cold)
+        # Fetch all three tiers through the cache — keys are tenant-namespaced
+        # so a prior tenant scrape cannot poison fleet or other-tenant scrapes.
+        warm = _cache.get_or_compute(_cache_key("warm"), _TTL_WARM, self._collect_warm)
+        hot = _cache.get_or_compute(_cache_key("hot"), _TTL_HOT, self._collect_hot)
+        violations = _cache.get_or_compute(
+            _cache_key("cold"), _TTL_COLD, self._collect_cold
+        )
 
         # Import models lazily for status enums
         from .models import Job, Worker
@@ -596,7 +706,8 @@ class PipelineCollector:
         )
         for row in warm["tenant_job_rows"]:
             tenant_jobs.add_metric(
-                [row["tenant_id"], row["status"]], row["c"],
+                [row["tenant_id"], row["status"]],
+                row["c"],
             )
         yield tenant_jobs
 
@@ -607,7 +718,8 @@ class PipelineCollector:
         )
         for row in warm["tenant_pages_rows"]:
             tenant_pages.add_metric(
-                [row["job__tenant_id"]], row["total"],
+                [row["job__tenant_id"]],
+                row["total"],
             )
         yield tenant_pages
 
@@ -618,7 +730,8 @@ class PipelineCollector:
         )
         for row in hot["tenant_error_rows"]:
             tenant_error_rate.add_metric(
-                [row["tenant_id"]], row["error_rate"],
+                [row["tenant_id"]],
+                row["error_rate"],
             )
         yield tenant_error_rate
 
@@ -658,6 +771,19 @@ class PipelineCollector:
 REGISTRY.register(PipelineCollector())
 
 
-def get_metrics_text():
-    """Generate Prometheus text format metrics."""
-    return generate_latest(REGISTRY)
+def get_metrics_text(tenant_id: str | None = None):
+    """Generate Prometheus text format metrics.
+
+    When *tenant_id* is set, Job/PageResult scrapes are tenant-pinned for
+    this call only (R4-RC-07/08). Worker fleet gauges remain global.
+    Cache keys are tenant-namespaced so scrapes cannot cross-poison.
+    Also sets Postgres ``app.tenant_id`` GUC for FORCE RLS defense-in-depth.
+    """
+    from .rls import tenant_rls_context
+
+    _metrics_tenant_ctx.tenant_id = (tenant_id or "").strip() or None
+    try:
+        with tenant_rls_context(_metrics_tenant_ctx.tenant_id):
+            return generate_latest(REGISTRY)
+    finally:
+        _metrics_tenant_ctx.tenant_id = None

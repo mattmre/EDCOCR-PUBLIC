@@ -475,10 +475,10 @@ class TestGracefulDegradation:
     def test_preprocess_for_ocr_aggressive_uses_binarize_image(self):
         """preprocess_for_ocr aggressive level calls binarize_image."""
         img = _make_rgb_image(100, 100)
-        with patch.object(preprocessing, "_CV2_AVAILABLE", True), \
-             patch.object(preprocessing, "deskew_image", return_value=img), \
-             patch.object(preprocessing, "denoise_image", return_value=img), \
-             patch.object(preprocessing, "enhance_contrast", return_value=img), \
+        with patch.object(preprocessing, "_CV2_AVAILABLE", True),\
+             patch.object(preprocessing, "deskew_image", return_value=img),\
+             patch.object(preprocessing, "denoise_image", return_value=img),\
+             patch.object(preprocessing, "enhance_contrast", return_value=img),\
              patch.object(preprocessing, "binarize_image", return_value=img) as mock_bin:
             preprocessing.preprocess_for_ocr(img, level="aggressive")
             mock_bin.assert_called_once()
@@ -486,9 +486,9 @@ class TestGracefulDegradation:
     def test_preprocess_for_ocr_enhanced_uses_denoise_image(self):
         """preprocess_for_ocr enhanced level calls denoise_image."""
         img = _make_rgb_image(100, 100)
-        with patch.object(preprocessing, "_CV2_AVAILABLE", True), \
-             patch.object(preprocessing, "deskew_image", return_value=img), \
-             patch.object(preprocessing, "denoise_image", return_value=img) as mock_dn, \
+        with patch.object(preprocessing, "_CV2_AVAILABLE", True),\
+             patch.object(preprocessing, "deskew_image", return_value=img),\
+             patch.object(preprocessing, "denoise_image", return_value=img) as mock_dn,\
              patch.object(preprocessing, "enhance_contrast", return_value=img):
             preprocessing.preprocess_for_ocr(img, level="enhanced")
             mock_dn.assert_called_once()

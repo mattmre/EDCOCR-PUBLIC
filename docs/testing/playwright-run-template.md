@@ -1,3 +1,5 @@
+> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](../release-candidate.md) and the root installation guide.
+
 # Playwright Run Template
 
 Copy this file to `docs/testing/runs/<run-id>.md` for any run you want to keep as

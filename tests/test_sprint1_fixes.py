@@ -1,4 +1,4 @@
-"""Tests for security review Sprint 1 security and robustness fixes.
+"""Tests for ARCH AEP Sprint 1 security and robustness fixes.
 
 Covers:
 - C1: Upload filename sanitization (path traversal prevention)
@@ -35,11 +35,23 @@ def client(tmp_path):
     source.mkdir()
     output.mkdir()
 
-    with patch("api.config.SOURCE_FOLDER", str(source)), \
-         patch("api.config.OUTPUT_FOLDER", str(output)), \
-         patch("api.config.WEBHOOK_ALLOW_HTTP", True), \
-         patch("api.config.WEBHOOK_ALLOW_PRIVATE", True), \
-         patch("api.job_manager.config") as mock_config:
+    from api import event_store
+
+    event_store.reset_event_store()
+
+    with (
+        patch("api.config.SOURCE_FOLDER", str(source)),
+        patch("api.config.OUTPUT_FOLDER", str(output)),
+        patch("api.config.EVENT_STORE_PATH", str(output / "event_store.db")),
+        patch("api.config.ALLOW_UNAUTHENTICATED", True),
+        patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+        patch("api.config.ANONYMOUS_ROLE", "operator"),
+        patch("api.auth.ANONYMOUS_ROLE", "operator"),
+        patch("api.config.WEBHOOK_ALLOW_HTTP", True),
+        patch("api.config.WEBHOOK_ALLOW_PRIVATE", True),
+        patch("api.job_manager.JobManager._run_pipeline"),
+        patch("api.job_manager.config") as mock_config,
+    ):
         mock_config.SOURCE_FOLDER = str(source)
         mock_config.OUTPUT_FOLDER = str(output)
         mock_config.PIPELINE_SCRIPT = "echo"
@@ -56,7 +68,10 @@ def client(tmp_path):
         app = create_app()
         app.state.limiter.enabled = False
         app.state.limiter.reset()
-        yield TestClient(app)
+        try:
+            yield TestClient(app)
+        finally:
+            event_store.reset_event_store()
 
 
 @pytest.fixture()
@@ -135,7 +150,9 @@ class TestUploadFilenameSanitization:
         with open(sample_pdf, "rb") as f:
             resp = client.post(
                 "/api/v1/jobs",
-                files={"file": ("a/b/c/../../../../../../etc/passwd", f, "application/pdf")},
+                files={
+                    "file": ("a/b/c/../../../../../../etc/passwd", f, "application/pdf")
+                },
             )
         # basename strips all path components, leaving safe "passwd"
         assert resp.status_code == 201
@@ -187,6 +204,7 @@ class TestSQLiteThreading:
                 session = factory()
                 # Execute a simple query to verify the connection works
                 from api.database import Job
+
                 session.query(Job).count()
                 session.close()
             except Exception as e:
@@ -208,15 +226,13 @@ class TestSQLiteThreading:
                 barrier.wait()
                 session = factory()
                 from api.database import Job
+
                 session.query(Job).count()
                 session.close()
             except Exception as e:
                 errors.append((thread_id, e))
 
-        threads = [
-            threading.Thread(target=thread_work, args=(i,))
-            for i in range(3)
-        ]
+        threads = [threading.Thread(target=thread_work, args=(i,)) for i in range(3)]
         for t in threads:
             t.start()
         for t in threads:
@@ -244,12 +260,33 @@ class TestFinalizeValidationIdempotency:
             output_page_count=3,
         )
         doc.pages = [
-            {"page_num": 1, "ocr_method": "PaddleOCR", "ocr_language": "",
-             "ocr_confidence": 0.95, "text_length": 500, "has_text": True, "status": "ok"},
-            {"page_num": 2, "ocr_method": "ImageOnly", "ocr_language": "",
-             "ocr_confidence": 0.0, "text_length": 0, "has_text": False, "status": "image_only"},
-            {"page_num": 3, "ocr_method": "Tesseract", "ocr_language": "",
-             "ocr_confidence": 0.3, "text_length": 100, "has_text": True, "status": "failed"},
+            {
+                "page_num": 1,
+                "ocr_method": "PaddleOCR",
+                "ocr_language": "",
+                "ocr_confidence": 0.95,
+                "text_length": 500,
+                "has_text": True,
+                "status": "ok",
+            },
+            {
+                "page_num": 2,
+                "ocr_method": "ImageOnly",
+                "ocr_language": "",
+                "ocr_confidence": 0.0,
+                "text_length": 0,
+                "has_text": False,
+                "status": "image_only",
+            },
+            {
+                "page_num": 3,
+                "ocr_method": "Tesseract",
+                "ocr_language": "",
+                "ocr_confidence": 0.3,
+                "text_length": 100,
+                "has_text": True,
+                "status": "failed",
+            },
         ]
 
         result1 = finalize_validation(doc)
@@ -281,8 +318,15 @@ class TestFinalizeValidationIdempotency:
             output_page_count=1,
         )
         doc.pages = [
-            {"page_num": 1, "ocr_method": "PaddleOCR", "ocr_language": "",
-             "ocr_confidence": 0.9, "text_length": 200, "has_text": True, "status": "ok"},
+            {
+                "page_num": 1,
+                "ocr_method": "PaddleOCR",
+                "ocr_language": "",
+                "ocr_confidence": 0.9,
+                "text_length": 200,
+                "has_text": True,
+                "status": "ok",
+            },
         ]
 
         finalize_validation(doc)
@@ -305,10 +349,24 @@ class TestFinalizeValidationIdempotency:
             output_page_count=2,
         )
         doc.pages = [
-            {"page_num": 1, "ocr_method": "PaddleOCR", "ocr_language": "",
-             "ocr_confidence": 0.8, "text_length": 100, "has_text": True, "status": "ok"},
-            {"page_num": 2, "ocr_method": "ImageOnly", "ocr_language": "",
-             "ocr_confidence": 0.0, "text_length": 0, "has_text": False, "status": "image_only"},
+            {
+                "page_num": 1,
+                "ocr_method": "PaddleOCR",
+                "ocr_language": "",
+                "ocr_confidence": 0.8,
+                "text_length": 100,
+                "has_text": True,
+                "status": "ok",
+            },
+            {
+                "page_num": 2,
+                "ocr_method": "ImageOnly",
+                "ocr_language": "",
+                "ocr_confidence": 0.0,
+                "text_length": 0,
+                "has_text": False,
+                "status": "image_only",
+            },
         ]
 
         # Call multiple times -- without reset, counters would accumulate
@@ -340,9 +398,7 @@ class TestValidationPathTraversal:
         doc = DocumentValidation(document_id="pt1", source_file="test.pdf")
         doc.pages = []
         doc = finalize_validation(doc)
-        result = write_validation_json(
-            doc, str(tmp_path), "../../etc", "1.0.0"
-        )
+        result = write_validation_json(doc, str(tmp_path), "../../etc", "1.0.0")
         assert result is None
 
     def test_normal_subfolder_works(self, tmp_path):
@@ -356,9 +412,7 @@ class TestValidationPathTraversal:
         doc = DocumentValidation(document_id="pt2", source_file="test.pdf")
         doc.pages = []
         doc = finalize_validation(doc)
-        result = write_validation_json(
-            doc, str(tmp_path), "my_folder", "1.0.0"
-        )
+        result = write_validation_json(doc, str(tmp_path), "my_folder", "1.0.0")
         assert result is not None
         assert os.path.exists(result)
 
@@ -373,9 +427,7 @@ class TestValidationPathTraversal:
         doc = DocumentValidation(document_id="pt3", source_file="test.pdf")
         doc.pages = []
         doc = finalize_validation(doc)
-        result = write_validation_json(
-            doc, str(tmp_path), ".", "1.0.0"
-        )
+        result = write_validation_json(doc, str(tmp_path), ".", "1.0.0")
         assert result is not None
         assert os.path.exists(result)
 
@@ -406,9 +458,7 @@ class TestValidationPathTraversal:
         doc = DocumentValidation(document_id="pt5", source_file="report.pdf")
         doc.pages = []
         doc = finalize_validation(doc)
-        result = write_validation_json(
-            doc, str(tmp_path), ".", "1.0.0"
-        )
+        result = write_validation_json(doc, str(tmp_path), ".", "1.0.0")
         assert result is not None
         assert result.endswith("report.validation.json")
 
@@ -424,43 +474,51 @@ class TestSSRFProtection:
     def test_private_ip_127_detected(self):
         """127.0.0.1 is detected as private."""
         from ocr_distributed.ssrf import is_private_ip
+
         assert is_private_ip("127.0.0.1") is True
 
     def test_private_ip_10_detected(self):
         """10.0.0.1 (RFC1918) is detected as private."""
         from ocr_distributed.ssrf import is_private_ip
+
         assert is_private_ip("10.0.0.1") is True
 
     def test_private_ip_192_168_detected(self):
         """192.168.1.1 is detected as private."""
         from ocr_distributed.ssrf import is_private_ip
+
         assert is_private_ip("192.168.1.1") is True
 
     def test_private_ip_172_16_detected(self):
         """172.16.0.1 is detected as private."""
         from ocr_distributed.ssrf import is_private_ip
+
         assert is_private_ip("172.16.0.1") is True
 
     def test_public_ip_allowed(self):
         """Public IPs are not flagged as private."""
         from ocr_distributed.ssrf import is_private_ip
+
         assert is_private_ip("8.8.8.8") is False
         assert is_private_ip("1.1.1.1") is False
 
     def test_loopback_ipv6(self):
         """IPv6 loopback is detected."""
         from ocr_distributed.ssrf import is_private_ip
+
         assert is_private_ip("::1") is True
 
     def test_validate_rejects_http_by_default(self):
         """HTTP URLs are rejected by default."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         with pytest.raises(ValueError, match="HTTPS"):
             validate_webhook_url("http://example.com/hook")
 
     def test_validate_allows_https(self):
         """HTTPS URLs pass validation."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         result = validate_webhook_url(
             "https://example.com/hook",
             allow_private=True,
@@ -470,36 +528,42 @@ class TestSSRFProtection:
     def test_validate_rejects_private_ip(self):
         """Private IP URLs are rejected."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         with pytest.raises(ValueError, match="private"):
             validate_webhook_url("https://192.168.1.1/hook")
 
     def test_validate_rejects_localhost(self):
         """Localhost URLs are rejected."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         with pytest.raises(ValueError, match="localhost"):
             validate_webhook_url("https://localhost/hook")
 
     def test_validate_rejects_empty(self):
         """Empty URLs are rejected."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         with pytest.raises(ValueError, match="empty"):
             validate_webhook_url("")
 
     def test_validate_rejects_ftp_scheme(self):
         """Non-HTTP(S) schemes are rejected."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         with pytest.raises(ValueError, match="unsupported scheme"):
             validate_webhook_url("ftp://example.com/hook")
 
     def test_validate_rejects_whitespace_only(self):
         """Whitespace-only URLs are rejected."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         with pytest.raises(ValueError, match="empty"):
             validate_webhook_url("   ")
 
     def test_validate_rejects_too_long_url(self):
         """URLs exceeding 2048 characters are rejected."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         long_url = "https://example.com/" + "a" * 2040
         with pytest.raises(ValueError, match="2048"):
             validate_webhook_url(long_url)
@@ -507,6 +571,7 @@ class TestSSRFProtection:
     def test_validate_allows_http_when_flag_set(self):
         """HTTP URLs are allowed when allow_http=True."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         result = validate_webhook_url(
             "http://example.com/hook",
             allow_http=True,
@@ -517,6 +582,7 @@ class TestSSRFProtection:
     def test_validate_allows_localhost_when_private_flag_set(self):
         """Localhost is allowed when allow_private=True."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         result = validate_webhook_url(
             "https://localhost/hook",
             allow_private=True,
@@ -526,6 +592,7 @@ class TestSSRFProtection:
     def test_redirect_handler_blocks(self):
         """NoRedirectHandler raises on redirect."""
         from ocr_distributed.ssrf import NoRedirectHandler
+
         handler = NoRedirectHandler()
 
         # Build a mock request object with the full_url attribute
@@ -541,6 +608,7 @@ class TestSSRFProtection:
     def test_validate_strips_whitespace(self):
         """Leading/trailing whitespace is stripped from URLs."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         result = validate_webhook_url(
             "  https://example.com/hook  ",
             allow_private=True,
@@ -550,23 +618,27 @@ class TestSSRFProtection:
     def test_validate_rejects_missing_hostname(self):
         """URLs without a hostname are rejected."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         with pytest.raises(ValueError, match="hostname"):
             validate_webhook_url("https://")
 
     def test_validate_rejects_missing_scheme(self):
         """URLs without a scheme are rejected."""
         from ocr_distributed.ssrf import validate_webhook_url
+
         with pytest.raises(ValueError, match="scheme"):
             validate_webhook_url("example.com/hook")
 
     def test_safe_opener_exists(self):
         """Module-level safe_opener is available."""
         from ocr_distributed.ssrf import safe_opener
+
         assert safe_opener is not None
 
     def test_loopback_names_include_common_values(self):
         """LOOPBACK_NAMES set includes localhost and 127.0.0.1."""
         from ocr_distributed.ssrf import LOOPBACK_NAMES
+
         assert "localhost" in LOOPBACK_NAMES
         assert "127.0.0.1" in LOOPBACK_NAMES
         assert "::1" in LOOPBACK_NAMES

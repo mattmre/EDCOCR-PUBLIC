@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -45,9 +47,12 @@ EXPECTED_QUEUES: dict[str, str] = {
     "gpu-worker": "ocr_gpu",
     "cpu-worker": "cpu_general",
     "cpu-ocr-worker": "ocr_cpu",
+    "tesseract-worker": "ocr_tesseract",
     "layout-cpu-worker": "ocr_layout_cpu",
     "nlp-gpu-worker": "ocr_nlp_gpu",
     "layoutlm-worker": "ocr_layoutlm",
+    "ocr-render": "ocr_render",
+    "ocr-finalize": "ocr_finalize",
 }
 
 # Acceptable ranges for polling/cooldown (seconds)
@@ -98,6 +103,7 @@ class TriggerAuthInfo:
     secret_ref_name: str
     secret_ref_key: str
     raw_content: str
+    secret_ref_keys: tuple[str, ...] = ()
 
 
 @dataclass
@@ -150,6 +156,7 @@ class ValidationReport:
 # Template parsing helpers
 # ---------------------------------------------------------------------------
 
+
 def _strip_go_template(text: str) -> str:
     """Remove Go template directives so we can extract YAML structure."""
     # Remove {{- if ... }} / {{- else ... }} / {{- end }} control lines
@@ -180,9 +187,7 @@ def _extract_yaml_value(content: str, key: str) -> str | None:
 
 def _extract_metadata_component(content: str) -> str:
     """Extract app.kubernetes.io/component label value."""
-    match = re.search(
-        r"app\.kubernetes\.io/component:\s*(\S+)", content
-    )
+    match = re.search(r"app\.kubernetes\.io/component:\s*(\S+)", content)
     return match.group(1) if match else "unknown"
 
 
@@ -194,9 +199,7 @@ def _extract_queue_name(content: str) -> str:
     (e.g. ``queueName: {{ .Values.keda.gpu.queueName | default "ocr_gpu" }}``).
     """
     # Try Helm template with default first
-    tmpl_match = re.search(
-        r'queueName:\s*\{\{.*\|\s*default\s+"([^"]+)"', content
-    )
+    tmpl_match = re.search(r'queueName:\s*\{\{.*\|\s*default\s+"([^"]+)"', content)
     if tmpl_match:
         return tmpl_match.group(1)
     # Fall back to literal value
@@ -223,9 +226,9 @@ def _extract_template_expr(raw: str, key: str) -> str:
 # Parsers
 # ---------------------------------------------------------------------------
 
-def parse_scaled_object(file_path: Path) -> ScaledObjectInfo | None:
-    """Parse a KEDA ScaledObject template file."""
-    raw = file_path.read_text(encoding="utf-8")
+
+def _parse_scaled_object_content(raw: str, file_name: str) -> ScaledObjectInfo | None:
+    """Parse one statically resolved ScaledObject template body."""
     if "kind: ScaledObject" not in raw:
         return None
 
@@ -234,7 +237,7 @@ def parse_scaled_object(file_path: Path) -> ScaledObjectInfo | None:
     trigger_auth_ref = _extract_trigger_auth_ref(raw)
 
     return ScaledObjectInfo(
-        file_name=file_path.name,
+        file_name=file_name,
         component=component,
         queue_name=queue_name,
         min_replicas_expr=_extract_template_expr(raw, "minReplicaCount"),
@@ -245,6 +248,59 @@ def parse_scaled_object(file_path: Path) -> ScaledObjectInfo | None:
         trigger_auth_ref=trigger_auth_ref,
         raw_content=raw,
     )
+
+
+def parse_scaled_object(file_path: Path) -> ScaledObjectInfo | None:
+    """Parse a non-loop KEDA ScaledObject template file."""
+    raw = file_path.read_text(encoding="utf-8")
+    if re.search(r"\{\{-?\s*range\b", raw):
+        return None  # A loop must be expanded and checked as separate objects.
+    return _parse_scaled_object_content(raw, file_path.name)
+
+
+def parse_scaled_objects(file_path: Path) -> list[ScaledObjectInfo]:
+    """Safely expand the chart's fixed render/finalize loop, without Helm eval.
+
+    An unknown or malformed stage list is an error; silently treating a Go
+    template alias as one ScaledObject would omit queue and auth validation.
+    """
+    raw = file_path.read_text(encoding="utf-8")
+    if "kind: ScaledObject" not in raw:
+        return []
+    if not re.search(r"\{\{-?\s*range\b", raw):
+        parsed = _parse_scaled_object_content(raw, file_path.name)
+        return [parsed] if parsed else []
+    ranges = re.findall(
+        r"^\s*\{\{-\s*range\s+\$stage\s*:=\s*list\s+([^}]+)\}\}\s*$",
+        raw, re.MULTILINE,
+    )
+    if len(ranges) != 1 or raw.count("kind: ScaledObject") != 1:
+        raise ValueError(f"{file_path.name}: unsupported ScaledObject range")
+    stages = re.findall(r'"([^"]+)"', ranges[0])
+    if (
+        stages != ["render", "finalize"]
+        or re.sub(r'"[^"]+"', "", ranges[0]).strip()
+        or not re.search(
+            r"\{\{-\s*\$profile\s*:=\s*index\s+\$\.Values\.ocrStagedPage\s+\$stage\s*\}\}",
+            raw,
+        )
+    ):
+        raise ValueError(f"{file_path.name}: unknown or malformed staged queue loop")
+    objects = []
+    for stage in stages:
+        expanded = raw.replace("{{ $stage }}", stage).replace(
+            "$profile.autoscaling.",
+            f"$.Values.ocrStagedPage.{stage}.autoscaling.",
+        )
+        if "{{ $stage }}" in expanded or "$profile.autoscaling." in expanded:
+            raise ValueError(f"{file_path.name}: unresolved staged aliases")
+        parsed = _parse_scaled_object_content(
+            expanded, f"{file_path.name}#{stage}"
+        )
+        if parsed is None:
+            raise ValueError(f"{file_path.name}: stage {stage} has no ScaledObject")
+        objects.append(parsed)
+    return objects
 
 
 def parse_trigger_auth(file_path: Path) -> TriggerAuthInfo | None:
@@ -260,9 +316,7 @@ def parse_trigger_auth(file_path: Path) -> TriggerAuthInfo | None:
     # Extract name expression
     name_expr = _extract_template_expr(raw, "name")
     # The first `name:` under metadata
-    name_match = re.search(
-        r"metadata:\s*\n\s*name:\s*(.+)", raw
-    )
+    name_match = re.search(r"metadata:\s*\n\s*name:\s*(.+)", raw)
     name_expr = name_match.group(1).strip() if name_match else ""
 
     # Extract secret reference
@@ -276,6 +330,10 @@ def parse_trigger_auth(file_path: Path) -> TriggerAuthInfo | None:
     secret_key_match = re.search(r"key:\s*(\S+)", raw)
     if secret_key_match:
         secret_key = secret_key_match.group(1).strip()
+    secret_keys = tuple(
+        match.group(1).strip()
+        for match in re.finditer(r"^\s*key:\s*(\S+)\s*$", raw, re.MULTILINE)
+    )
 
     return TriggerAuthInfo(
         file_name=file_path.name,
@@ -284,12 +342,14 @@ def parse_trigger_auth(file_path: Path) -> TriggerAuthInfo | None:
         secret_ref_name=secret_name,
         secret_ref_key=secret_key,
         raw_content=raw,
+        secret_ref_keys=secret_keys,
     )
 
 
 # ---------------------------------------------------------------------------
 # Validation functions
 # ---------------------------------------------------------------------------
+
 
 def validate_queue_names(
     scaled_objects: list[ScaledObjectInfo],
@@ -299,32 +359,38 @@ def validate_queue_names(
     for so in scaled_objects:
         expected = EXPECTED_QUEUES.get(so.component)
         if expected is None:
-            results.append(ValidationResult(
-                check=f"queue_name:{so.component}",
-                passed=False,
-                message=(
-                    f"Unknown component '{so.component}' in {so.file_name}; "
-                    f"expected one of {list(EXPECTED_QUEUES.keys())}"
-                ),
-                severity="warning",
-            ))
+            results.append(
+                ValidationResult(
+                    check=f"queue_name:{so.component}",
+                    passed=False,
+                    message=(
+                        f"Unknown component '{so.component}' in {so.file_name}; "
+                        f"expected one of {list(EXPECTED_QUEUES.keys())}"
+                    ),
+                    severity="warning",
+                )
+            )
         elif so.queue_name != expected:
-            results.append(ValidationResult(
-                check=f"queue_name:{so.component}",
-                passed=False,
-                message=(
-                    f"{so.file_name}: queue name is '{so.queue_name}', "
-                    f"expected '{expected}'"
-                ),
-            ))
+            results.append(
+                ValidationResult(
+                    check=f"queue_name:{so.component}",
+                    passed=False,
+                    message=(
+                        f"{so.file_name}: queue name is '{so.queue_name}', "
+                        f"expected '{expected}'"
+                    ),
+                )
+            )
         else:
-            results.append(ValidationResult(
-                check=f"queue_name:{so.component}",
-                passed=True,
-                message=(
-                    f"{so.file_name}: queue name '{so.queue_name}' is correct"
-                ),
-            ))
+            results.append(
+                ValidationResult(
+                    check=f"queue_name:{so.component}",
+                    passed=True,
+                    message=(
+                        f"{so.file_name}: queue name '{so.queue_name}' is correct"
+                    ),
+                )
+            )
     return results
 
 
@@ -344,23 +410,33 @@ def validate_scale_to_zero(
     for so in scaled_objects:
         check_name = f"scale_to_zero:{so.component}"
         if not so.min_replicas_expr:
-            results.append(ValidationResult(
-                check=check_name,
-                passed=False,
-                message=f"{so.file_name}: missing minReplicaCount field",
-            ))
+            results.append(
+                ValidationResult(
+                    check=check_name,
+                    passed=False,
+                    message=f"{so.file_name}: missing minReplicaCount field",
+                )
+            )
         else:
             # Check the expression references the correct values path
-            has_values_ref = ".Values." in so.min_replicas_expr or so.min_replicas_expr.isdigit()
-            results.append(ValidationResult(
-                check=check_name,
-                passed=has_values_ref,
-                message=(
-                    f"{so.file_name}: minReplicaCount expression is "
-                    f"'{so.min_replicas_expr}'"
-                    + (" (valid)" if has_values_ref else " (missing .Values reference)")
-                ),
-            ))
+            has_values_ref = (
+                ".Values." in so.min_replicas_expr or so.min_replicas_expr.isdigit()
+            )
+            results.append(
+                ValidationResult(
+                    check=check_name,
+                    passed=has_values_ref,
+                    message=(
+                        f"{so.file_name}: minReplicaCount expression is "
+                        f"'{so.min_replicas_expr}'"
+                        + (
+                            " (valid)"
+                            if has_values_ref
+                            else " (missing .Values reference)"
+                        )
+                    ),
+                )
+            )
     return results
 
 
@@ -372,22 +448,29 @@ def validate_scale_up_threshold(
     for so in scaled_objects:
         check_name = f"queue_target:{so.component}"
         if not so.queue_target_expr:
-            results.append(ValidationResult(
-                check=check_name,
-                passed=False,
-                message=f"{so.file_name}: missing queue target (value) field",
-            ))
+            results.append(
+                ValidationResult(
+                    check=check_name,
+                    passed=False,
+                    message=f"{so.file_name}: missing queue target (value) field",
+                )
+            )
         else:
             # The value should reference .Values.*.autoscaling.queueTarget
-            has_values_ref = ".Values." in so.queue_target_expr or "HELM_EXPR" in so.queue_target_expr
-            results.append(ValidationResult(
-                check=check_name,
-                passed=has_values_ref,
-                message=(
-                    f"{so.file_name}: queue target expression is "
-                    f"'{so.queue_target_expr}'"
-                ),
-            ))
+            has_values_ref = (
+                ".Values." in so.queue_target_expr
+                or "HELM_EXPR" in so.queue_target_expr
+            )
+            results.append(
+                ValidationResult(
+                    check=check_name,
+                    passed=has_values_ref,
+                    message=(
+                        f"{so.file_name}: queue target expression is "
+                        f"'{so.queue_target_expr}'"
+                    ),
+                )
+            )
     return results
 
 
@@ -399,20 +482,24 @@ def validate_cooldown_period(
     for so in scaled_objects:
         check_name = f"cooldown:{so.component}"
         if not so.cooldown_period_expr:
-            results.append(ValidationResult(
-                check=check_name,
-                passed=False,
-                message=f"{so.file_name}: missing cooldownPeriod field",
-            ))
+            results.append(
+                ValidationResult(
+                    check=check_name,
+                    passed=False,
+                    message=f"{so.file_name}: missing cooldownPeriod field",
+                )
+            )
         else:
-            results.append(ValidationResult(
-                check=check_name,
-                passed=True,
-                message=(
-                    f"{so.file_name}: cooldownPeriod expression is "
-                    f"'{so.cooldown_period_expr}'"
-                ),
-            ))
+            results.append(
+                ValidationResult(
+                    check=check_name,
+                    passed=True,
+                    message=(
+                        f"{so.file_name}: cooldownPeriod expression is "
+                        f"'{so.cooldown_period_expr}'"
+                    ),
+                )
+            )
     return results
 
 
@@ -424,20 +511,24 @@ def validate_polling_interval(
     for so in scaled_objects:
         check_name = f"polling_interval:{so.component}"
         if not so.polling_interval_expr:
-            results.append(ValidationResult(
-                check=check_name,
-                passed=False,
-                message=f"{so.file_name}: missing pollingInterval field",
-            ))
+            results.append(
+                ValidationResult(
+                    check=check_name,
+                    passed=False,
+                    message=f"{so.file_name}: missing pollingInterval field",
+                )
+            )
         else:
-            results.append(ValidationResult(
-                check=check_name,
-                passed=True,
-                message=(
-                    f"{so.file_name}: pollingInterval expression is "
-                    f"'{so.polling_interval_expr}'"
-                ),
-            ))
+            results.append(
+                ValidationResult(
+                    check=check_name,
+                    passed=True,
+                    message=(
+                        f"{so.file_name}: pollingInterval expression is "
+                        f"'{so.polling_interval_expr}'"
+                    ),
+                )
+            )
     return results
 
 
@@ -451,35 +542,49 @@ def validate_trigger_auth(
     results: list[ValidationResult] = []
 
     if trigger_auth is None:
-        results.append(ValidationResult(
-            check="trigger_auth:exists",
-            passed=False,
-            message="No TriggerAuthentication template found",
-        ))
+        results.append(
+            ValidationResult(
+                check="trigger_auth:exists",
+                passed=False,
+                message="No TriggerAuthentication template found",
+            )
+        )
         return results
 
-    results.append(ValidationResult(
-        check="trigger_auth:exists",
-        passed=True,
-        message=f"TriggerAuthentication found in {trigger_auth.file_name}",
-    ))
-
-    # Verify secret key is CELERY_BROKER_URL
-    if trigger_auth.secret_ref_key == "CELERY_BROKER_URL":
-        results.append(ValidationResult(
-            check="trigger_auth:secret_key",
+    results.append(
+        ValidationResult(
+            check="trigger_auth:exists",
             passed=True,
-            message="Secret key is CELERY_BROKER_URL (correct)",
-        ))
+            message=f"TriggerAuthentication found in {trigger_auth.file_name}",
+        )
+    )
+
+    # HTTP management scaling needs a host plus separately scoped credentials.
+    secret_keys = set(trigger_auth.secret_ref_keys or (trigger_auth.secret_ref_key,))
+    expected_secret_keys = {
+        "RABBITMQ_MANAGEMENT_HOST",
+        "RABBITMQ_MANAGEMENT_USER",
+        "RABBITMQ_MANAGEMENT_PASSWORD",
+    }
+    if expected_secret_keys.issubset(secret_keys):
+        results.append(
+            ValidationResult(
+                check="trigger_auth:secret_key",
+                passed=True,
+                message="TriggerAuthentication references management host, username, and password",
+            )
+        )
     else:
-        results.append(ValidationResult(
-            check="trigger_auth:secret_key",
-            passed=False,
-            message=(
-                f"Secret key is '{trigger_auth.secret_ref_key}', "
-                f"expected 'CELERY_BROKER_URL'"
-            ),
-        ))
+        results.append(
+            ValidationResult(
+                check="trigger_auth:secret_key",
+                passed=False,
+                message=(
+                    f"TriggerAuthentication secret keys are {sorted(secret_keys)}, "
+                    f"expected at least {sorted(expected_secret_keys)}"
+                ),
+            )
+        )
 
     # Verify each ScaledObject's authenticationRef uses a consistent name
     auth_ref_names = set()
@@ -488,25 +593,54 @@ def validate_trigger_auth(
             auth_ref_names.add(so.trigger_auth_ref)
 
     if len(auth_ref_names) <= 1:
-        results.append(ValidationResult(
-            check="trigger_auth:ref_consistency",
-            passed=True,
-            message="All ScaledObjects use consistent TriggerAuthentication name",
-        ))
+        results.append(
+            ValidationResult(
+                check="trigger_auth:ref_consistency",
+                passed=True,
+                message="All ScaledObjects use consistent TriggerAuthentication name",
+            )
+        )
     else:
-        results.append(ValidationResult(
-            check="trigger_auth:ref_consistency",
-            passed=False,
-            message=(
-                f"Inconsistent auth ref names across ScaledObjects: {auth_ref_names}"
-            ),
-        ))
+        results.append(
+            ValidationResult(
+                check="trigger_auth:ref_consistency",
+                passed=False,
+                message=(
+                    f"Inconsistent auth ref names across ScaledObjects: {auth_ref_names}"
+                ),
+            )
+        )
 
     # Verify guard condition covers all worker types
     guard = trigger_auth.guard_condition
     guard_coverage = _check_trigger_auth_guard_coverage(guard, scaled_objects)
     results.extend(guard_coverage)
 
+    return results
+
+
+def validate_unacknowledged_message_scaling(
+    scaled_objects: list[ScaledObjectInfo],
+) -> list[ValidationResult]:
+    """Require HTTP metrics that count messages held by active consumers."""
+    results: list[ValidationResult] = []
+    for so in scaled_objects:
+        protocol = _extract_yaml_value(so.raw_content, "protocol")
+        exclude = _extract_yaml_value(so.raw_content, "excludeUnacknowledged")
+        protocol_value = (protocol or "").strip("\"'").lower()
+        exclude_value = (exclude or "").strip("\"'").lower()
+        passed = protocol_value == "http" and exclude_value == "false"
+        results.append(
+            ValidationResult(
+                check=f"unacknowledged_messages:{so.component}",
+                passed=passed,
+                message=(
+                    f"{so.file_name}: HTTP queue metrics include unacknowledged messages"
+                    if passed
+                    else f"{so.file_name}: requires protocol=http and excludeUnacknowledged=false"
+                ),
+            )
+        )
     return results
 
 
@@ -529,9 +663,12 @@ def _check_trigger_auth_guard_coverage(
         "gpu-worker": "gpuWorker",
         "cpu-worker": "cpuWorker",
         "cpu-ocr-worker": "cpuOcrWorker",
+        "tesseract-worker": "tesseractWorker",
         "layout-cpu-worker": "layoutCpuWorker",
         "nlp-gpu-worker": "nlpGpuWorker",
         "layoutlm-worker": "layoutlmWorker",
+        "ocr-render": "ocrStagedPage.render",
+        "ocr-finalize": "ocrStagedPage.finalize",
     }
 
     for so in scaled_objects:
@@ -542,26 +679,34 @@ def _check_trigger_auth_guard_coverage(
         check_name = f"trigger_auth:guard:{so.component}"
         # Check if the guard condition mentions this worker's autoscaling
         pattern = rf"\.Values\.{values_key}\.autoscaling\.enabled"
-        if re.search(pattern, guard_condition):
-            results.append(ValidationResult(
-                check=check_name,
-                passed=True,
-                message=(
-                    f"Guard condition covers {so.component} "
-                    f"(.Values.{values_key}.autoscaling.enabled)"
-                ),
-            ))
+        staged_guard = (
+            so.component not in {"ocr-render", "ocr-finalize"}
+            or ".Values.ocrStagedPage.enabled" in guard_condition
+        )
+        if re.search(pattern, guard_condition) and staged_guard:
+            results.append(
+                ValidationResult(
+                    check=check_name,
+                    passed=True,
+                    message=(
+                        f"Guard condition covers {so.component} "
+                        f"(.Values.{values_key}.autoscaling.enabled)"
+                    ),
+                )
+            )
         else:
-            results.append(ValidationResult(
-                check=check_name,
-                passed=False,
-                message=(
-                    f"Guard condition MISSING coverage for {so.component} "
-                    f"(.Values.{values_key}.autoscaling.enabled) -- "
-                    f"TriggerAuthentication will not be created when only "
-                    f"{so.component} autoscaling is enabled"
-                ),
-            ))
+            results.append(
+                ValidationResult(
+                    check=check_name,
+                    passed=False,
+                    message=(
+                        f"Guard condition MISSING coverage for {so.component} "
+                        f"(.Values.{values_key}.autoscaling.enabled) -- "
+                        f"TriggerAuthentication will not be created when only "
+                        f"{so.component} autoscaling is enabled"
+                    ),
+                )
+            )
 
     return results
 
@@ -575,33 +720,41 @@ def validate_scaling_strategy_support(
     results: list[ValidationResult] = []
     for so in scaled_objects:
         check_name = f"scaling_strategy:{so.component}"
-        has_strategy = "scalingStrategy" in so.raw_content or "$strategy" in so.raw_content
+        has_strategy = (
+            "scalingStrategy" in so.raw_content or "$strategy" in so.raw_content
+        )
         if has_strategy:
             has_aggressive = "aggressive" in so.raw_content
             has_conservative = "conservative" in so.raw_content
             if has_aggressive and has_conservative:
-                results.append(ValidationResult(
-                    check=check_name,
-                    passed=True,
-                    message=(
-                        f"{so.file_name}: supports aggressive/balanced/conservative strategies"
-                    ),
-                    severity="info",
-                ))
+                results.append(
+                    ValidationResult(
+                        check=check_name,
+                        passed=True,
+                        message=(
+                            f"{so.file_name}: supports aggressive/balanced/conservative strategies"
+                        ),
+                        severity="info",
+                    )
+                )
             else:
-                results.append(ValidationResult(
+                results.append(
+                    ValidationResult(
+                        check=check_name,
+                        passed=True,
+                        message=f"{so.file_name}: uses scaling strategy overrides",
+                        severity="info",
+                    )
+                )
+        else:
+            results.append(
+                ValidationResult(
                     check=check_name,
                     passed=True,
-                    message=f"{so.file_name}: uses scaling strategy overrides",
+                    message=f"{so.file_name}: uses fixed polling/cooldown values",
                     severity="info",
-                ))
-        else:
-            results.append(ValidationResult(
-                check=check_name,
-                passed=True,
-                message=f"{so.file_name}: uses fixed polling/cooldown values",
-                severity="info",
-            ))
+                )
+            )
     return results
 
 
@@ -609,16 +762,21 @@ def validate_scaling_strategy_support(
 # Values.yaml validation
 # ---------------------------------------------------------------------------
 
-def validate_values_defaults(values_path: Path) -> list[ValidationResult]:
+
+def validate_values_defaults(
+    values_path: Path, *, require_staged: bool = False
+) -> list[ValidationResult]:
     """Validate KEDA-related defaults in values.yaml."""
     results: list[ValidationResult] = []
 
     if not values_path.exists():
-        results.append(ValidationResult(
-            check="values:exists",
-            passed=False,
-            message=f"values.yaml not found at {values_path}",
-        ))
+        results.append(
+            ValidationResult(
+                check="values:exists",
+                passed=False,
+                message=f"values.yaml not found at {values_path}",
+            )
+        )
         return results
 
     content = values_path.read_text(encoding="utf-8")
@@ -629,72 +787,126 @@ def validate_values_defaults(values_path: Path) -> list[ValidationResult]:
         strategy = strategy_match.group(1)
         valid_strategies = {"aggressive", "balanced", "conservative"}
         if strategy in valid_strategies:
-            results.append(ValidationResult(
-                check="values:scaling_strategy",
-                passed=True,
-                message=f"Default scalingStrategy is '{strategy}' (valid)",
-            ))
+            results.append(
+                ValidationResult(
+                    check="values:scaling_strategy",
+                    passed=True,
+                    message=f"Default scalingStrategy is '{strategy}' (valid)",
+                )
+            )
         else:
-            results.append(ValidationResult(
+            results.append(
+                ValidationResult(
+                    check="values:scaling_strategy",
+                    passed=False,
+                    message=(
+                        f"Default scalingStrategy is '{strategy}', "
+                        f"expected one of {valid_strategies}"
+                    ),
+                )
+            )
+    else:
+        results.append(
+            ValidationResult(
                 check="values:scaling_strategy",
                 passed=False,
-                message=(
-                    f"Default scalingStrategy is '{strategy}', "
-                    f"expected one of {valid_strategies}"
-                ),
-            ))
-    else:
-        results.append(ValidationResult(
-            check="values:scaling_strategy",
-            passed=False,
-            message="scalingStrategy not found in values.yaml",
-        ))
+                message="scalingStrategy not found in values.yaml",
+            )
+        )
 
     # Check keda.maxReplicaCount exists
     max_replicas_match = re.search(r"maxReplicaCount:\s*(\d+)", content)
     if max_replicas_match:
         max_replicas = int(max_replicas_match.group(1))
-        results.append(ValidationResult(
-            check="values:max_replica_count",
-            passed=max_replicas > 0,
-            message=f"Global maxReplicaCount is {max_replicas}",
-        ))
+        results.append(
+            ValidationResult(
+                check="values:max_replica_count",
+                passed=max_replicas > 0,
+                message=f"Global maxReplicaCount is {max_replicas}",
+            )
+        )
     else:
-        results.append(ValidationResult(
-            check="values:max_replica_count",
-            passed=False,
-            message="keda.maxReplicaCount not found in values.yaml",
-        ))
+        results.append(
+            ValidationResult(
+                check="values:max_replica_count",
+                passed=False,
+                message="keda.maxReplicaCount not found in values.yaml",
+            )
+        )
 
     # Verify all worker types have autoscaling sections
-    worker_keys = ["gpuWorker", "cpuWorker", "cpuOcrWorker", "layoutCpuWorker", "nlpGpuWorker", "layoutlmWorker"]
+    worker_keys = [
+        "gpuWorker",
+        "cpuWorker",
+        "cpuOcrWorker",
+        "tesseractWorker",
+        "layoutCpuWorker",
+        "nlpGpuWorker",
+        "layoutlmWorker",
+    ]
     for wk in worker_keys:
         pattern = rf"{wk}:[\s\S]*?autoscaling:\s*\n\s*enabled:\s*(true|false)"
         match = re.search(pattern, content)
         if match:
-            results.append(ValidationResult(
-                check=f"values:autoscaling_section:{wk}",
-                passed=True,
-                message=(
-                    f"{wk} has autoscaling section "
-                    f"(enabled: {match.group(1)})"
-                ),
-                severity="info",
-            ))
+            results.append(
+                ValidationResult(
+                    check=f"values:autoscaling_section:{wk}",
+                    passed=True,
+                    message=(
+                        f"{wk} has autoscaling section (enabled: {match.group(1)})"
+                    ),
+                    severity="info",
+                )
+            )
         else:
-            results.append(ValidationResult(
-                check=f"values:autoscaling_section:{wk}",
-                passed=False,
-                message=f"{wk} missing autoscaling section in values.yaml",
-                severity="warning",
-            ))
+            results.append(
+                ValidationResult(
+                    check=f"values:autoscaling_section:{wk}",
+                    passed=False,
+                    message=f"{wk} missing autoscaling section in values.yaml",
+                    severity="warning",
+                )
+            )
 
+    if require_staged:
+        try:
+            values = yaml.safe_load(content)
+        except yaml.YAMLError as exc:
+            results.append(ValidationResult(
+                "values:staged:parse", False, f"Invalid values.yaml: {exc}"
+            ))
+            return results
+        staged = values.get("ocrStagedPage") if isinstance(values, dict) else None
+        enabled = staged.get("enabled") if isinstance(staged, dict) else None
+        results.append(ValidationResult(
+            "values:staged:enabled", isinstance(enabled, bool),
+            "ocrStagedPage.enabled must be a Boolean",
+        ))
+        for stage in ("render", "finalize"):
+            profile = staged.get(stage) if isinstance(staged, dict) else None
+            auto = profile.get("autoscaling") if isinstance(profile, dict) else None
+            valid = isinstance(auto, dict) and isinstance(auto.get("enabled"), bool)
+            if valid:
+                minimum = auto.get("minReplicas")
+                maximum = auto.get("maxReplicas")
+                target = auto.get("queueTarget")
+                valid = (
+                    type(minimum) is int and type(maximum) is int
+                    and type(target) is int and 0 <= minimum <= maximum
+                    and maximum > 0 and 1 <= target <= MAX_QUEUE_TARGET
+                )
+            results.append(ValidationResult(
+                f"values:staged:{stage}:autoscaling", bool(valid),
+                f"ocrStagedPage.{stage}.autoscaling must define Boolean enabled, "
+                "ordered min/max replicas, and a bounded queue target",
+            ))
     return results
 
 
 # ---------------------------------------------------------------------------
 # Main validation orchestrator
 # ---------------------------------------------------------------------------
+
 
 def run_validation(chart_dir: str | Path) -> ValidationReport:
     """Run all KEDA validations against the given Helm chart directory.
@@ -712,11 +924,13 @@ def run_validation(chart_dir: str | Path) -> ValidationReport:
     report = ValidationReport()
 
     if not templates_dir.is_dir():
-        report.results.append(ValidationResult(
-            check="chart:templates_dir",
-            passed=False,
-            message=f"Templates directory not found: {templates_dir}",
-        ))
+        report.results.append(
+            ValidationResult(
+                check="chart:templates_dir",
+                passed=False,
+                message=f"Templates directory not found: {templates_dir}",
+            )
+        )
         return report
 
     # Parse all KEDA templates
@@ -729,9 +943,13 @@ def run_validation(chart_dir: str | Path) -> ValidationReport:
             if ta:
                 report.trigger_auth = ta
         else:
-            so = parse_scaled_object(f)
-            if so:
-                report.scaled_objects.append(so)
+            try:
+                report.scaled_objects.extend(parse_scaled_objects(f))
+            except ValueError as exc:
+                report.results.append(ValidationResult(
+                    check=f"template:stage_expansion:{f.name}",
+                    passed=False, message=str(exc),
+                ))
 
     # Run validations
     report.results.extend(validate_queue_names(report.scaled_objects))
@@ -740,10 +958,16 @@ def run_validation(chart_dir: str | Path) -> ValidationReport:
     report.results.extend(validate_cooldown_period(report.scaled_objects))
     report.results.extend(validate_polling_interval(report.scaled_objects))
     report.results.extend(
+        validate_unacknowledged_message_scaling(report.scaled_objects)
+    )
+    report.results.extend(
         validate_trigger_auth(report.scaled_objects, report.trigger_auth)
     )
     report.results.extend(validate_scaling_strategy_support(report.scaled_objects))
-    report.results.extend(validate_values_defaults(values_path))
+    report.results.extend(validate_values_defaults(
+        values_path,
+        require_staged=(templates_dir / "keda-staged-page-scalers.yaml").exists(),
+    ))
 
     return report
 
@@ -751,6 +975,7 @@ def run_validation(chart_dir: str | Path) -> ValidationReport:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -787,8 +1012,7 @@ def _find_chart_dir() -> Path:
         if (c / "templates").is_dir():
             return c
     raise FileNotFoundError(
-        "Could not auto-detect Helm chart directory. "
-        "Use --chart-dir to specify it."
+        "Could not auto-detect Helm chart directory. Use --chart-dir to specify it."
     )
 
 
@@ -805,7 +1029,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nKEDA Validation Report for {chart_dir}")
         print("=" * 60)
         print(f"Scaled Objects found: {len(report.scaled_objects)}")
-        print(f"TriggerAuthentication: {'found' if report.trigger_auth else 'NOT FOUND'}")
+        print(
+            f"TriggerAuthentication: {'found' if report.trigger_auth else 'NOT FOUND'}"
+        )
         print()
 
         for r in report.results:

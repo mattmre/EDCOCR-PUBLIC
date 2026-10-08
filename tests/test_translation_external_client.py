@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import io
+import json
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
@@ -23,6 +23,8 @@ def _load(name: str) -> dict:
 class _Response:
     def __init__(self, payload: dict):
         self.payload = payload
+        self._raw = json.dumps(payload).encode("utf-8")
+        self._offset = 0
 
     def __enter__(self):
         return self
@@ -30,8 +32,12 @@ class _Response:
     def __exit__(self, *_args):
         return None
 
-    def read(self) -> bytes:
-        return json.dumps(self.payload).encode("utf-8")
+    def read(self, amount: int = -1) -> bytes:
+        if amount < 0:
+            amount = len(self._raw) - self._offset
+        chunk = self._raw[self._offset : self._offset + amount]
+        self._offset += len(chunk)
+        return chunk
 
 
 def test_list_engines_calls_external_service(monkeypatch):
@@ -177,7 +183,9 @@ def test_translate_bundle_validates_request_and_response(monkeypatch):
     assert captured["headers"]["X-api-key"] == operator_placeholder
     assert captured["payload"]["target_language"] == "fr"
     assert captured["payload"]["provider_id"] == "passthrough"
-    assert captured["payload"]["document_bundle"]["schema_version"] == "document-bundle-v1"
+    assert (
+        captured["payload"]["document_bundle"]["schema_version"] == "document-bundle-v1"
+    )
 
 
 def test_translate_bundle_rejects_invalid_document_bundle(monkeypatch):
@@ -220,6 +228,23 @@ def test_service_unavailable_is_wrapped(monkeypatch):
         client.list_engines()
 
 
+def test_remote_response_is_size_limited(monkeypatch):
+    class _HugeResponse(_Response):
+        def __init__(self):
+            super().__init__({})
+
+        def read(self, amount: int = -1) -> bytes:
+            return b"x" * (amount if amount >= 0 else 1024)
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen", lambda _request, timeout: _HugeResponse()
+    )
+    client = TranslationServiceClient(max_response_bytes=8)
+
+    with pytest.raises(TranslationServiceError, match="exceeds 8 bytes"):
+        client.list_engines()
+
+
 def test_from_env(monkeypatch):
     monkeypatch.setenv("EDC_TRANSLATION_URL", "http://env.translation")
     operator_placeholder = "placeholder"
@@ -231,3 +256,15 @@ def test_from_env(monkeypatch):
     assert client.base_url == "http://env.translation"
     assert client.api_key == operator_placeholder
     assert client.timeout == 3.0
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf"), 601])
+def test_timeout_is_finite_and_bounded(timeout):
+    with pytest.raises(ValueError, match="timeout"):
+        TranslationServiceClient(timeout=timeout)
+
+
+def test_malformed_timeout_env_uses_safe_default(monkeypatch):
+    monkeypatch.setenv("EDC_TRANSLATION_TIMEOUT_SECONDS", "not-a-number")
+    client = TranslationServiceClient.from_env()
+    assert client.timeout == 30.0

@@ -70,26 +70,25 @@ run-coordinator: ## Run the Django coordinator
 # ============================================================================
 
 docker-build: ## Build all Docker images
-	docker compose build
+	bash scripts/with_runtime_source.sh root-cpu docker compose -f docker-compose.solo.yml -f docker-compose.solo.cpu.yml --profile api build
 
 docker-up: ## Start the Docker stack
-	docker compose up -d
+	docker compose -f docker-compose.solo.yml -f docker-compose.solo.cpu.yml --profile api up -d
 
 docker-down: ## Stop the Docker stack
-	docker compose down
+	docker compose -f docker-compose.solo.yml -f docker-compose.solo.cpu.yml --profile api down
 
 docker-logs: ## Tail Docker logs
-	docker compose logs -f
+	docker compose -f docker-compose.solo.yml -f docker-compose.solo.cpu.yml --profile api logs -f
 
 docker-restart: docker-down docker-up ## Restart the Docker stack
 
 docker-clean: ## Stop and remove all Docker artifacts
-	docker compose down -v --remove-orphans
-	docker system prune -af
+	docker compose -f docker-compose.solo.yml -f docker-compose.solo.cpu.yml --profile api down
 
 # CPU-only variant
 docker-cpu-up: ## Start the CPU-only Docker stack (no GPU required)
-	docker compose -f docker-compose.yml -f docker-compose.cpu-only.yml up -d --build
+	bash scripts/with_runtime_source.sh root-cpu docker compose -f docker-compose.solo.yml -f docker-compose.solo.cpu.yml --profile api up -d --build
 
 # ============================================================================
 # Kubernetes / Helm
@@ -129,7 +128,7 @@ sdk-build-typescript: ## Build the TypeScript SDK
 	cd sdk/typescript && npm install && npm run build
 
 sdk-test-python: ## Test the Python SDK
-	cd sdk/python && python -m pytest tests/ -v
+	python -m pytest tests/test_python_sdk_package.py -q
 
 sdk-test-typescript: ## Test the TypeScript SDK
 	cd sdk/typescript && npm test

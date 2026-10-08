@@ -294,7 +294,7 @@ class TestEasyOCREngine:
         """Non-PIL, non-numpy input should return empty list."""
         from easyocr_engine import EasyOCREngine
 
-        with patch("easyocr_engine._EASYOCR_AVAILABLE", True), \
+        with patch("easyocr_engine._EASYOCR_AVAILABLE", True),\
              patch("easyocr_engine._easyocr_mod") as mock_mod:
             mock_mod.Reader.return_value = MagicMock()
             engine = EasyOCREngine()

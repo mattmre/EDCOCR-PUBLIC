@@ -1,4 +1,4 @@
-"""Tests for feature_flags.py runtime feature registry."""
+"""Tests for feature_flags.py runtime feature registry (maintenance review)."""
 
 from __future__ import annotations
 

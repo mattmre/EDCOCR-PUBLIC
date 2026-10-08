@@ -69,8 +69,18 @@ def client(tmp_path):
     with (
         patch("api.config.SOURCE_FOLDER", str(source)),
         patch("api.config.OUTPUT_FOLDER", str(output)),
+        patch("api.config.OCR_API_KEY", ""),
+        patch("api.auth.OCR_API_KEY", ""),
+        patch("api.config.ENABLE_MULTITENANCY", False),
+        patch("api.main.ENABLE_MULTITENANCY", False),
+        patch("api.auth.ENABLE_MULTITENANCY", False),
         patch("api.config.ALLOW_UNAUTHENTICATED", True),
         patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+        # Metrics are an operator-facing surface; opt this legacy fixture
+        # into the required role explicitly instead of relying on the
+        # repository-wide anonymous viewer default.
+        patch("api.config.ANONYMOUS_ROLE", "operator"),
+        patch("api.auth.ANONYMOUS_ROLE", "operator"),
         patch("api.job_manager.config") as mock_config,
         patch("api.job_manager.JobManager._run_pipeline"),
     ):
@@ -96,7 +106,9 @@ def client(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _get_metric_value(body: str, metric_name: str, labels: dict | None = None) -> float | None:
+def _get_metric_value(
+    body: str, metric_name: str, labels: dict | None = None
+) -> float | None:
     """Extract a metric value from Prometheus text output.
 
     Returns the float value if found, None otherwise.
@@ -138,14 +150,21 @@ class TestSLAPrometheusMetrics:
         from sla_monitoring import get_monitor
 
         monitor = get_monitor()
-        monitor.record_request("tenant-a", success=True, latency_seconds=1.0)
-        monitor.record_request("tenant-a", success=True, latency_seconds=2.0)
+        # A default report has five SLOs.  Supply evidence for each one;
+        # missing-data is intentionally non-compliant (S2-11/S2-20).
+        for _ in range(20):
+            monitor.record_request("tenant-a", success=True, latency_seconds=1.0)
+            monitor.record_success("tenant-a")
+        monitor.record_throughput("tenant-a", 15.0)
+        monitor.record_recovery("tenant-a", 10.0)
 
         resp = client.get("/api/v1/prometheus/")
         assert resp.status_code == 200
         body = resp.text
 
-        val = _get_metric_value(body, "ocr_sla_compliance_pct", {"tenant_id": "tenant-a"})
+        val = _get_metric_value(
+            body, "ocr_sla_compliance_pct", {"tenant_id": "tenant-a"}
+        )
         assert val is not None
         assert val == 100.0  # all requests succeeded, all SLOs met
 
@@ -172,7 +191,9 @@ class TestSLAPrometheusMetrics:
         resp = client.get("/api/v1/prometheus/")
         body = resp.text
 
-        val = _get_metric_value(body, "ocr_sla_violation_count", {"tenant_id": "tenant-strict"})
+        val = _get_metric_value(
+            body, "ocr_sla_violation_count", {"tenant_id": "tenant-strict"}
+        )
         assert val is not None
         assert val >= 1.0
 
@@ -190,7 +211,9 @@ class TestSLAPrometheusMetrics:
         resp = client.get("/api/v1/prometheus/")
         body = resp.text
 
-        val = _get_metric_value(body, "ocr_sla_availability_pct", {"tenant_id": "tenant-b"})
+        val = _get_metric_value(
+            body, "ocr_sla_availability_pct", {"tenant_id": "tenant-b"}
+        )
         assert val is not None
         assert val == 75.0
 
@@ -205,7 +228,9 @@ class TestSLAPrometheusMetrics:
         resp = client.get("/api/v1/prometheus/")
         body = resp.text
 
-        val = _get_metric_value(body, "ocr_sla_p95_latency_seconds", {"tenant_id": "tenant-c"})
+        val = _get_metric_value(
+            body, "ocr_sla_p95_latency_seconds", {"tenant_id": "tenant-c"}
+        )
         assert val is not None
         assert val > 0.0  # should be close to 19s
 
@@ -262,7 +287,9 @@ class TestCostPrometheusMetrics:
         assert resp.status_code == 200
         body = resp.text
 
-        val = _get_metric_value(body, "ocr_cost_estimate_total", {"tenant_id": "tenant-x"})
+        val = _get_metric_value(
+            body, "ocr_cost_estimate_total", {"tenant_id": "tenant-x"}
+        )
         assert val is not None
         assert val > 0.0
 
@@ -276,7 +303,9 @@ class TestCostPrometheusMetrics:
         resp = client.get("/api/v1/prometheus/")
         body = resp.text
 
-        val = _get_metric_value(body, "ocr_tenant_gpu_seconds", {"tenant_id": "tenant-y"})
+        val = _get_metric_value(
+            body, "ocr_tenant_gpu_seconds", {"tenant_id": "tenant-y"}
+        )
         assert val is not None
         assert val == 123.5
 
@@ -290,7 +319,9 @@ class TestCostPrometheusMetrics:
         resp = client.get("/api/v1/prometheus/")
         body = resp.text
 
-        val = _get_metric_value(body, "ocr_tenant_storage_bytes", {"tenant_id": "tenant-z"})
+        val = _get_metric_value(
+            body, "ocr_tenant_storage_bytes", {"tenant_id": "tenant-z"}
+        )
         assert val is not None
         assert val == 5_000_000.0
 
@@ -305,8 +336,12 @@ class TestCostPrometheusMetrics:
         resp = client.get("/api/v1/prometheus/")
         body = resp.text
 
-        t1_cost = _get_metric_value(body, "ocr_cost_estimate_total", {"tenant_id": "t1"})
-        t2_cost = _get_metric_value(body, "ocr_cost_estimate_total", {"tenant_id": "t2"})
+        t1_cost = _get_metric_value(
+            body, "ocr_cost_estimate_total", {"tenant_id": "t1"}
+        )
+        t2_cost = _get_metric_value(
+            body, "ocr_cost_estimate_total", {"tenant_id": "t2"}
+        )
         assert t1_cost is not None
         assert t2_cost is not None
         assert t2_cost > t1_cost  # t2 processed more pages
@@ -385,7 +420,11 @@ class TestRefreshMetricsSLACost:
         from sla_monitoring import get_monitor
 
         monitor = get_monitor()
-        monitor.record_request("direct-test", success=True, latency_seconds=1.0)
+        for _ in range(20):
+            monitor.record_request("direct-test", success=True, latency_seconds=1.0)
+            monitor.record_success("direct-test")
+        monitor.record_throughput("direct-test", 15.0)
+        monitor.record_recovery("direct-test", 10.0)
 
         _refresh_metrics()
 
@@ -439,7 +478,9 @@ class TestRefreshMetricsSLACost:
             "viol-test",
             [
                 SLODefinition("Avail", "availability", 99.9, "percent", "gte"),
-                SLODefinition("Throughput", "throughput", 9999.0, "pages_per_minute", "gte"),
+                SLODefinition(
+                    "Throughput", "throughput", 9999.0, "pages_per_minute", "gte"
+                ),
             ],
         )
         monitor.record_request("viol-test", success=False, latency_seconds=100.0)

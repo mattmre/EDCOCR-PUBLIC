@@ -28,8 +28,7 @@ class QuotaExceededError(Exception):
         self.current = current
         self.maximum = maximum
         super().__init__(
-            f"Quota exceeded for tenant {tenant_id}: "
-            f"{limit_type} ({current}/{maximum})"
+            f"Quota exceeded for tenant {tenant_id}: {limit_type} ({current}/{maximum})"
         )
 
 
@@ -146,3 +145,35 @@ def check_storage_quota(
     finally:
         if own_session:
             session.close()
+
+
+def consume_page_quota(tenant: Tenant, page_count: int, *, session: Session) -> None:
+    """Atomically account completed pages only while the monthly limit allows.
+
+    The caller commits this conditional increment with the terminal job state.
+    A separate check followed by an unconditional increment races across workers.
+    """
+    from api.usage import _get_or_create_usage
+
+    if page_count < 0:
+        raise ValueError("page_count must be nonnegative")
+    record = _get_or_create_usage(tenant.tenant_id, _current_period(), session)
+    updated = (
+        session.query(UsageRecord)
+        .filter(
+            UsageRecord.id == record.id,
+            UsageRecord.pages_processed + page_count <= tenant.max_pages_per_month,
+        )
+        .update(
+            {UsageRecord.pages_processed: UsageRecord.pages_processed + page_count},
+            synchronize_session=False,
+        )
+    )
+    session.expire(record, ["pages_processed"])
+    if not updated:
+        raise QuotaExceededError(
+            tenant.tenant_id,
+            "pages_per_month",
+            record.pages_processed,
+            tenant.max_pages_per_month,
+        )

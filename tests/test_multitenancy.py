@@ -659,7 +659,9 @@ class TestUsageTracking:
         usage = get_usage(sample_tenant.tenant_id, session=session)
         assert usage.processing_seconds == pytest.approx(20.0)
 
-    def test_build_cost_summary_uses_provider_agnostic_rates(self, sample_tenant, session):
+    def test_build_cost_summary_uses_provider_agnostic_rates(
+        self, sample_tenant, session
+    ):
         from api.usage import build_cost_summary, get_usage, record_processing_seconds
 
         usage = UsageRecord(
@@ -684,8 +686,15 @@ class TestUsageTracking:
             patch("api.config.TENANT_COST_PER_PROCESSING_HOUR_USD", 3.0),
             patch("api.usage.config.TENANT_COST_PER_PROCESSING_HOUR_USD", 3.0),
         ):
-            record_processing_seconds(sample_tenant.tenant_id, 1800, session=session)
-            usage = get_usage(sample_tenant.tenant_id, period="2026-03", session=session)
+            record_processing_seconds(
+                sample_tenant.tenant_id,
+                1800,
+                session=session,
+                period="2026-03",
+            )
+            usage = get_usage(
+                sample_tenant.tenant_id, period="2026-03", session=session
+            )
             summary = build_cost_summary(usage)
 
         assert summary["page_cost_usd"] == pytest.approx(0.2)
@@ -766,16 +775,8 @@ class TestTenantIsolation:
         session.commit()
 
         # Query jobs for tenant A
-        a_jobs = (
-            session.query(Job)
-            .filter(Job.tenant_id == tenant_a.tenant_id)
-            .all()
-        )
-        b_jobs = (
-            session.query(Job)
-            .filter(Job.tenant_id == tenant_b.tenant_id)
-            .all()
-        )
+        a_jobs = session.query(Job).filter(Job.tenant_id == tenant_a.tenant_id).all()
+        b_jobs = session.query(Job).filter(Job.tenant_id == tenant_b.tenant_id).all()
 
         assert len(a_jobs) == 1
         assert a_jobs[0].job_id == "job_aaaaaaaaaaaa"
@@ -949,24 +950,33 @@ class TestAdminAPI:
         assert data["name"] == "Test Corp"
 
     def test_get_tenant_not_found(self, mt_client):
+        """Scoped admins do not receive an existence oracle for foreign IDs."""
         client, api_key = mt_client
         resp = client.get(
             "/api/v1/admin/tenants/tenant_000000000000",
             headers={"X-API-Key": api_key},
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     def test_update_tenant_endpoint(self, mt_client, sample_tenant):
         client, api_key = mt_client
         resp = client.put(
             f"/api/v1/admin/tenants/{sample_tenant.tenant_id}",
-            json={"name": "Renamed Corp", "max_concurrent_jobs": 8},
+            json={"name": "Renamed Corp"},
             headers={"X-API-Key": api_key},
         )
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "Renamed Corp"
-        assert data["max_concurrent_jobs"] == 8
+
+        # Commercial/shared-capacity controls require platform_admin; a
+        # tenant-scoped admin may update only its own identity metadata.
+        resp = client.put(
+            f"/api/v1/admin/tenants/{sample_tenant.tenant_id}",
+            json={"max_concurrent_jobs": 8},
+            headers={"X-API-Key": api_key},
+        )
+        assert resp.status_code == 403
 
     def test_suspend_tenant_endpoint(self, platform_admin_client):
         client, api_key = platform_admin_client
@@ -1110,15 +1120,19 @@ class TestAdminAPI:
         assert data["api_calls"] == 0
         assert data["estimated_costs"]["total_cost_usd"] == pytest.approx(0.0)
         assert data["estimated_costs"]["rates"]["per_page_usd"] == pytest.approx(0.02)
-        assert data["estimated_costs"]["rates"]["per_gib_ingested_usd"] == pytest.approx(
-            0.5
+        assert data["estimated_costs"]["rates"][
+            "per_gib_ingested_usd"
+        ] == pytest.approx(0.5)
+        assert data["estimated_costs"]["rates"]["per_api_call_usd"] == pytest.approx(
+            0.01
         )
-        assert data["estimated_costs"]["rates"]["per_api_call_usd"] == pytest.approx(0.01)
-        assert data["estimated_costs"]["rates"]["per_processing_hour_usd"] == pytest.approx(
-            3.0
-        )
+        assert data["estimated_costs"]["rates"][
+            "per_processing_hour_usd"
+        ] == pytest.approx(3.0)
 
-    def test_usage_endpoint_returns_processing_and_cost_fields(self, mt_client, sample_tenant, session):
+    def test_usage_endpoint_returns_processing_and_cost_fields(
+        self, mt_client, sample_tenant, session
+    ):
         client, api_key = mt_client
         session.add(
             UsageRecord(
@@ -1155,7 +1169,9 @@ class TestAdminAPI:
         assert data["estimated_costs"]["storage_ingest_cost_usd"] == pytest.approx(0.25)
         assert data["estimated_costs"]["processing_cost_usd"] == pytest.approx(4.0)
 
-    def test_get_slo_endpoint_returns_empty_window_defaults(self, mt_client, sample_tenant):
+    def test_get_slo_endpoint_returns_empty_window_defaults(
+        self, mt_client, sample_tenant
+    ):
         client, api_key = mt_client
         resp = client.get(
             f"/api/v1/admin/tenants/{sample_tenant.tenant_id}/slo",
@@ -1228,7 +1244,9 @@ class TestAdminAPI:
         assert data["status"]["p95_processing_met"] is False
         assert data["status"]["overall_met"] is False
 
-    def test_get_slo_endpoint_reports_passing_window(self, mt_client, sample_tenant, session):
+    def test_get_slo_endpoint_reports_passing_window(
+        self, mt_client, sample_tenant, session
+    ):
         client, api_key = mt_client
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         session.add_all(
@@ -1278,7 +1296,9 @@ class TestAdminAPI:
         assert data["throughput_pages_per_hour"] == pytest.approx(30 / 24, abs=1e-6)
         assert data["status"]["overall_met"] is True
 
-    def test_get_slo_endpoint_rejects_non_positive_window(self, mt_client, sample_tenant):
+    def test_get_slo_endpoint_rejects_non_positive_window(
+        self, mt_client, sample_tenant
+    ):
         client, api_key = mt_client
 
         resp = client.get(
@@ -1326,11 +1346,16 @@ class TestAdminAPI:
         )
         assert resp.status_code == 403
 
-    def test_tenant_admin_cannot_create_platform_admin_key(self, mt_client, sample_tenant):
+    def test_tenant_admin_cannot_create_platform_admin_key(
+        self, mt_client, sample_tenant
+    ):
         client, api_key = mt_client
         resp = client.post(
             f"/api/v1/admin/tenants/{sample_tenant.tenant_id}/keys",
-            json={"name": "escalate", "permissions": ["submit", "read", "admin", "platform_admin"]},
+            json={
+                "name": "escalate",
+                "permissions": ["submit", "read", "admin", "platform_admin"],
+            },
             headers={"X-API-Key": api_key},
         )
         assert resp.status_code == 403
@@ -1381,7 +1406,9 @@ class TestAdminAPI:
 class TestTenantJobAPIIsolation:
     """API-level tenant isolation for job visibility and control."""
 
-    def test_tenant_job_list_returns_only_owned_jobs(self, mt_client, sample_tenant, session):
+    def test_tenant_job_list_returns_only_owned_jobs(
+        self, mt_client, sample_tenant, session
+    ):
         client, api_key = mt_client
         from api.tenant_manager import create_tenant
 
@@ -1464,20 +1491,25 @@ class TestTenantJobAPIIsolation:
 class TestTenantQuotaAPI:
     """Quota checks are enforced on the API submission path."""
 
-    def test_submit_enforces_concurrent_job_quota(self, mt_client, sample_tenant, session):
+    def test_submit_enforces_concurrent_job_quota(
+        self, mt_client, sample_tenant, session
+    ):
         client, api_key = mt_client
         sample_tenant.max_concurrent_jobs = 1
         session.commit()
+        from pathlib import Path
+
+        valid_pdf = Path("tests/fixtures/sample.pdf").read_bytes()
 
         with patch("api.job_manager.JobManager._run_pipeline", return_value=None):
             resp1 = client.post(
                 "/api/v1/jobs",
-                files={"file": ("first.pdf", b"first-content", "application/pdf")},
+                files={"file": ("first.pdf", valid_pdf, "application/pdf")},
                 headers={"X-API-Key": api_key},
             )
             resp2 = client.post(
                 "/api/v1/jobs",
-                files={"file": ("second.pdf", b"second-content", "application/pdf")},
+                files={"file": ("second.pdf", valid_pdf, "application/pdf")},
                 headers={"X-API-Key": api_key},
             )
 
@@ -1490,10 +1522,13 @@ class TestTenantQuotaAPI:
         client, api_key = mt_client
         sample_tenant.max_storage_bytes = 8
         session.commit()
+        from pathlib import Path
+
+        valid_pdf = Path("tests/fixtures/sample.pdf").read_bytes()
 
         resp = client.post(
             "/api/v1/jobs",
-            files={"file": ("large.pdf", b"0123456789", "application/pdf")},
+            files={"file": ("large.pdf", valid_pdf, "application/pdf")},
             headers={"X-API-Key": api_key},
         )
 

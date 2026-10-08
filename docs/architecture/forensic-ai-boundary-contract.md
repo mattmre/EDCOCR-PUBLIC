@@ -1,3 +1,5 @@
+> Design/reference material. Optional deployment and feature claims require the acceptance checks in [candidate scope](../release-candidate.md).
+
 # Forensic-Core vs AI-Adjacent Boundary Contract
 
 **Date**: 2026-03-27

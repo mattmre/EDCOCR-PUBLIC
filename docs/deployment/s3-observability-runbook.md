@@ -1,3 +1,5 @@
+> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](../release-candidate.md) and the root installation guide.
+
 # S3 Storage Backend Observability Runbook
 
 **Purpose**: Define required health signals, metrics, log indicators, and alert thresholds for S3 backend operations.

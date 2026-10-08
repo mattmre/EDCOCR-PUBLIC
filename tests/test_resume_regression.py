@@ -74,10 +74,11 @@ def _load_utility_functions():
     mod.PHASE1_IMAGE_EXTENSIONS = {
         ".tif", ".tiff", ".jpg", ".jpeg", ".png", ".bmp", ".gif",
         ".webp", ".jp2", ".jpx", ".pnm", ".pbm", ".pgm", ".ppm",
-        ".pcx", ".ico", ".svg", ".svgz", ".wmf", ".emf",
+        ".pcx", ".ico", ".svg", ".svgz",
     }
     mod.PHASE2_IMAGE_EXTENSIONS = {
         ".heic", ".heif", ".avif", ".jxl", ".jxr", ".dcx", ".xps",
+        ".wmf", ".emf",
     }
     mod.STRICT_PDF_SIGNATURE = False
 
@@ -177,6 +178,27 @@ class TestSourceFingerprintDeterminism:
         fp2 = compute_source_fingerprint(str(f))
 
         assert fp1["content_sha256"] != fp2["content_sha256"]
+
+    def test_same_size_replacement_with_restored_mtime_changes_fingerprint(
+        self, tmp_path,
+    ):
+        """Resume identity remains bound to bytes despite forged stat parity."""
+        f = tmp_path / "doc.pdf"
+        f.write_bytes(b"%PDF-AAAA-%%EOF")
+        original_stat = f.stat()
+        fp1 = compute_source_fingerprint(str(f))
+
+        f.write_bytes(b"%PDF-BBBB-%%EOF")
+        os.utime(
+            f,
+            ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+        )
+        fp2 = compute_source_fingerprint(str(f))
+
+        assert fp1["size_bytes"] == fp2["size_bytes"]
+        assert fp1["mtime_ns"] == fp2["mtime_ns"]
+        assert fp1["content_sha256"] != fp2["content_sha256"]
+        assert build_resume_doc_id(str(f), fp1) != build_resume_doc_id(str(f), fp2)
 
     def test_fingerprint_contains_required_keys(self, tmp_path):
         """Fingerprint dict must contain all three canonical keys."""
@@ -463,11 +485,11 @@ class TestManifestIO:
 
 
 # ===========================================================================
-# Tier 1, Class 5: TestAtomicManifestCrashSafety
+# Tier 1, Class 5: TestAtomicManifestCrashSafety (maintenance review)
 # ===========================================================================
 
 class TestAtomicManifestCrashSafety:
-    """Verify _write_manifest_atomic crash-safety guarantees.
+    """Verify _write_manifest_atomic crash-safety guarantees (maintenance review).
 
     The resume manifest must be written via tmp->fsync->rename so that a
     power failure mid-write cannot leave a corrupt/partial manifest on disk.

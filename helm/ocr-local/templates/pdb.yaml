@@ -32,6 +32,53 @@ spec:
       {{- include "ocr-local.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: coordinator
 ---
+# Celery coordinator owns durable dispatch/reconciliation work.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-celery-coordinator-pdb
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: celery-coordinator
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: celery-coordinator
+---
+# General CPU execution workers.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-cpu-worker-pdb
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cpu-worker
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: cpu-worker
+{{- if .Values.cpuOcrWorker.enabled }}
+---
+# Dedicated CPU OCR workers.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-cpu-ocr-worker-pdb
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cpu-ocr-worker
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: cpu-ocr-worker
+{{- end }}
+---
 # =============================================================================
 # PodDisruptionBudget: PostgreSQL
 # =============================================================================
@@ -87,6 +134,36 @@ spec:
     matchLabels:
       {{- include "ocr-local.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: redis
+{{- end }}
+{{- if and .Values.redis.enabled .Values.redis.sentinel.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-redis-replica-pdb
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-replica
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis-replica
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-redis-sentinel-pdb
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-sentinel
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis-sentinel
 {{- end }}
 ---
 # Celery Beat PDB — singleton; missed beats catch up on restart.

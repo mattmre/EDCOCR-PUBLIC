@@ -77,7 +77,7 @@ export default function AuditDetailPage() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return => {
+    return () => {
       cancelled = true;
     };
   }, [jobId]);
@@ -95,7 +95,7 @@ export default function AuditDetailPage() {
     return null;
   }, [events]);
 
-  const verify = useCallback(async => {
+  const verify = useCallback(async () => {
     setIsVerifying(true);
     try {
       const result = await verifyChain(events);

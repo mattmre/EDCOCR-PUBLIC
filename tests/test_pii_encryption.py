@@ -268,6 +268,18 @@ class TestKeyRotation:
         with pytest.raises(ValueError, match="Failed to decrypt with old key"):
             enc.rotate_key(second_key, valid_key, ciphertext)  # wrong old key
 
+    def test_rotation_candidate_authenticates_legacy_raw_fernet(
+        self, pii_mod, valid_key, second_key
+    ):
+        from cryptography.fernet import Fernet
+
+        legacy = Fernet(valid_key.encode("ascii")).encrypt(b"legacy-secret").decode()
+        enc = pii_mod.PiiEncryptor(valid_key)
+        assert enc.is_encrypted(legacy) is False
+        assert enc.is_rotation_ciphertext_candidate(legacy) is True
+        rotated = enc.rotate_key(valid_key, second_key, legacy)
+        assert pii_mod.PiiEncryptor(second_key).decrypt(rotated) == "legacy-secret"
+
     def test_rotate_key_preserves_data_integrity(self, pii_mod, valid_key, second_key):
         """Multiple values rotated all decrypt correctly with new key."""
         enc = pii_mod.PiiEncryptor(valid_key)
@@ -356,7 +368,9 @@ class TestThreadSafety:
 class TestEncryptedTextField:
     """Tests for the EncryptedTextField custom Django field."""
 
-    def test_get_prep_value_encrypts(self, pii_mod, enc_field_mod, valid_key, monkeypatch):
+    def test_get_prep_value_encrypts(
+        self, pii_mod, enc_field_mod, valid_key, monkeypatch
+    ):
         enc = pii_mod.PiiEncryptor(valid_key)
         monkeypatch.setattr(enc_field_mod, "get_encryptor", lambda: enc)
 
@@ -366,7 +380,9 @@ class TestEncryptedTextField:
         assert stored != plaintext
         assert pii_mod.PiiEncryptor.is_encrypted(stored)
 
-    def test_from_db_value_decrypts(self, pii_mod, enc_field_mod, valid_key, monkeypatch):
+    def test_from_db_value_decrypts(
+        self, pii_mod, enc_field_mod, valid_key, monkeypatch
+    ):
         enc = pii_mod.PiiEncryptor(valid_key)
         monkeypatch.setattr(enc_field_mod, "get_encryptor", lambda: enc)
 
@@ -376,7 +392,9 @@ class TestEncryptedTextField:
         result = field.from_db_value(ciphertext, None, None)
         assert result == plaintext
 
-    def test_roundtrip_through_field(self, pii_mod, enc_field_mod, valid_key, monkeypatch):
+    def test_roundtrip_through_field(
+        self, pii_mod, enc_field_mod, valid_key, monkeypatch
+    ):
         enc = pii_mod.PiiEncryptor(valid_key)
         monkeypatch.setattr(enc_field_mod, "get_encryptor", lambda: enc)
 
@@ -428,7 +446,7 @@ class TestEdgeCases:
 
     def test_special_characters(self, pii_mod, valid_key):
         enc = pii_mod.PiiEncryptor(valid_key)
-        plaintext = 'Line1\nLine2\tTab\r\nCRLF\x00Null"Quotes\'Single'
+        plaintext = "Line1\nLine2\tTab\r\nCRLF\x00Null\"Quotes'Single"
         ciphertext = enc.encrypt(plaintext)
         assert enc.decrypt(ciphertext) == plaintext
 
@@ -448,11 +466,97 @@ class TestEdgeCases:
         assert ct1 != ct2
         assert enc.decrypt(ct1) == enc.decrypt(ct2) == plaintext
 
-    def test_wrong_key_decrypt_returns_ciphertext(self, pii_mod, valid_key, second_key):
-        """Decrypting with wrong key returns ciphertext as-is (graceful)."""
+    def test_wrong_key_decrypt_fails_closed(self, pii_mod, valid_key, second_key):
+        """R2-RC-21: wrong key on Fernet-shaped value raises (no passthrough)."""
         enc1 = pii_mod.PiiEncryptor(valid_key)
         enc2 = pii_mod.PiiEncryptor(second_key)
         ciphertext = enc1.encrypt("secret data")
-        # enc2 should fail to decrypt and return the ciphertext unchanged
-        result = enc2.decrypt(ciphertext)
-        assert result == ciphertext
+        with pytest.raises(pii_mod.PiiDecryptError):
+            enc2.decrypt(ciphertext)
+
+    def test_encryption_never_trusts_ciphertext_shaped_plaintext(
+        self, pii_mod, valid_key
+    ):
+        """Every normal write encrypts, including attacker-controlled shapes."""
+        enc = pii_mod.PiiEncryptor(valid_key)
+        once = enc.encrypt("SSN-111-22-3333")
+        twice = enc.encrypt(once)
+        assert twice != once
+        assert enc.decrypt(twice) == once
+        crafted = "gAAAAA" + "A" * 94
+        stored = enc.encrypt(crafted)
+        assert stored != crafted
+        assert enc.decrypt(stored) == crafted
+
+    def test_production_requires_key(self, pii_mod, monkeypatch):
+        monkeypatch.setenv("DEPLOYMENT_ENV", "production")
+        monkeypatch.delenv("PII_ENCRYPTION_KEY", raising=False)
+        monkeypatch.delenv("PII_ENCRYPTION_ALLOW_PLAINTEXT", raising=False)
+        with pytest.raises(pii_mod.PiiEncryptionConfigError):
+            pii_mod.PiiEncryptor(None)
+
+    def test_production_allow_plaintext_waiver(self, pii_mod, monkeypatch):
+        monkeypatch.setenv("DEPLOYMENT_ENV", "production")
+        monkeypatch.setenv("PII_ENCRYPTION_ALLOW_PLAINTEXT", "true")
+        enc = pii_mod.PiiEncryptor(None)
+        assert enc.enabled is False
+        assert enc.encrypt("x") == "x"
+
+
+# ---------------------------------------------------------------------------
+# R2-RC-21 rotate_pii_key command surface (structural + logic contract)
+# ---------------------------------------------------------------------------
+
+
+class TestRotatePiiKeyCommandSurface:
+    """Guardrails for the management command without a live Postgres."""
+
+    def test_targets_include_all_encrypted_models(self):
+        path = (
+            _REPO_ROOT
+            / "coordinator"
+            / "jobs"
+            / "management"
+            / "commands"
+            / "rotate_pii_key.py"
+        )
+        src = path.read_text(encoding="utf-8")
+        assert "ExtractedEntity" in src
+        assert "ExtractedFormValue" in src
+        assert "PiiEntity" in src
+        assert "PresignedTaskCapability" in src
+        assert '"payload"' in src
+        assert "entity_value" in src
+        assert "entity_text" in src
+        assert "field_value" in src
+        assert "reset_encryptor" in src
+        assert "R2-RC-21" in src
+        # Raw SQL path — must not rely on EncryptedTextField auto-decrypt alone
+        assert "cursor.execute" in src or "connection.cursor" in src
+        # Fail closed on per-record failures
+        assert "CommandError" in src
+        assert "failed" in src
+        assert "transaction.atomic" in src
+        assert "is_rotation_ciphertext_candidate" in src
+
+    def test_field_fails_closed_on_wrong_key(
+        self, pii_mod, enc_field_mod, valid_key, second_key, monkeypatch
+    ):
+        enc_old = pii_mod.PiiEncryptor(valid_key)
+        enc_new = pii_mod.PiiEncryptor(second_key)
+        monkeypatch.setattr(enc_field_mod, "get_encryptor", lambda: enc_new)
+        field = enc_field_mod.EncryptedTextField()
+        ciphertext = enc_old.encrypt("nested-risk")
+        with pytest.raises(pii_mod.PiiDecryptError):
+            field.from_db_value(ciphertext, None, None)
+
+    def test_field_write_treats_envelope_input_as_plaintext(
+        self, pii_mod, enc_field_mod, valid_key, monkeypatch
+    ):
+        enc = pii_mod.PiiEncryptor(valid_key)
+        monkeypatch.setattr(enc_field_mod, "get_encryptor", lambda: enc)
+        field = enc_field_mod.EncryptedTextField()
+        once = field.get_prep_value("plain-pii")
+        twice = field.get_prep_value(once)
+        assert twice != once
+        assert field.from_db_value(twice, None, None) == once

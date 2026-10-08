@@ -27,7 +27,13 @@ class TestJobModel(TestCase):
         assert job.total_pages == 0
         assert job.pages_completed == 0
         assert job.pages_failed == 0
-        assert job.detected_language == "en"
+        assert job.detected_language == "und"
+        from ocr_local.language_routing import route_language
+
+        route = route_language(job.detected_language)
+        assert route.detected_label == "und"
+        assert route.model_language == "en"  # default model is not detected text
+        assert route.needs_review
         assert job.source_hash == ""
         assert job.source_type == ""
         assert job.error_message == ""

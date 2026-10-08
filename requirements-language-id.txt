@@ -1,0 +1,5 @@
+# Production FastText dependency for the Python 3.12 root OCR image.
+# This is isolated from the general developer requirements because source
+# installation needs a C++ toolchain; Docker installs it before pruning the
+# compiler from the final runtime image.
+fasttext==0.9.3

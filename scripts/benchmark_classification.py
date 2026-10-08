@@ -14,7 +14,7 @@ The --synthetic flag generates documents with known classifications for CI
 testing without external datasets. The --dataset-dir flag loads real labeled
 documents from a directory structured as: <dataset-dir>/<class_name>/*.pdf|*.png
 
-Requires: classification.py (from EDCOCR project root)
+Requires: classification.py (from OCR_LOCAL project root)
 """
 
 import argparse

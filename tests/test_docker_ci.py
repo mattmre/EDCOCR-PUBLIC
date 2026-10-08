@@ -198,7 +198,7 @@ class TestDockerBuildPush:
     def test_coordinator_context(self, workflow):
         job = workflow["jobs"]["build-coordinator-image"]
         step = self._find_step(job, "docker/build-push-action")
-        assert step["with"]["context"] == "./coordinator"
+        assert step["with"]["context"] == "."
 
     def test_push_conditional_on_non_pr(self, workflow):
         """Push should only happen on non-PR events (main push, tags)."""
@@ -206,9 +206,9 @@ class TestDockerBuildPush:
             job = workflow["jobs"][job_name]
             step = self._find_step(job, "docker/build-push-action")
             push_value = step["with"]["push"]
-            assert "pull_request" in str(push_value), (
-                f"{job_name}: push should be conditional on non-PR event"
-            )
+            assert "pull_request" in str(
+                push_value
+            ), f"{job_name}: push should be conditional on non-PR event"
 
 
 class TestBuildCaching:
@@ -323,7 +323,7 @@ class TestWorkerBuildPush:
     def test_worker_context(self, workflow, job_name):
         job = workflow["jobs"][job_name]
         step = self._find_step(job, "docker/build-push-action")
-        assert step["with"]["context"] == "./coordinator"
+        assert step["with"]["context"] == "."
 
     @pytest.mark.parametrize("job_name", list(WORKER_JOBS.keys()))
     def test_worker_metadata_image(self, workflow, job_name):
@@ -348,11 +348,11 @@ class TestWorkerBuildPush:
         assert "pull_request" in str(push_value)
 
     @pytest.mark.parametrize("job_name", list(WORKER_JOBS.keys()))
-    def test_worker_skip_model_preload(self, workflow, job_name):
+    def test_worker_preloads_models(self, workflow, job_name):
         job = workflow["jobs"][job_name]
         step = self._find_step(job, "docker/build-push-action")
         build_args = step["with"].get("build-args", "")
-        assert "SKIP_MODEL_PRELOAD=1" in build_args
+        assert "SKIP_MODEL_PRELOAD=0" in build_args
 
 
 class TestBuildxSetup:

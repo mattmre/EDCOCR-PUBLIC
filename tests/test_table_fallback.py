@@ -555,13 +555,8 @@ class TestWriteJson:
         result = write_table_fallback_json(
             summary, str(tmp_path), "../../etc", __version__
         )
-        # Should be blocked or safely contained
-        if result is not None:
-            resolved = os.path.realpath(result)
-            fallback_dir = os.path.realpath(
-                os.path.join(str(tmp_path), "EXPORT", "TABLE_FALLBACK")
-            )
-            assert resolved.startswith(fallback_dir)
+        assert result is None
+        assert not (tmp_path / "etc").exists()
 
     def test_json_schema_fields(self, tmp_path):
         summary = DocumentTableFallbackSummary(

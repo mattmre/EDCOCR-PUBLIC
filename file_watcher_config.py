@@ -18,8 +18,16 @@ from pydantic import BaseModel, field_validator, model_validator
 logger = logging.getLogger(__name__)
 
 DEFAULT_FILE_PATTERNS = [
-    "*.pdf", "*.tif", "*.tiff", "*.jpg", "*.jpeg", "*.png",
-    "*.bmp", "*.gif", "*.webp", "*.jp2",
+    "*.pdf",
+    "*.tif",
+    "*.tiff",
+    "*.jpg",
+    "*.jpeg",
+    "*.png",
+    "*.bmp",
+    "*.gif",
+    "*.webp",
+    "*.jp2",
 ]
 
 
@@ -113,6 +121,31 @@ class RemoteIngestConfig(BaseModel):
         if not v or not v.strip():
             raise ValueError("remote_path must not be empty")
         return v.strip()
+
+    def model_post_init(self, __context) -> None:
+        """S2-03 / R3-A07: refuse AutoAdd host-key theater in production.
+
+        Production requires either known_hosts_path or explicit dual-ACK env
+        ``SFTP_ALLOW_UNKNOWN_HOST_ACK=I_ACCEPT_MITM_RISK`` when
+        allow_unknown_host is true. Empty known_hosts + AutoAdd alone is rejected.
+        """
+        import os
+
+        if not self.allow_unknown_host:
+            return
+        deployment = os.environ.get("DEPLOYMENT_ENV", "development").strip().lower()
+        if deployment != "production":
+            return
+        ack = os.environ.get("SFTP_ALLOW_UNKNOWN_HOST_ACK", "").strip()
+        if self.known_hosts_path and self.known_hosts_path.strip():
+            return
+        if ack == "I_ACCEPT_MITM_RISK":
+            return
+        raise ValueError(
+            "SFTP allow_unknown_host=true is forbidden in production without "
+            "known_hosts_path or SFTP_ALLOW_UNKNOWN_HOST_ACK=I_ACCEPT_MITM_RISK "
+            "(S2-03 continuous MITM residual)"
+        )
 
     @field_validator("patterns")
     @classmethod

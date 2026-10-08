@@ -1,4 +1,4 @@
-"""Tests for the application-wide JobManager singleton.
+"""Tests for the application-wide JobManager singleton (maintenance review).
 
 Verifies that ``get_manager()`` returns the same ``JobManager`` instance
 across sequential and concurrent callers, preventing per-request thread

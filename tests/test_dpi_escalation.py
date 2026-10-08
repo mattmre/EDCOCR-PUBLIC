@@ -195,7 +195,7 @@ class TestReExtractPage:
         assert result.mode == "RGB"
         mock_convert.assert_called_once_with(
             "/fake/doc.pdf", first_page=1, last_page=1, dpi=450,
-            timeout=300,
+            timeout=300, use_cropbox=True,
         )
 
     @patch("dpi_escalation._convert_from_path")
@@ -239,7 +239,7 @@ class TestReExtractPage:
 
         mock_convert.assert_called_once_with(
             "/fake/doc.pdf", first_page=42, last_page=42, dpi=300,
-            timeout=300,
+            timeout=300, use_cropbox=True,
         )
 
     @patch("dpi_escalation._convert_from_path")

@@ -96,7 +96,14 @@ class TestStorageObject:
     def test_to_dict_has_all_fields(self):
         obj = StorageObject(key="k")
         d = obj.to_dict()
-        assert set(d.keys()) == {"key", "size", "last_modified", "content_type", "etag", "provider"}
+        assert set(d.keys()) == {
+            "key",
+            "size",
+            "last_modified",
+            "content_type",
+            "etag",
+            "provider",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +260,16 @@ class TestLocalStorageBackend:
     def test_exists_false(self, backend):
         assert backend.exists("nope.txt") is False
 
+    def test_keys_cannot_escape_base_path(self, backend, tmp_path):
+        outside = tmp_path / "outside.txt"
+        outside.write_bytes(b"outside")
+
+        for key in ("../outside.txt", "/etc/passwd"):
+            with pytest.raises(ValueError):
+                backend.exists(key)
+            with pytest.raises(ValueError):
+                backend.upload(key, b"must-not-write")
+
     def test_delete_existing(self, backend):
         backend.upload("gone.txt", b"bye")
         assert backend.delete("gone.txt") is True
@@ -358,7 +375,10 @@ class TestAzureBlobBackend:
     def test_get_client_raises_import_error(self):
         """Verify ImportError is raised when azure-storage-blob is missing."""
         b = AzureBlobBackend(connection_string="fake")
-        with mock.patch.dict(sys.modules, {"azure": None, "azure.storage": None, "azure.storage.blob": None}):
+        with mock.patch.dict(
+            sys.modules,
+            {"azure": None, "azure.storage": None, "azure.storage.blob": None},
+        ):
             # Force _client to None so _get_client tries the import
             b._client = None
             with pytest.raises(ImportError, match="azure-storage-blob"):
@@ -409,7 +429,10 @@ class TestGcsBackend:
     def test_get_client_raises_import_error(self):
         """Verify ImportError is raised when google-cloud-storage is missing."""
         b = GcsBackend(bucket_name="bkt")
-        with mock.patch.dict(sys.modules, {"google": None, "google.cloud": None, "google.cloud.storage": None}):
+        with mock.patch.dict(
+            sys.modules,
+            {"google": None, "google.cloud": None, "google.cloud.storage": None},
+        ):
             b._client = None
             with pytest.raises(ImportError, match="google-cloud-storage"):
                 b._get_client()

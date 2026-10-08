@@ -16,6 +16,14 @@ _REQUIRED_HELM_SETS = [
     "--set",
     "secrets.djangoSecretKey=test",
     "--set",
+    "secrets.apiKey=test-api-key",
+    "--set",
+    "secrets.webhookSecretKey=test-webhook-key",
+    "--set",
+    "secrets.piiEncryptionKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "--set",
+    "secrets.celeryTaskSigningKey=test-signing-key",
+    "--set",
     "secrets.postgresPassword=test",
     "--set",
     "secrets.rabbitmqPassword=test",
@@ -59,10 +67,7 @@ def test_compose_wires_optional_edc_translation_profile():
     )
 
     assert compose["services"]["edc-translation"]["profiles"] == ["edc-translation"]
-    assert (
-        coordinator["services"]["edc-translation"]["profiles"]
-        == ["edc-translation"]
-    )
+    assert coordinator["services"]["edc-translation"]["profiles"] == ["edc-translation"]
     assert (
         coordinator["services"]["edc-translation"]["build"]["context"]
         == "${EDC_TRANSLATION_REPO:-../../EDC_TRANSLATION}"

@@ -19,6 +19,7 @@ before it can be returned to the router.
 from __future__ import annotations
 
 import importlib.metadata
+import math
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -27,10 +28,40 @@ if TYPE_CHECKING:
     from ocr_local.translation.provenance import ModelProvenance
 
 
+def ct2_hypothesis_confidence(result: Any) -> float:
+    """Map a CTranslate2 ``TranslationResult`` to confidence in ``[0.0, 1.0]``.
+
+    CT2 exposes sequence log-probabilities on ``result.scores``. Confidence is
+    derived from those scores only — never a hardcoded stub (e.g. 0.85).
+
+    Missing scores → ``0.0`` (unknown / untrusted). Length-normalizes by
+    hypothesis token count so longer sequences are not systematically lower.
+    """
+    scores = getattr(result, "scores", None)
+    if not scores:
+        return 0.0
+    try:
+        logp = float(scores[0])
+    except (TypeError, ValueError, IndexError):
+        return 0.0
+    hyp = getattr(result, "hypotheses", None)
+    try:
+        n_tokens = max(len(hyp[0]) if hyp else 1, 1)
+    except (TypeError, IndexError):
+        n_tokens = 1
+    mean_logp = logp / n_tokens
+    # Geometric-mean token probability ≈ exp(mean logp); clamp for stability.
+    conf = math.exp(max(min(mean_logp, 0.0), -20.0))
+    return max(0.0, min(1.0, conf))
+
+
 class TranslationEngine(ABC):
     """Abstract base for all translation engine adapters."""
 
     capability: ClassVar["EngineCapability"]
+    # Adapters that cannot produce real inference must opt out so routers do
+    # not select a scaffold and mislabel synthetic text as translation.
+    production_ready: ClassVar[bool] = True
 
     @abstractmethod
     def translate_spans(

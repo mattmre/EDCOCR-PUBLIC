@@ -1,5 +1,5 @@
 """
-Performance Benchmarking Framework for EDCOCR Pipeline.
+Performance Benchmarking Framework for OCR_LOCAL Pipeline.
 
 Usage:
     python benchmark_pipeline.py --mode simulate    # Mock mode (no GPU needed)
@@ -285,7 +285,7 @@ def simulate_pipeline(num_pages=100, config=None):
 
     This does NOT require GPU, PaddleOCR, or any heavyweight dependencies.
     It generates realistic per-page timing data based on documented
-    performance characteristics of the EDCOCR pipeline.
+    performance characteristics of the OCR_LOCAL pipeline.
 
     Args:
         num_pages: Number of pages to simulate.
@@ -767,7 +767,7 @@ def generate_report(results_dir=None):
 
     lines = []
     lines.append("=" * 72)
-    lines.append("  EDCOCR Performance Benchmark Report")
+    lines.append("  OCR_LOCAL Performance Benchmark Report")
     lines.append("=" * 72)
     lines.append("")
 
@@ -960,7 +960,7 @@ def run_benchmark(mode="simulate", num_pages=100, config=None,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="EDCOCR Performance Benchmarking Framework",
+        description="OCR_LOCAL Performance Benchmarking Framework",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

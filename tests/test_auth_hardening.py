@@ -3,7 +3,7 @@
 Covers:
 - AUTH-BUG: Latin-1 / non-ASCII X-API-Key values must not crash the
   auth middleware (secrets.compare_digest raises TypeError on chars > 127).
-- /docs, /redoc, /openapi.json must not be mounted by default
+- maintenance review: /docs, /redoc, /openapi.json must not be mounted by default
   (EXPOSE_API_DOCS=false); setting EXPOSE_API_DOCS=true restores them.
 """
 
@@ -21,28 +21,31 @@ from fastapi.testclient import TestClient
 
 
 @contextmanager
-def _build_app(tmp_path, *, api_key: str = "test-api-key-12345",
-                expose_docs: bool = False):
+def _build_app(
+    tmp_path, *, api_key: str = "test-api-key-12345", expose_docs: bool = False
+):
     """Build a FastAPI TestClient with mocked config."""
     source = tmp_path / "source"
     output = tmp_path / "output"
     source.mkdir(exist_ok=True)
     output.mkdir(exist_ok=True)
 
-    with patch("api.config.SOURCE_FOLDER", str(source)), \
-         patch("api.config.OUTPUT_FOLDER", str(output)), \
-         patch("api.config.OCR_API_KEY", api_key), \
-         patch("api.auth.OCR_API_KEY", api_key), \
-         patch("api.config.ALLOW_UNAUTHENTICATED", False), \
-         patch("api.auth.ALLOW_UNAUTHENTICATED", False), \
-         patch("api.config.ENABLE_MULTITENANCY", False), \
-         patch("api.auth.ENABLE_MULTITENANCY", False), \
-         patch("api.config.EXPOSE_API_DOCS", expose_docs), \
-         patch("api.auth.EXPOSE_API_DOCS", expose_docs), \
-         patch("api.main.EXPOSE_API_DOCS", expose_docs), \
-         patch("api.config.OAUTH2_ENABLED", False), \
-         patch("api.oauth2_config.OAUTH2_ENABLED", False), \
-         patch("api.job_manager.config") as mock_config:
+    with (
+        patch("api.config.SOURCE_FOLDER", str(source)),
+        patch("api.config.OUTPUT_FOLDER", str(output)),
+        patch("api.config.OCR_API_KEY", api_key),
+        patch("api.auth.OCR_API_KEY", api_key),
+        patch("api.config.ALLOW_UNAUTHENTICATED", False),
+        patch("api.auth.ALLOW_UNAUTHENTICATED", False),
+        patch("api.config.ENABLE_MULTITENANCY", False),
+        patch("api.auth.ENABLE_MULTITENANCY", False),
+        patch("api.config.EXPOSE_API_DOCS", expose_docs),
+        patch("api.auth.EXPOSE_API_DOCS", expose_docs),
+        patch("api.main.EXPOSE_API_DOCS", expose_docs),
+        patch("api.config.OAUTH2_ENABLED", False),
+        patch("api.oauth2_config.OAUTH2_ENABLED", False),
+        patch("api.job_manager.config") as mock_config,
+    ):
         mock_config.SOURCE_FOLDER = str(source)
         mock_config.OUTPUT_FOLDER = str(output)
         mock_config.PIPELINE_SCRIPT = "echo"
@@ -97,7 +100,7 @@ class TestSafeCompareHelper:
         from api.auth import _safe_compare_api_key
 
         assert _safe_compare_api_key("caf\u00e9-key", "abc") is False
-        assert _safe_compare_api_key("\U0001F512-key", "abc") is False
+        assert _safe_compare_api_key("\U0001f512-key", "abc") is False
 
     def test_latin1_never_matches_ascii(self):
         """A latin-1 provided key must never match an ASCII expected key."""
@@ -146,31 +149,47 @@ class TestLatin1ApiKeyMiddleware:
     make ``secrets.compare_digest`` raise ``TypeError`` when passed as str.
     """
 
-    def test_latin1_header_returns_401_not_500(self, tmp_path):
+    def test_latin1_header_returns_401_not_500(self):
         """A latin-1 (>= 128) char in X-API-Key must produce a clean 401.
 
-        httpx's ``TestClient`` defaults to ASCII header encoding so we
-        build the request manually with raw bytes to mimic what a
-        non-compliant HTTP client would put on the wire.
+        Build an ASGI request scope with raw header bytes. This avoids the
+        ASCII-only request builder and exercises Starlette's actual Latin-1
+        header decoding before the auth middleware compares the key.
         """
-        with _build_app(tmp_path) as tc:
-            # Use raw-byte headers via httpx Request to bypass the client-side
-            # ASCII guard.  The header name is ASCII; the value is latin-1.
-            import httpx
+        import asyncio
 
-            request = httpx.Request(
-                "GET",
-                "http://testserver/api/v1/jobs",
-                headers=[
-                    (b"x-api-key", b"\xffnot-a-real-key"),
-                ],
-            )
-            resp = tc.send(request)
-            assert resp.status_code == 401, (
-                f"Expected 401 for latin-1 header, got {resp.status_code}: {resp.text}"
-            )
-            body = resp.json()
-            assert body.get("error") == "unauthorized"
+        from fastapi.responses import Response
+        from starlette.requests import Request
+
+        from api.auth import api_key_middleware
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/api/v1/jobs",
+            "raw_path": b"/api/v1/jobs",
+            "query_string": b"",
+            "root_path": "",
+            "server": ("testserver", 80),
+            "client": ("127.0.0.1", 12345),
+            "headers": [(b"x-api-key", b"\xffnot-a-real-key")],
+        }
+        request = Request(scope)
+
+        async def call_next(_request):
+            return Response(status_code=200)
+
+        with patch("api.auth.OCR_API_KEY", "test-api-key-12345"):
+            response = asyncio.run(api_key_middleware(request, call_next))
+
+        assert response.status_code == 401
+        assert (
+            response.body
+            == b'{"error":"unauthorized","message":"Invalid or missing API key"}'
+        )
 
     def test_valid_ascii_api_key_still_works(self, tmp_path):
         """Regression guard: valid ASCII keys still authorize."""
@@ -192,7 +211,7 @@ class TestLatin1ApiKeyMiddleware:
 
 
 # ---------------------------------------------------------------------------
-# OpenAPI docs must be gated by EXPOSE_API_DOCS
+# maintenance review: OpenAPI docs must be gated by EXPOSE_API_DOCS
 # ---------------------------------------------------------------------------
 
 

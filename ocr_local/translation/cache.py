@@ -22,7 +22,7 @@ CTranslate2 model weights used by the local translation engines
 
 This module is intentionally side-effect-free at import time.  It does
 NOT register engines or touch the filesystem until a caller invokes one
-of the public helpers.  This matches the gating in the development guide gotcha
+of the public helpers.  This matches the gating in docs/release-candidate.md gotcha
 ``#86``: the cache code can be imported unconditionally; the engines
 only call into it when ``ENABLE_TRANSLATION`` is on.
 
@@ -41,6 +41,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import threading
@@ -77,6 +78,11 @@ DEFAULT_CACHE_DIR: Path = Path.home() / ".cache" / "ocr_local" / "translation"
 _STATE_DIR_NAME = "_state"
 _STATE_FILE_NAME = "cache_state.json"
 _MANIFEST_FILE_NAME = "manifest.json"
+_MAX_CACHE_COMPONENT_LENGTH = 256
+_MAX_CACHE_JSON_BYTES = 1 * 1024 * 1024
+_MAX_STATE_MODELS = 10_000
+_MAX_MANIFEST_FILES = 100_000
+_MAX_MANIFEST_FILENAME_LENGTH = 512
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +219,7 @@ def _resolve_cache_root(cache_dir: Optional[str | Path] = None) -> Path:
                 return Path(override)
     except (ImportError, AttributeError, RuntimeError):
         # ``get_config`` may not exist yet (PipelineConfig is still
-        # being wired in  Ph3 follow-ups), or may raise when no
+        # being wired in maintenance review Ph3 follow-ups), or may raise when no
         # config has been set.  Fall back to the default cache dir.
         pass
     env_override = os.environ.get("TRANSLATION_MODEL_CACHE_DIR")
@@ -223,7 +229,25 @@ def _resolve_cache_root(cache_dir: Optional[str | Path] = None) -> Path:
 
 
 def _model_dir(root: Path, engine: str, model_id: str) -> Path:
-    return root / engine / model_id
+    return (
+        root
+        / _validate_cache_component(engine, "engine")
+        / _validate_cache_component(model_id, "model_id")
+    )
+
+
+def _validate_cache_component(value: str, field_name: str) -> str:
+    """Validate a cache path component before it reaches a filesystem join."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    value = value.strip()
+    if len(value) > _MAX_CACHE_COMPONENT_LENGTH:
+        raise ValueError(f"{field_name} exceeds the cache component limit")
+    if value in {".", ".."} or "\x00" in value:
+        raise ValueError(f"{field_name} is not a safe cache component")
+    if "/" in value or "\\" in value:
+        raise ValueError(f"{field_name} must not contain path separators")
+    return value
 
 
 def _state_path(root: Path) -> Path:
@@ -335,13 +359,35 @@ def _read_state(root: Path) -> dict:
     if not path.exists():
         return {"models": {}}
     try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (json.JSONDecodeError, OSError):
+        if path.is_symlink() or path.stat().st_size > _MAX_CACHE_JSON_BYTES:
+            return {"models": {}}
+        with path.open("rb") as fh:
+            raw = fh.read(_MAX_CACHE_JSON_BYTES + 1)
+        if len(raw) > _MAX_CACHE_JSON_BYTES:
+            return {"models": {}}
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, OSError, ValueError):
         return {"models": {}}
     if not isinstance(data, dict) or "models" not in data:
         return {"models": {}}
-    return data
+    models = data.get("models")
+    if not isinstance(models, dict):
+        return {"models": {}}
+    safe_models: dict[str, dict] = {}
+    for key, entry in list(models.items())[:_MAX_STATE_MODELS]:
+        if (
+            not isinstance(key, str)
+            or key.count("/") != 1
+            or not isinstance(entry, dict)
+        ):
+            continue
+        engine, model_id = key.split("/", 1)
+        try:
+            safe_key = _state_key(engine, model_id)
+        except ValueError:
+            continue
+        safe_models[safe_key] = entry
+    return {"models": safe_models}
 
 
 def _save_state(root: Path, state: dict) -> None:
@@ -349,7 +395,7 @@ def _save_state(root: Path, state: dict) -> None:
 
 
 def _state_key(engine: str, model_id: str) -> str:
-    return f"{engine}/{model_id}"
+    return f"{_validate_cache_component(engine, 'engine')}/{_validate_cache_component(model_id, 'model_id')}"
 
 
 # ---------------------------------------------------------------------------
@@ -373,13 +419,58 @@ def _read_manifest(model_dir: Path) -> Optional[dict]:
     if not path.exists():
         return None
     try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (json.JSONDecodeError, OSError):
+        if (
+            model_dir.is_symlink()
+            or path.is_symlink()
+            or path.stat().st_size > _MAX_CACHE_JSON_BYTES
+        ):
+            return None
+        with path.open("rb") as fh:
+            raw = fh.read(_MAX_CACHE_JSON_BYTES + 1)
+        if len(raw) > _MAX_CACHE_JSON_BYTES:
+            return None
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, OSError, ValueError):
         return None
     if not isinstance(data, dict):
         return None
     return data
+
+
+def _safe_manifest_target(model_dir: Path, filename: object) -> Path | None:
+    """Return a regular manifest target confined to ``model_dir``."""
+    if (
+        not isinstance(filename, str)
+        or not filename
+        or len(filename) > _MAX_MANIFEST_FILENAME_LENGTH
+    ):
+        return None
+    if "\x00" in filename or "\\" in filename:
+        return None
+    relative = Path(filename)
+    if relative.is_absolute() or ".." in relative.parts or "." in relative.parts:
+        return None
+    target = model_dir / relative
+    try:
+        target.resolve(strict=False).relative_to(model_dir.resolve(strict=False))
+    except (OSError, RuntimeError, ValueError):
+        return None
+    cursor = target
+    while cursor != model_dir:
+        try:
+            item = cursor.lstat()
+        except OSError:
+            return None
+        if stat.S_ISLNK(item.st_mode):
+            return None
+        cursor = cursor.parent
+    try:
+        item = target.lstat()
+    except OSError:
+        return target
+    if not stat.S_ISREG(item.st_mode) or getattr(item, "st_nlink", 1) > 1:
+        return None
+    return target
 
 
 def _verify_model_files(model_dir: Path, manifest: dict) -> tuple[bool, list[str]]:
@@ -389,12 +480,32 @@ def _verify_model_files(model_dir: Path, manifest: dict) -> tuple[bool, list[str
     contents do not match the recorded digest, or whose file is missing
     from the model directory.
     """
+    try:
+        if model_dir.is_symlink() or not model_dir.is_dir():
+            return False, ["<unsafe model directory>"]
+    except OSError:
+        return False, ["<unsafe model directory>"]
     sha_map = manifest.get("sha256")
-    if not isinstance(sha_map, dict) or not sha_map:
+    if (
+        not isinstance(sha_map, dict)
+        or not sha_map
+        or len(sha_map) > _MAX_MANIFEST_FILES
+    ):
         return False, ["<missing sha256 map>"]
     bad: list[str] = []
     for fname, expected in sha_map.items():
-        target = model_dir / fname
+        target = _safe_manifest_target(model_dir, fname)
+        if target is None:
+            bad.append(str(fname)[:_MAX_MANIFEST_FILENAME_LENGTH])
+            continue
+        if not isinstance(expected, str) or len(expected) != 64:
+            bad.append(str(fname)[:_MAX_MANIFEST_FILENAME_LENGTH])
+            continue
+        try:
+            int(expected, 16)
+        except ValueError:
+            bad.append(str(fname)[:_MAX_MANIFEST_FILENAME_LENGTH])
+            continue
         if not target.exists():
             bad.append(fname)
             continue
@@ -449,7 +560,7 @@ def _tenant_allows_nc(policy: "Optional[TenantPolicy]") -> bool:
     """Return True when ``policy`` permits NC-licensed models.
 
     The cache module accepts either field name -- the actual codebase
-    uses ``allow_nllb_commercial`` while  names the
+    uses ``allow_nllb_commercial`` while docs/release-candidate.md names the
     field ``allow_nc_licensed``.  We honour either if present and
     default to True (permissive) when neither is defined, leaving
     license-policy enforcement to the caller in that case.
@@ -789,19 +900,13 @@ def list_cached_models(
                     model_id=model_id,
                     path=model_dir,
                     size_bytes=int(
-                        entry.get(
-                            "size_bytes", manifest.get("size_bytes", 0)
-                        )
+                        entry.get("size_bytes", manifest.get("size_bytes", 0))
                     ),
                     license=str(
-                        entry.get(
-                            "license", manifest.get("license", "unknown")
-                        )
+                        entry.get("license", manifest.get("license", "unknown"))
                     ),
                     nc_licensed=bool(
-                        entry.get(
-                            "nc_licensed", manifest.get("nc_licensed", False)
-                        )
+                        entry.get("nc_licensed", manifest.get("nc_licensed", False))
                     ),
                     pinned=bool(entry.get("pinned", False)),
                     access_time=float(entry.get("access_time", 0.0)),
@@ -829,10 +934,41 @@ def register_model(
     returns.
     """
     source = Path(source_dir)
-    if not source.exists() or not source.is_dir():
+    if source.is_symlink() or not source.exists() or not source.is_dir():
         raise FileNotFoundError(f"source_dir does not exist: {source}")
     if not sha256_manifest:
         raise ValueError("sha256_manifest must be a non-empty dict")
+
+    # Validate manifest paths before copytree so a malformed pre-baked bundle
+    # cannot make the verification step inspect outside the cache root.
+    for filename, digest in sha256_manifest.items():
+        source_target = source / filename if isinstance(filename, str) else None
+        if (
+            source_target is not None
+            and (source_target.exists() or source_target.is_symlink())
+            and _safe_manifest_target(source, filename) is None
+        ):
+            raise ValueError(f"unsafe manifest filename: {filename!r}")
+        if _safe_manifest_target(source, filename) is None:
+            # The source file may not exist yet; validate the lexical path
+            # independently while still rejecting traversal/separators.
+            if (
+                not isinstance(filename, str)
+                or not filename
+                or len(filename) > _MAX_MANIFEST_FILENAME_LENGTH
+                or "\x00" in filename
+                or "\\" in filename
+                or Path(filename).is_absolute()
+                or ".." in Path(filename).parts
+                or "." in Path(filename).parts
+            ):
+                raise ValueError(f"unsafe manifest filename: {filename!r}")
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ValueError(f"invalid SHA-256 manifest entry: {filename!r}")
+        try:
+            int(digest, 16)
+        except ValueError as exc:
+            raise ValueError(f"invalid SHA-256 manifest entry: {filename!r}") from exc
 
     root = _resolve_cache_root(cache_dir)
     model_dir = _model_dir(root, engine, model_id)

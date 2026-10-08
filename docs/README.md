@@ -1,3 +1,5 @@
+> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](release-candidate.md) and the root installation guide.
+
 # EDCOCR — Documentation Suite
 
 Welcome to the documentation for **EDCOCR**, the forensic-grade OCR platform engineered for electronic discovery, regulated industries, and any workflow where every page must be accounted for.

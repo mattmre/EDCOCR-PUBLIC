@@ -14,21 +14,21 @@ function queue(overrides: Partial<Queue>): Queue {
   };
 }
 
-describe("classifyQueue", => {
-  it("classifies based on default thresholds when none configured", => {
+describe("classifyQueue", () => {
+  it("classifies based on default thresholds when none configured", () => {
     expect(classifyQueue(queue({ depth: 100 }))).toBe("green");
     expect(classifyQueue(queue({ depth: 700 }))).toBe("amber");
     expect(classifyQueue(queue({ depth: 1500 }))).toBe("red");
   });
 
-  it("respects per-queue thresholds when present", => {
+  it("respects per-queue thresholds when present", () => {
     const q = queue({ depth: 75, warning_threshold: 50, critical_threshold: 100 });
     expect(classifyQueue(q)).toBe("amber");
     const r = queue({ depth: 500, warning_threshold: 50, critical_threshold: 100 });
     expect(classifyQueue(r)).toBe("red");
   });
 
-  it("treats depth equal to threshold as breached", => {
+  it("treats depth equal to threshold as breached", () => {
     expect(
       classifyQueue(queue({ depth: 100, warning_threshold: 50, critical_threshold: 100 }))
     ).toBe("red");
@@ -38,8 +38,8 @@ describe("classifyQueue", => {
   });
 });
 
-describe("<QueuesPanel />", => {
-  it("renders one row per queue with severity-coded bars", => {
+describe("<QueuesPanel />", () => {
+  it("renders one row per queue with severity-coded bars", () => {
     const queues: Queue[] = [
       queue({ queue_name: "ocr_gpu", depth: 50 }),
       queue({ queue_name: "ocr_cpu", depth: 750 }),
@@ -60,17 +60,17 @@ describe("<QueuesPanel />", => {
     expect(screen.getByTestId("queue-row-nlp")).toHaveAttribute("data-severity", "red");
   });
 
-  it("formats depth with thousands separators", => {
+  it("formats depth with thousands separators", () => {
     render(<QueuesPanel queues={[queue({ queue_name: "huge", depth: 12345 })]} />);
     expect(screen.getByTestId("queue-depth-huge")).toHaveTextContent("12,345");
   });
 
-  it("shows an empty-state message when no queues are reported", => {
+  it("shows an empty-state message when no queues are reported", () => {
     render(<QueuesPanel queues={[]} />);
     expect(screen.getByText(/no queues reporting/i)).toBeInTheDocument();
   });
 
-  it("submits queue threshold updates", async => {
+  it("submits queue threshold updates", async () => {
     const user = userEvent.setup();
     const updates: Array<{
       queueName: string;

@@ -4,7 +4,7 @@ import ReviewDetailPage from "@/app/review/[id]/page";
 import { setApiKey } from "@/lib/auth";
 import type { ReviewItem } from "@/lib/types";
 
-vi.mock("next/link", => ({
+vi.mock("next/link", () => ({
   __esModule: true,
   default: ({
     href,
@@ -23,9 +23,9 @@ vi.mock("next/link", => ({
   ),
 }));
 
-vi.mock("next/navigation", => ({
+vi.mock("next/navigation", () => ({
   __esModule: true,
-  useParams: => ({ id: "rev_aaaaaaaaaaaa" }),
+  useParams: () => ({ id: "rev_aaaaaaaaaaaa" }),
 }));
 
 function itemFixture(partial: Partial<ReviewItem> = {}): ReviewItem {
@@ -52,7 +52,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-describe("ReviewDetailPage", => {
+describe("ReviewDetailPage", () => {
   beforeEach(() => {
     setApiKey("test-key");
   });
@@ -61,7 +61,7 @@ describe("ReviewDetailPage", => {
     vi.restoreAllMocks();
   });
 
-  it("renders summary fields for a pending item", async => {
+  it("renders summary fields for a pending item", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(itemFixture()));
 
     render(<ReviewDetailPage />);
@@ -79,7 +79,7 @@ describe("ReviewDetailPage", => {
     expect(screen.getByTestId("review-decision-approved")).not.toBeDisabled();
   });
 
-  it("submits an approve decision and updates the panel optimistically", async => {
+  it("submits an approve decision and updates the panel optimistically", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     fetchMock.mockResolvedValueOnce(jsonResponse(itemFixture()));
     fetchMock.mockResolvedValueOnce(
@@ -117,20 +117,41 @@ describe("ReviewDetailPage", => {
       expect(screen.getByTestId("review-decision-locked")).toBeInTheDocument();
     });
 
-    // The decision endpoint was called with the proper body.
+    // The decision endpoint was called with a non-empty reviewer identity.
+    // setApiKey("test-key") is short (<=8 chars) so deriveReviewerLabel → "operator".
     const decisionCall = fetchMock.mock.calls.find(([url]) =>
       String(url).includes("/decision")
     );
     expect(decisionCall).toBeTruthy();
     const init = decisionCall?.[1] as RequestInit;
     expect(init.method).toBe("POST");
-    expect(JSON.parse(String(init.body))).toMatchObject({
+    const body = JSON.parse(String(init.body)) as {
+      status: string;
+      notes: string;
+      reviewer: string;
+    };
+    expect(body).toMatchObject({
       status: "approved",
       notes: "Looks good.",
     });
+    expect(body.reviewer).toBeTruthy();
+    expect(body.reviewer.trim().length).toBeGreaterThan(0);
+    expect(body.reviewer).toBe("operator");
   });
 
-  it("surfaces a decision error and keeps the panel actionable", async => {
+  it("shows the Recording as hint for pending items", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(itemFixture()));
+
+    render(<ReviewDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("review-decision-recording-as")).toHaveTextContent(
+        /Recording as:\s*operator/
+      );
+    });
+  });
+
+  it("surfaces a decision error and keeps the panel actionable", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     fetchMock.mockResolvedValueOnce(jsonResponse(itemFixture()));
     fetchMock.mockResolvedValueOnce(
@@ -151,7 +172,7 @@ describe("ReviewDetailPage", => {
     expect(screen.getByTestId("review-decision-rejected")).not.toBeDisabled();
   });
 
-  it("locks the decision panel when the item was already decided", async => {
+  it("locks the decision panel when the item was already decided", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse(
         itemFixture({

@@ -1,4 +1,4 @@
-"""Tests for api.sse_notifier.
+"""Tests for api.sse_notifier (maintenance review).
 
 Verifies the in-process asyncio.Event notification hub used by SSE streams.
 """

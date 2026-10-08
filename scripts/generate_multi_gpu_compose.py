@@ -66,23 +66,32 @@ _SERVICE_TEMPLATE = """\
   ocr-worker-gpu{idx}:
     build:
       context: ..
-      dockerfile: coordinator/Dockerfile.worker
+      dockerfile: coordinator/Dockerfile.worker.gpu
+      args:
+        SOURCE_REVISION: ${{SOURCE_REVISION:-unknown}}
+        SOURCE_TREE_SHA256: ${{SOURCE_TREE_SHA256:-unknown}}
     environment:
       CELERY_BROKER_URL: ${{CELERY_BROKER_URL:?Set CELERY_BROKER_URL}}
       CELERY_RESULT_BACKEND: ${{CELERY_RESULT_BACKEND:?Set CELERY_RESULT_BACKEND}}
       DATABASE_URL: ${{DATABASE_URL:?Set DATABASE_URL}}
       DJANGO_SECRET_KEY: ${{DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY}}
+      CELERY_TASK_SIGNING_KEY: ${{CELERY_TASK_SIGNING_KEY:?Set CELERY_TASK_SIGNING_KEY}}
+      PII_ENCRYPTION_KEY: ${{PII_ENCRYPTION_KEY:?Set PII_ENCRYPTION_KEY}}
+      WEBHOOK_SECRET_KEY: ${{WEBHOOK_SECRET_KEY:?Set WEBHOOK_SECRET_KEY}}
+      S3_PRESIGNED_TASK_KEY: ${{S3_PRESIGNED_TASK_KEY:-}}
       DEPLOYMENT_ENV: ${{DEPLOYMENT_ENV:-development}}
       PRODUCTION_READINESS_ACK: ${{PRODUCTION_READINESS_ACK:-false}}
       NFS_ROOT: ${{NFS_ROOT:-/shared}}
-      WORKER_QUEUES: ${{WORKER_QUEUES:-{queues}}}
+      # The generator owns this worker's subscription contract. A generic
+      # host WORKER_QUEUES value must not erase its dedicated affinity queue.
+      WORKER_QUEUES: "{queues}"
       WORKER_CONCURRENCY: ${{WORKER_CONCURRENCY:-{concurrency}}}
       FASTTEXT_MODEL_PATH: ${{FASTTEXT_MODEL_PATH:-/app/models/lid.176.bin}}
       CUDA_VISIBLE_DEVICES: "{idx}"
 {extra_env}
     command: >
       celery -A coordinator.coordinator worker
-      -Q ${{WORKER_QUEUES:-{queues}}}
+      -Q {queues}
       -c ${{WORKER_CONCURRENCY:-{concurrency}}}
       --hostname worker-gpu{idx}@%h
       -l info
@@ -97,6 +106,15 @@ _SERVICE_TEMPLATE = """\
               device_ids: ["{idx}"]
               capabilities: [gpu]
     restart: unless-stopped
+"""
+
+_PRODUCER_TEMPLATE = """\
+  {service}:
+    environment:
+      ENABLE_PER_GPU_QUEUES: "true"
+      GPU_COUNT: "{gpu_count}"
+      OCR_PER_GPU_STRICT: "true"
+      CELERY_USE_QUORUM_QUEUES: "true"
 """
 
 
@@ -118,13 +136,23 @@ def generate_compose_yaml(
         queues: Comma-separated Celery queue names.
         max_tasks_per_child: Celery --max-tasks-per-child value.
         output_filename: Filename shown in the header usage comment.
-        per_gpu_queues: When True, replace ``ocr_gpu`` with ``ocr_gpu_{idx}``
-            per worker and inject ``ENABLE_PER_GPU_QUEUES`` / ``GPU_COUNT``
-            environment variables.
+        per_gpu_queues: When True, add ``ocr_gpu_{idx}`` beside the shared
+            ``ocr_gpu`` queue and inject one strict quorum-queue contract into
+            every producer and consumer. Durable outbox rows use the shared
+            queue unless an explicit affinity producer selects the dedicated
+            queue, so every generated topology must consume both.
 
     Returns:
         Complete YAML content as a string.
+
+    Raises:
+        ValueError: If strict per-GPU affinity is requested without the shared
+            ``ocr_gpu`` queue required to build the worker subscriptions.
     """
+    queue_names = [item.strip() for item in queues.split(",") if item.strip()]
+    if per_gpu_queues and "ocr_gpu" not in queue_names:
+        raise ValueError("--per-gpu-queues requires ocr_gpu in --queues")
+
     header = _HEADER_TEMPLATE.format(
         gpu_count=gpu_count,
         output_filename=output_filename,
@@ -134,13 +162,29 @@ def generate_compose_yaml(
     )
 
     services_block = "services:\n"
+    if per_gpu_queues:
+        # These services create explicit durable outbox rows. Compose merges
+        # these environment keys into the base coordinator services, making
+        # producer routing and worker subscriptions one generated contract.
+        for producer_service in ("django", "celery-coordinator", "celery-beat"):
+            services_block += _PRODUCER_TEMPLATE.format(
+                service=producer_service,
+                gpu_count=gpu_count,
+            )
     for idx in range(gpu_count):
         if per_gpu_queues:
-            gpu_queues = queues.replace("ocr_gpu", f"ocr_gpu_{idx}")
+            gpu_queues_list = []
+            for queue_name in queue_names:
+                gpu_queues_list.append(queue_name)
+                if queue_name == "ocr_gpu":
+                    gpu_queues_list.append(f"ocr_gpu_{idx}")
+            gpu_queues = ",".join(dict.fromkeys(gpu_queues_list))
             extra_env = (
                 f'      GPU_INDEX: "{idx}"\n'
                 f'      ENABLE_PER_GPU_QUEUES: "true"\n'
-                f'      GPU_COUNT: "{gpu_count}"'
+                f'      GPU_COUNT: "{gpu_count}"\n'
+                '      OCR_PER_GPU_STRICT: "true"\n'
+                '      CELERY_USE_QUORUM_QUEUES: "true"'
             )
         else:
             gpu_queues = queues
@@ -159,6 +203,7 @@ def generate_compose_yaml(
 # ---------------------------------------------------------------------------
 # Local GPU VRAM detection (best-effort, never fatal)
 # ---------------------------------------------------------------------------
+
 
 def _detect_gpu_vram_mb() -> int | None:
     """Attempt to detect GPU VRAM via nvidia-smi.
@@ -191,6 +236,7 @@ def _detect_gpu_vram_mb() -> int | None:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     """Parse command line arguments."""
@@ -247,7 +293,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help=(
             "Generate per-GPU queue names (ocr_gpu_0, ocr_gpu_1, ...) "
-            "instead of the shared ocr_gpu queue."
+            "beside the shared ocr_gpu queue, with quorum declarations "
+            "enabled consistently for every producer and worker."
         ),
     )
     return parser.parse_args(argv)
@@ -302,15 +349,19 @@ def run(args: argparse.Namespace) -> int:
         output_filename = f"docker-compose.multi-gpu-{args.gpus}.yml"
 
     # Generate YAML
-    yaml_content = generate_compose_yaml(
-        gpu_count=args.gpus,
-        concurrency=concurrency,
-        concurrency_source=concurrency_source,
-        queues=args.queues,
-        max_tasks_per_child=args.max_tasks_per_child,
-        output_filename=output_filename,
-        per_gpu_queues=args.per_gpu_queues,
-    )
+    try:
+        yaml_content = generate_compose_yaml(
+            gpu_count=args.gpus,
+            concurrency=concurrency,
+            concurrency_source=concurrency_source,
+            queues=args.queues,
+            max_tasks_per_child=args.max_tasks_per_child,
+            output_filename=output_filename,
+            per_gpu_queues=args.per_gpu_queues,
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
     # Write output
     if args.output is not None:

@@ -75,7 +75,8 @@ function ReviewQueueContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const initialFilters = useMemo( => parseFiltersFromUrl(searchParams ?? new URLSearchParams()),
+  const initialFilters = useMemo(
+    () => parseFiltersFromUrl(searchParams ?? new URLSearchParams()),
     // Only parse once on mount; subsequent updates are managed in component state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -92,7 +93,8 @@ function ReviewQueueContent() {
 
   const offset = (page - 1) * DEFAULT_PAGE_SIZE;
 
-  const queueQuery = useMemo( => ({ ...filters, limit: DEFAULT_PAGE_SIZE, offset }),
+  const queueQuery = useMemo(
+    () => ({ ...filters, limit: DEFAULT_PAGE_SIZE, offset }),
     [filters, offset]
   );
 

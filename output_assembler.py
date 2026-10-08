@@ -1,4 +1,4 @@
-"""Unified retrieval output assembler for EDCOCR.
+"""Unified retrieval output assembler for OCR_LOCAL.
 
 Merges OCR text, entities, classification, extraction, structure, and
 metadata into a single retrieval-ready document-level JSON output.
@@ -11,14 +11,20 @@ Opt-in via ENABLE_RETRIEVAL_OUTPUT=true or --enable-retrieval-output CLI flag.
 """
 
 import datetime
-import json
+import html as html_lib
 import logging
 import os
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Optional
 
 from entity_consolidator import merge_duplicate_entities
-from ocr_distributed.ocr_utils import build_sidecar_base_name, sanitize_path_segment
+from ocr_distributed.ocr_utils import (
+    build_sidecar_base_name,
+    resolve_safe_output_subfolder,
+    write_json_atomic,
+    write_text_atomic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +98,9 @@ class RetrievalDocument:
             "schema_version": self.schema_version,
             "document_id": self.document_id,
             "source_file": self.source_file,
-            "generated_at": datetime.datetime.now(
-                datetime.timezone.utc
-            ).isoformat(timespec="milliseconds"),
+            "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(
+                timespec="milliseconds"
+            ),
             "pipeline_version": self.pipeline_version,
             "text": self.text,
             "text_by_page": self.text_by_page,
@@ -123,9 +129,7 @@ class RetrievalDocument:
         languages = self.metadata.get("languages", [])
         lang_str = ", ".join(languages) if languages else "unknown"
 
-        lines.append(
-            f"**Classification:** {cls_label} ({cls_conf:.0%})"
-        )
+        lines.append(f"**Classification:** {cls_label} ({cls_conf:.0%})")
         lines.append(
             f"**Quality:** {quality} | **Pages:** {pages} | **Language:** {lang_str}"
         )
@@ -177,7 +181,9 @@ class RetrievalDocument:
                 lines.append(f"### Table {i} (Page {page})")
                 lines.append("")
                 if html:
-                    lines.append(html)
+                    lines.append("```html")
+                    lines.append(html_lib.escape(str(html), quote=False))
+                    lines.append("```")
                 else:
                     lines.append("_No table HTML available._")
                 lines.append("")
@@ -189,9 +195,7 @@ class RetrievalDocument:
             hw_regions = self.handwriting.get("regions_count", 0)
             hw_coverage = self.handwriting.get("coverage", 0.0)
             hw_primary = self.handwriting.get("is_primarily_handwritten", False)
-            lines.append(
-                f"- **Regions detected:** {hw_regions}"
-            )
+            lines.append(f"- **Regions detected:** {hw_regions}")
             lines.append(f"- **Coverage:** {hw_coverage:.0%}")
             lines.append(
                 f"- **Primarily handwritten:** {'Yes' if hw_primary else 'No'}"
@@ -206,6 +210,23 @@ class RetrievalDocument:
 # ---------------------------------------------------------------------------
 
 
+def _as_plain_dict(value, context: str) -> dict:
+    """Return a JSON-shaped mapping for dict or dataclass pipeline values.
+
+    The on-disk sidecars contain dictionaries, while the live NER and
+    extraction handoff may contain dataclass instances.  Normalize both at
+    this boundary and fail explicitly for unsupported objects so retrieval
+    cannot silently discard forensic metadata.
+    """
+    if isinstance(value, Mapping):
+        return dict(value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    raise TypeError(
+        f"{context} must be a mapping or dataclass, got {type(value).__name__}"
+    )
+
+
 def _extract_entities_from_ner_data(ner_data: dict) -> list:
     """Extract entity dicts from a parsed .ner.json sidecar.
 
@@ -213,23 +234,27 @@ def _extract_entities_from_ner_data(ner_data: dict) -> list:
     """
     entities = []
     ordinal = 0
-    for page in ner_data.get("pages", []):
+    for raw_page in ner_data.get("pages", []):
+        page = _as_plain_dict(raw_page, "NER page")
         page_num = page.get("page_num", 0)
-        for ent in page.get("entities", []):
+        for raw_ent in page.get("entities", []):
+            ent = _as_plain_dict(raw_ent, "NER entity")
             ordinal += 1
             text = ent.get("text", "")
             if not text:
                 continue
-            entities.append({
-                "id": f"ner_{ordinal:03d}",
-                "type": ent.get("entity_type", ent.get("type", "UNKNOWN")),
-                "text": text.strip(),
-                "confidence": round(float(ent.get("confidence", 0.0)), 4),
-                "source": "ner",
-                "page": int(ent.get("page_num", page_num)),
-                "bbox": [],
-                "metadata": {},
-            })
+            entities.append(
+                {
+                    "id": f"ner_{ordinal:03d}",
+                    "type": ent.get("entity_type", ent.get("type", "UNKNOWN")),
+                    "text": text.strip(),
+                    "confidence": round(float(ent.get("confidence", 0.0)), 4),
+                    "source": "ner",
+                    "page": int(ent.get("page_num", page_num)),
+                    "bbox": [],
+                    "metadata": {},
+                }
+            )
     return entities
 
 
@@ -244,9 +269,11 @@ def _extract_from_extraction_data(extraction_data: dict) -> tuple:
     entities = []
     kv_pairs = []
     ordinal = 0
-    for page in extraction_data.get("pages", []):
+    for raw_page in extraction_data.get("pages", []):
+        page = _as_plain_dict(raw_page, "extraction page")
         page_num = int(page.get("page_num", 0))
-        for f in page.get("fields", []):
+        for raw_field in page.get("fields", []):
+            f = _as_plain_dict(raw_field, "extraction field")
             ordinal += 1
             text = f.get("text", "")
             if not text:
@@ -258,25 +285,29 @@ def _extract_from_extraction_data(extraction_data: dict) -> tuple:
             if not isinstance(bbox, list):
                 bbox = []
 
-            entities.append({
-                "id": f"ext_{ordinal:03d}",
-                "type": f_type,
-                "text": text.strip(),
-                "confidence": f_conf,
-                "source": "extraction",
-                "page": f_page,
-                "bbox": bbox,
-                "metadata": {},
-            })
+            entities.append(
+                {
+                    "id": f"ext_{ordinal:03d}",
+                    "type": f_type,
+                    "text": text.strip(),
+                    "confidence": f_conf,
+                    "source": "extraction",
+                    "page": f_page,
+                    "bbox": bbox,
+                    "metadata": {},
+                }
+            )
 
             if f_type and text:
-                kv_pairs.append({
-                    "key": f_type,
-                    "value": text.strip(),
-                    "confidence": f_conf,
-                    "page": f_page,
-                    "source": "extraction",
-                })
+                kv_pairs.append(
+                    {
+                        "key": f_type,
+                        "value": text.strip(),
+                        "confidence": f_conf,
+                        "page": f_page,
+                        "source": "extraction",
+                    }
+                )
     return entities, kv_pairs
 
 
@@ -307,11 +338,13 @@ def _extract_tables(structure_data: dict) -> list:
     for page in structure_data.get("pages", []):
         page_num = page.get("page_num", 0)
         for table in page.get("tables", []):
-            tables.append({
-                "page": page_num,
-                "html": table.get("html", ""),
-                "cell_bbox": table.get("cell_bbox", []),
-            })
+            tables.append(
+                {
+                    "page": page_num,
+                    "html": table.get("html", ""),
+                    "cell_bbox": table.get("cell_bbox", []),
+                }
+            )
     return tables
 
 
@@ -326,7 +359,7 @@ def _extract_metadata(validation_data: dict) -> dict:
         "overall_confidence": round(
             float(quality_block.get("overall_confidence", 0.0)), 4
         ),
-        "languages": [],  # Populated from validation pages if available
+        "languages": validation_data.get("languages", []),
         "ocr_methods": quality_block.get("ocr_methods_used", []),
         "text_extraction_rate": round(
             float(quality_block.get("text_extraction_rate", 0.0)), 4
@@ -339,9 +372,7 @@ def _extract_metadata(validation_data: dict) -> dict:
 def _extract_handwriting(handwriting_data: dict) -> dict:
     """Extract handwriting summary from a parsed .handwriting.json."""
     total_hw_pages = int(handwriting_data.get("total_handwritten_pages", 0))
-    overall_coverage = float(
-        handwriting_data.get("overall_handwriting_coverage", 0.0)
-    )
+    overall_coverage = float(handwriting_data.get("overall_handwriting_coverage", 0.0))
     is_primary = handwriting_data.get("is_primarily_handwritten", False)
 
     # Count total regions across all pages
@@ -421,10 +452,14 @@ def assemble_retrieval_output(
         # or a raw .ner.json
         if "entities" in entities_data and isinstance(entities_data["entities"], list):
             # Check if entities are pre-consolidated (have id/type/text/source)
-            sample = entities_data["entities"][0] if entities_data["entities"] else {}
+            normalized_entities = [
+                _as_plain_dict(entity, "consolidated entity")
+                for entity in entities_data["entities"]
+            ]
+            sample = normalized_entities[0] if normalized_entities else {}
             if "source" in sample:
                 # Pre-consolidated: use directly
-                all_entities.extend(entities_data["entities"])
+                all_entities.extend(normalized_entities)
             else:
                 # Raw NER format: adapt
                 all_entities.extend(_extract_entities_from_ner_data(entities_data))
@@ -443,13 +478,15 @@ def assemble_retrieval_output(
         if "key_value_pairs" in extraction_data:
             for kv in extraction_data["key_value_pairs"]:
                 if isinstance(kv, dict) and kv.get("key") and kv.get("value"):
-                    kv_pairs.append({
-                        "key": kv["key"],
-                        "value": kv["value"],
-                        "confidence": round(float(kv.get("confidence", 0.0)), 4),
-                        "page": int(kv.get("page", 0)),
-                        "source": kv.get("source", "extraction"),
-                    })
+                    kv_pairs.append(
+                        {
+                            "key": kv["key"],
+                            "value": kv["value"],
+                            "confidence": round(float(kv.get("confidence", 0.0)), 4),
+                            "page": int(kv.get("page", 0)),
+                            "source": kv.get("source", "extraction"),
+                        }
+                    )
 
     # Deduplicate entities
     doc.entities = merge_duplicate_entities(all_entities)
@@ -487,7 +524,12 @@ def assemble_retrieval_output(
 
     # --- Relationships ---
     if relationship_data:
-        doc.relationships = relationship_data.get("relationships", [])
+        relationships = relationship_data.get("relationships", [])
+        if not isinstance(relationships, list):
+            raise TypeError("relationships must be a list")
+        doc.relationships = [
+            _as_plain_dict(item, "relationship") for item in relationships
+        ]
 
     return doc
 
@@ -514,36 +556,18 @@ def write_retrieval_json(
     """
     try:
         retrieval_dir = os.path.join(output_dir, "EXPORT", "RETRIEVAL")
-        if subfolder and subfolder != ".":
-            safe_parts = [
-                sanitize_path_segment(p)
-                for p in subfolder.replace("\\", "/").split("/")
-                if p
-            ]
-            target_dir = (
-                os.path.join(retrieval_dir, *safe_parts)
-                if safe_parts
-                else retrieval_dir
-            )
-        else:
-            target_dir = retrieval_dir
-
-        # Path traversal protection
-        resolved = os.path.realpath(target_dir)
-        if not resolved.startswith(os.path.realpath(retrieval_dir)):
-            logger.error(
-                "Path traversal blocked in retrieval output: %s",
-                subfolder,
-            )
-            return None
+        target_dir = resolve_safe_output_subfolder(retrieval_dir, subfolder)
 
         os.makedirs(target_dir, exist_ok=True)
 
         base_name = build_sidecar_base_name(doc.source_file)
         json_path = os.path.join(target_dir, f"{base_name}.retrieval.json")
 
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(doc.to_dict(), f, indent=2, ensure_ascii=False, default=str)
+        write_json_atomic(
+            json_path,
+            doc.to_dict(),
+            allowed_root=retrieval_dir,
+        )
 
         logger.info("Wrote retrieval JSON: %s", json_path)
         return json_path
@@ -573,36 +597,18 @@ def write_retrieval_markdown(
     """
     try:
         retrieval_dir = os.path.join(output_dir, "EXPORT", "RETRIEVAL")
-        if subfolder and subfolder != ".":
-            safe_parts = [
-                sanitize_path_segment(p)
-                for p in subfolder.replace("\\", "/").split("/")
-                if p
-            ]
-            target_dir = (
-                os.path.join(retrieval_dir, *safe_parts)
-                if safe_parts
-                else retrieval_dir
-            )
-        else:
-            target_dir = retrieval_dir
-
-        # Path traversal protection
-        resolved = os.path.realpath(target_dir)
-        if not resolved.startswith(os.path.realpath(retrieval_dir)):
-            logger.error(
-                "Path traversal blocked in retrieval markdown output: %s",
-                subfolder,
-            )
-            return None
+        target_dir = resolve_safe_output_subfolder(retrieval_dir, subfolder)
 
         os.makedirs(target_dir, exist_ok=True)
 
         base_name = build_sidecar_base_name(doc.source_file)
         md_path = os.path.join(target_dir, f"{base_name}.retrieval.md")
 
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(doc.to_markdown())
+        write_text_atomic(
+            md_path,
+            doc.to_markdown(),
+            allowed_root=retrieval_dir,
+        )
 
         logger.info("Wrote retrieval Markdown: %s", md_path)
         return md_path

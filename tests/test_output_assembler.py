@@ -167,6 +167,7 @@ def _sample_validation_data():
             "pages_failed": 0,
             "ocr_methods_used": ["PaddleOCR"],
         },
+        "languages": ["en"],
         "output_hash": "abc123def456",
     }
 
@@ -298,7 +299,11 @@ class TestRetrievalDocumentToDict:
             source_file="full.pdf",
             text="Full text content",
             text_by_page=[{"page": 1, "text": "Full text content"}],
-            classification={"label": "invoice", "confidence": 0.92, "method": "ensemble"},
+            classification={
+                "label": "invoice",
+                "confidence": 0.92,
+                "method": "ensemble",
+            },
             entities=[
                 {"id": "ent_001", "type": "PERSON", "text": "John", "confidence": 0.95},
             ],
@@ -327,7 +332,11 @@ class TestRetrievalDocumentToMarkdown:
             document_id="doc-001",
             source_file="report.pdf",
             text="This is the report text.",
-            classification={"label": "report", "confidence": 0.85, "method": "ensemble"},
+            classification={
+                "label": "report",
+                "confidence": 0.85,
+                "method": "ensemble",
+            },
             metadata={"quality": "high_quality", "pages": 5, "languages": ["en"]},
             pipeline_version="1.2.0",
         )
@@ -361,9 +370,13 @@ class TestRetrievalDocumentToMarkdown:
     def test_markdown_entity_table_formatting(self):
         """Entity table uses pipe-delimited markdown table format."""
         doc = RetrievalDocument(
-            document_id="d", source_file="f.pdf",
-            entities=[{"type": "DATE", "text": "2024-01-15", "confidence": 0.90, "page": 1}],
-            classification={}, metadata={},
+            document_id="d",
+            source_file="f.pdf",
+            entities=[
+                {"type": "DATE", "text": "2024-01-15", "confidence": 0.90, "page": 1}
+            ],
+            classification={},
+            metadata={},
         )
         md = doc.to_markdown()
         lines = md.split("\n")
@@ -381,11 +394,13 @@ class TestRetrievalDocumentToMarkdown:
 
     def test_markdown_with_kv_pairs(self):
         doc = RetrievalDocument(
-            document_id="d", source_file="f.pdf",
+            document_id="d",
+            source_file="f.pdf",
             key_value_pairs=[
                 {"key": "Invoice Number", "value": "12345", "confidence": 0.88},
             ],
-            classification={}, metadata={},
+            classification={},
+            metadata={},
         )
         md = doc.to_markdown()
         assert "## Key-Value Pairs" in md
@@ -393,20 +408,33 @@ class TestRetrievalDocumentToMarkdown:
 
     def test_markdown_with_tables(self):
         doc = RetrievalDocument(
-            document_id="d", source_file="f.pdf",
+            document_id="d",
+            source_file="f.pdf",
             tables=[{"page": 1, "html": "<table><tr><td>A</td></tr></table>"}],
-            classification={}, metadata={},
+            classification={},
+            metadata={},
         )
         md = doc.to_markdown()
         assert "## Tables" in md
         assert "### Table 1 (Page 1)" in md
-        assert "<table><tr><td>A</td></tr></table>" in md
+        assert "```html" in md
+        assert (
+            "&lt;table&gt;&lt;tr&gt;&lt;td&gt;A&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;"
+            in md
+        )
 
     def test_markdown_with_handwriting(self):
         doc = RetrievalDocument(
-            document_id="d", source_file="f.pdf",
-            handwriting={"detected": True, "regions_count": 3, "coverage": 0.25, "is_primarily_handwritten": False},
-            classification={}, metadata={},
+            document_id="d",
+            source_file="f.pdf",
+            handwriting={
+                "detected": True,
+                "regions_count": 3,
+                "coverage": 0.25,
+                "is_primarily_handwritten": False,
+            },
+            classification={},
+            metadata={},
         )
         md = doc.to_markdown()
         assert "## Handwriting" in md
@@ -415,20 +443,26 @@ class TestRetrievalDocumentToMarkdown:
         assert "**Primarily handwritten:** No" in md
 
     def test_markdown_no_text(self):
-        doc = RetrievalDocument(document_id="d", source_file="f.pdf", classification={}, metadata={})
+        doc = RetrievalDocument(
+            document_id="d", source_file="f.pdf", classification={}, metadata={}
+        )
         md = doc.to_markdown()
         assert "_No text extracted._" in md
 
     def test_markdown_no_entities_skips_section(self):
-        doc = RetrievalDocument(document_id="d", source_file="f.pdf", classification={}, metadata={})
+        doc = RetrievalDocument(
+            document_id="d", source_file="f.pdf", classification={}, metadata={}
+        )
         md = doc.to_markdown()
         assert "## Entities" not in md
 
     def test_markdown_no_handwriting_skips_section(self):
         doc = RetrievalDocument(
-            document_id="d", source_file="f.pdf",
+            document_id="d",
+            source_file="f.pdf",
             handwriting={"detected": False},
-            classification={}, metadata={},
+            classification={},
+            metadata={},
         )
         md = doc.to_markdown()
         assert "## Handwriting" not in md
@@ -585,7 +619,8 @@ class TestAssembleRetrievalOutput:
 
     def test_metadata_defaults_without_validation(self):
         doc = assemble_retrieval_output(
-            document_id="d", source_file="f.pdf",
+            document_id="d",
+            source_file="f.pdf",
             ocr_text="Hello",
             text_by_page=[{"page": 1, "text": "Hello"}],
         )
@@ -605,7 +640,8 @@ class TestAssembleRetrievalOutput:
             ],
         }
         doc = assemble_retrieval_output(
-            document_id="d", source_file="f.pdf",
+            document_id="d",
+            source_file="f.pdf",
             relationship_data=rel_data,
         )
         assert len(doc.relationships) == 1
@@ -642,6 +678,30 @@ class TestExtractEntitiesFromNerData:
         }
         assert _extract_entities_from_ner_data(data) == []
 
+    def test_accepts_live_ner_dataclasses(self):
+        from ner import Entity, PageNER
+
+        data = {
+            "pages": [
+                PageNER(
+                    page_num=2,
+                    entities=[
+                        Entity(
+                            entity_type="CASE_NUMBER",
+                            text="2026-CV-001",
+                            confidence=0.98,
+                            page_num=2,
+                        ),
+                    ],
+                ),
+            ],
+        }
+
+        entities = _extract_entities_from_ner_data(data)
+        assert entities[0]["type"] == "CASE_NUMBER"
+        assert entities[0]["text"] == "2026-CV-001"
+        assert entities[0]["page"] == 2
+
 
 class TestExtractFromExtractionData:
     def test_extracts_entities_and_kv(self):
@@ -656,6 +716,30 @@ class TestExtractFromExtractionData:
         entities, kv = _extract_from_extraction_data({})
         assert entities == []
         assert kv == []
+
+    def test_accepts_live_extraction_dataclasses(self):
+        from extraction import ExtractedField, PageExtraction
+
+        data = {
+            "pages": [
+                PageExtraction(
+                    page_num=3,
+                    fields=[
+                        ExtractedField(
+                            field_type="amount",
+                            text="$1,250.00",
+                            confidence=0.91,
+                            page_num=3,
+                        ),
+                    ],
+                ),
+            ],
+        }
+
+        entities, kv = _extract_from_extraction_data(data)
+        assert entities[0]["type"] == "amount"
+        assert entities[0]["page"] == 3
+        assert kv[0]["value"] == "$1,250.00"
 
 
 class TestExtractClassification:
@@ -694,6 +778,7 @@ class TestExtractMetadata:
         assert meta["quality"] == "high_quality"
         assert meta["overall_confidence"] == 0.91
         assert meta["ocr_methods"] == ["PaddleOCR"]
+        assert meta["languages"] == ["en"]
         assert meta["total_text_length"] == 2500
         assert meta["output_hash"] == "abc123def456"
 
@@ -712,12 +797,14 @@ class TestExtractHandwriting:
         assert hw["is_primarily_handwritten"] is False
 
     def test_no_handwriting(self):
-        hw = _extract_handwriting({
-            "total_handwritten_pages": 0,
-            "overall_handwriting_coverage": 0.0,
-            "is_primarily_handwritten": False,
-            "pages": [],
-        })
+        hw = _extract_handwriting(
+            {
+                "total_handwritten_pages": 0,
+                "overall_handwriting_coverage": 0.0,
+                "is_primarily_handwritten": False,
+                "pages": [],
+            }
+        )
         assert hw["detected"] is False
         assert hw["regions_count"] == 0
 
@@ -747,28 +834,47 @@ class TestWriteRetrievalJson:
         assert data["text"] == "Hello"
 
     def test_creates_in_correct_directory(self, tmp_path):
-        doc = RetrievalDocument(document_id="d", source_file="doc.pdf", pipeline_version="1.0")
+        doc = RetrievalDocument(
+            document_id="d", source_file="doc.pdf", pipeline_version="1.0"
+        )
         result = write_retrieval_json(doc, str(tmp_path))
         assert result is not None
         assert "EXPORT" in result
         assert "RETRIEVAL" in result
 
     def test_with_subfolder(self, tmp_path):
-        doc = RetrievalDocument(document_id="d", source_file="doc.pdf", pipeline_version="1.0")
+        doc = RetrievalDocument(
+            document_id="d", source_file="doc.pdf", pipeline_version="1.0"
+        )
         result = write_retrieval_json(doc, str(tmp_path), subfolder="batch_01/subdir")
         assert result is not None
         assert os.path.isfile(result)
         assert "batch_01" in result
 
+    def test_empty_sanitized_subfolder_matches_canonical_pdf_stem(self, tmp_path):
+        from ocr_distributed.ocr_utils import encode_path_segment
+
+        doc = RetrievalDocument(
+            document_id="d", source_file="doc.pdf", pipeline_version="1.0"
+        )
+
+        result = write_retrieval_json(doc, str(tmp_path), subfolder="...")
+
+        encoded_empty = encode_path_segment("...", empty_fallback="_")
+        expected = (
+            tmp_path / "EXPORT" / "RETRIEVAL" / encoded_empty / "doc.retrieval.json"
+        )
+        assert result is not None
+        assert os.path.normcase(result) == os.path.normcase(str(expected))
+        assert expected.is_file()
+
     def test_path_traversal_blocked(self, tmp_path):
-        doc = RetrievalDocument(document_id="d", source_file="doc.pdf", pipeline_version="1.0")
+        doc = RetrievalDocument(
+            document_id="d", source_file="doc.pdf", pipeline_version="1.0"
+        )
         result = write_retrieval_json(doc, str(tmp_path), subfolder="../../etc")
-        # Should be blocked (returns None) OR produce safe path
-        # Depending on OS realpath resolution, the path may still be safe
-        # The key test is it does NOT write outside the RETRIEVAL dir
-        if result is not None:
-            retrieval_dir = os.path.realpath(os.path.join(str(tmp_path), "EXPORT", "RETRIEVAL"))
-            assert os.path.realpath(result).startswith(retrieval_dir)
+        assert result is None
+        assert not (tmp_path / "etc").exists()
 
     def test_output_validates_against_schema(self, tmp_path):
         doc = assemble_retrieval_output(
@@ -808,6 +914,21 @@ class TestWriteRetrievalMarkdown:
         assert result is not None
         assert "sub" in result
 
+    def test_empty_sanitized_subfolder_matches_json_writer(self, tmp_path):
+        from ocr_distributed.ocr_utils import encode_path_segment
+
+        doc = RetrievalDocument(document_id="d", source_file="doc.pdf")
+
+        result = write_retrieval_markdown(doc, str(tmp_path), subfolder="...")
+
+        encoded_empty = encode_path_segment("...", empty_fallback="_")
+        expected = (
+            tmp_path / "EXPORT" / "RETRIEVAL" / encoded_empty / "doc.retrieval.md"
+        )
+        assert result is not None
+        assert os.path.normcase(result) == os.path.normcase(str(expected))
+        assert expected.is_file()
+
 
 # ---------------------------------------------------------------------------
 # Environment variable tests
@@ -841,11 +962,13 @@ class TestMarkdownTableFormatting:
 
     def test_entity_table_pipe_delimited(self):
         doc = RetrievalDocument(
-            document_id="d", source_file="f.pdf",
+            document_id="d",
+            source_file="f.pdf",
             entities=[
                 {"type": "PERSON", "text": "Jane", "confidence": 0.99, "page": 1},
             ],
-            classification={}, metadata={},
+            classification={},
+            metadata={},
         )
         md = doc.to_markdown()
         # Check header row
@@ -857,11 +980,13 @@ class TestMarkdownTableFormatting:
 
     def test_kv_table_pipe_delimited(self):
         doc = RetrievalDocument(
-            document_id="d", source_file="f.pdf",
+            document_id="d",
+            source_file="f.pdf",
             key_value_pairs=[
                 {"key": "Date", "value": "2024-01-01", "confidence": 0.85},
             ],
-            classification={}, metadata={},
+            classification={},
+            metadata={},
         )
         md = doc.to_markdown()
         assert "| Key | Value | Confidence |" in md
@@ -870,13 +995,15 @@ class TestMarkdownTableFormatting:
 
     def test_multiple_entities_all_rows(self):
         doc = RetrievalDocument(
-            document_id="d", source_file="f.pdf",
+            document_id="d",
+            source_file="f.pdf",
             entities=[
                 {"type": "PERSON", "text": "A", "confidence": 0.9, "page": 1},
                 {"type": "ORG", "text": "B", "confidence": 0.8, "page": 2},
                 {"type": "DATE", "text": "C", "confidence": 0.7, "page": 3},
             ],
-            classification={}, metadata={},
+            classification={},
+            metadata={},
         )
         md = doc.to_markdown()
         assert md.count("| PERSON |") == 1

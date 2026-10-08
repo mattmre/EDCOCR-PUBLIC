@@ -32,7 +32,9 @@ Usage in Celery tasks::
         # ... proceed with deletions
 """
 
-import os
+from ocr_distributed.litigation_hold import (
+    is_litigation_hold_active as _shared_is_litigation_hold_active,
+)
 
 
 def is_litigation_hold_active():
@@ -40,7 +42,7 @@ def is_litigation_hold_active():
 
     Recognised truthy values (case-insensitive): ``1``, ``true``, ``yes``.
     """
-    return os.environ.get("LITIGATION_HOLD", "").lower() in ("1", "true", "yes")
+    return _shared_is_litigation_hold_active()
 
 
 def check_litigation_hold(command):

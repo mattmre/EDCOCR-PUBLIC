@@ -1,11 +1,13 @@
-"""Specialist routing derived from classification and entity output.
+"""Document routing derived from classification and entity output.
 
 Produces durable `.routing.json` sidecars that recommend downstream specialist
 lanes without modifying the OCR pipeline's core processing path.
+
+**Honesty:** Pipeline flag ``ENABLE_SPECIALIST_ROUTING`` enables *this* module
+(document routing), not ``specialist_routing.SpecialistRouter``.
 """
 
 import datetime
-import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -13,7 +15,8 @@ from typing import Optional
 
 from ocr_distributed.ocr_utils import (
     build_sidecar_base_name,
-    sanitize_path_segment,
+    resolve_safe_output_subfolder,
+    write_json_atomic,
 )
 
 logger = logging.getLogger(__name__)
@@ -158,7 +161,9 @@ def derive_document_routing(doc_cls, doc_entities=None) -> DocumentRouting:
     routing = DocumentRouting(
         document_id=getattr(doc_cls, "document_id", ""),
         source_file=getattr(doc_cls, "source_file", ""),
-        routing_mode="classification+entities" if doc_entities is not None else "classification_only",
+        routing_mode="classification+entities"
+        if doc_entities is not None
+        else "classification_only",
     )
 
     matched_labels = sorted(_collect_classification_labels(doc_cls))
@@ -179,8 +184,16 @@ def derive_document_routing(doc_cls, doc_entities=None) -> DocumentRouting:
             4,
         )
         matched_signals = sorted(
-            [f"label:{label}" for label in matched_labels if label in rule["document_types"]]
-            + [f"entity:{entity}" for entity in entity_types if entity in rule["entity_types"]]
+            [
+                f"label:{label}"
+                for label in matched_labels
+                if label in rule["document_types"]
+            ]
+            + [
+                f"entity:{entity}"
+                for entity in entity_types
+                if entity in rule["entity_types"]
+            ]
         )
         recommendations.append(
             RouteRecommendation(
@@ -196,7 +209,9 @@ def derive_document_routing(doc_cls, doc_entities=None) -> DocumentRouting:
         recommendations.append(
             RouteRecommendation(
                 route="general_review",
-                confidence=round(float(getattr(doc_cls, "document_confidence", 0.0) or 0.0), 4),
+                confidence=round(
+                    float(getattr(doc_cls, "document_confidence", 0.0) or 0.0), 4
+                ),
                 priority=10,
                 rationale="No specialist route matched; keep in general review",
                 matched_signals=[f"label:{getattr(doc_cls, 'document_type', 'other')}"],
@@ -206,7 +221,9 @@ def derive_document_routing(doc_cls, doc_entities=None) -> DocumentRouting:
         routing.review_reasons.append("no_specialist_match")
 
     recommendations = _dedupe_recommendations(recommendations)
-    recommendations.sort(key=lambda item: (-item.priority, -item.confidence, item.route))
+    recommendations.sort(
+        key=lambda item: (-item.priority, -item.confidence, item.route)
+    )
     if len(getattr(doc_cls, "document_labels", []) or []) > 1:
         top_labels = getattr(doc_cls, "document_labels", [])
         if len(top_labels) > 1:
@@ -244,24 +261,7 @@ def write_routing_json(
     """Write `.routing.json` sidecar output."""
     try:
         routing_dir = os.path.join(output_folder, "EXPORT", "ROUTING")
-        if subfolder and subfolder != ".":
-            safe_parts = [
-                sanitize_path_segment(part)
-                for part in subfolder.replace("\\", "/").split("/")
-                if part
-            ]
-            target_dir = (
-                os.path.join(routing_dir, *safe_parts)
-                if safe_parts
-                else routing_dir
-            )
-        else:
-            target_dir = routing_dir
-
-        resolved = os.path.realpath(target_dir)
-        if not resolved.startswith(os.path.realpath(routing_dir)):
-            logger.error("Path traversal blocked in routing output: %s", subfolder)
-            return None
+        target_dir = resolve_safe_output_subfolder(routing_dir, subfolder)
 
         os.makedirs(target_dir, exist_ok=True)
 
@@ -274,9 +274,9 @@ def write_routing_json(
             "processing": {
                 "routing_mode": doc_routing.routing_mode,
                 "pipeline_version": pipeline_version,
-                "timestamp": datetime.datetime.now(
-                    datetime.timezone.utc
-                ).isoformat(timespec="milliseconds"),
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(
+                    timespec="milliseconds"
+                ),
             },
             "routing_summary": {
                 "primary_route": doc_routing.primary_route,
@@ -287,8 +287,7 @@ def write_routing_json(
             "recommended_routes": doc_routing.recommended_routes,
         }
 
-        with open(json_path, "w", encoding="utf-8") as handle:
-            json.dump(report, handle, indent=2, ensure_ascii=False, default=str)
+        write_json_atomic(json_path, report, allowed_root=routing_dir)
 
         return json_path
     except Exception as exc:

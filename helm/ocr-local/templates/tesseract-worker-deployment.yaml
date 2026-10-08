@@ -1,0 +1,133 @@
+{{- if .Values.tesseractWorker.enabled }}
+{{- if ne .Values.tesseractWorker.queues "ocr_tesseract" }}
+{{- fail "tesseractWorker.queues must be exactly ocr_tesseract" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-tesseract-worker
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tesseract-worker
+spec:
+  {{- if not .Values.tesseractWorker.autoscaling.enabled }}
+  replicas: {{ .Values.tesseractWorker.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: tesseract-worker
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.labels" . | nindent 8 }}
+        app.kubernetes.io/component: tesseract-worker
+      {{- if .Values.workerSecurity.mTLS.enabled }}
+      annotations:
+        {{ .Values.workerSecurity.mTLS.annotation }}: {{ .Values.workerSecurity.mTLS.annotationValue | quote }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      {{- include "ocr-local.imagePullSecrets" . | nindent 6 }}
+      terminationGracePeriodSeconds: {{ .Values.workerTerminationGracePeriodSeconds | default 360 }}
+      {{- include "ocr-local.haScheduling" (dict "root" . "component" "tesseract-worker") | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.tesseractWorker.podSecurityContext | nindent 8 }}
+      {{- with .Values.tesseractWorker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tesseractWorker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: staging-volume
+          {{- if eq .Values.workerSecurity.stagingVolume.type "emptyDir" }}
+          emptyDir:
+            medium: {{ .Values.workerSecurity.stagingVolume.emptyDir.medium }}
+            sizeLimit: {{ .Values.workerSecurity.stagingVolume.emptyDir.sizeLimit }}
+          {{- else }}
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                storageClassName: {{ .Values.workerSecurity.stagingVolume.pvc.storageClass | quote }}
+                resources:
+                  requests:
+                    storage: {{ .Values.workerSecurity.stagingVolume.pvc.size }}
+          {{- end }}
+        {{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+        - name: nfs-data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-nfs-data
+        {{- end }}
+        {{- include "ocr-local.tlsCaVolume" . | nindent 8 }}
+      initContainers:
+        {{- include "ocr-local.schemaReadinessInit" (dict "root" . "envKind" "worker" "securityContext" .Values.tesseractWorker.containerSecurityContext) | nindent 8 }}
+      containers:
+        - name: tesseract-worker
+          image: {{ include "ocr-local.tesseractWorkerImage" . }}
+          imagePullPolicy: {{ .Values.image.tesseractWorker.pullPolicy | default "IfNotPresent" }}
+          command:
+            - /usr/bin/tini
+            - -g
+            - --
+            - celery
+            - -A
+            - coordinator.coordinator
+            - worker
+            - --loglevel=info
+            - --queues=ocr_tesseract
+            - --concurrency={{ .Values.tesseractWorker.concurrency }}
+            - --max-tasks-per-child={{ .Values.tesseractWorker.maxTasksPerChild }}
+            - --hostname=tesseract-worker@%h
+          volumeMounts:
+            - name: staging-volume
+              mountPath: {{ .Values.workerSecurity.stagingVolume.mountPath }}
+            {{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+            - name: nfs-data
+              mountPath: {{ .Values.storage.nfs.mountPath | default "/shared" }}
+            {{- end }}
+            {{- include "ocr-local.tlsCaVolumeMount" . | nindent 12 }}
+          {{- include "ocr-local.workerEnvFrom" . | nindent 10 }}
+          env:
+            {{- include "ocr-local.workerSecretEnv" . | nindent 12 }}
+            - name: WORKER_QUEUES
+              value: "ocr_tesseract"
+            {{- range $key, $val := .Values.tesseractWorker.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          startupProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import importlib.util, shutil; import celery, pytesseract; assert shutil.which('tesseract'); assert importlib.util.find_spec('paddleocr') is None; assert pytesseract.get_tesseract_version().major == 5"
+            failureThreshold: 10
+            periodSeconds: 5
+            timeoutSeconds: 30
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'celery -A coordinator.coordinator inspect ping --destination "tesseract-worker@$(hostname)" --timeout=5'
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'celery -A coordinator.coordinator inspect ping --destination "tesseract-worker@$(hostname)" --timeout=10'
+            periodSeconds: 60
+            timeoutSeconds: 15
+          resources:
+            {{- toYaml .Values.tesseractWorker.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.tesseractWorker.containerSecurityContext | nindent 12 }}
+{{- end }}

@@ -11,7 +11,6 @@ returns empty results while custom regex extraction continues to work.
 """
 
 import datetime
-import json
 import logging
 import os
 import re
@@ -20,7 +19,8 @@ from typing import Optional
 
 from ocr_distributed.ocr_utils import (
     build_sidecar_base_name,
-    sanitize_path_segment,
+    resolve_safe_output_subfolder,
+    write_json_atomic,
 )
 
 __all__ = [
@@ -63,10 +63,11 @@ _CASE_NUMBER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Bates numbers: "ABC001234", "XYZ 000001", 3+ alpha prefix + 4+ digits
+# Bates numbers: "ABC001234", "XYZ 000001", uppercase 3+ alpha prefix
+# plus 4+ digits.  Requiring uppercase avoids treating ordinary title-cased
+# names followed by a year (for example "Johnson 2026") as forensic stamps.
 _BATES_NUMBER_PATTERN = re.compile(
     r"\b([A-Z]{3,10}\s?\d{4,10})\b",
-    re.IGNORECASE,
 )
 
 # Exhibit references: "Exhibit A", "Exhibit 1", "Ex. A-1", "Exhibit No. 42"
@@ -321,12 +322,7 @@ def write_ner_json(
         Path to the written JSON file, or None on failure.
     """
     try:
-        # Sanitize subfolder path segments for filesystem safety
-        if subfolder and subfolder != ".":
-            safe_parts = [sanitize_path_segment(p) for p in subfolder.replace("\\", "/").split("/") if p]
-            target_dir = os.path.join(output_folder, *safe_parts) if safe_parts else output_folder
-        else:
-            target_dir = output_folder
+        target_dir = resolve_safe_output_subfolder(output_folder, subfolder)
         os.makedirs(target_dir, exist_ok=True)
 
         base_name = build_sidecar_base_name(doc_ner.source_file)
@@ -373,8 +369,7 @@ def write_ner_json(
             "pages": pages_output,
         }
 
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2, ensure_ascii=False, default=str)
+        write_json_atomic(json_path, report, allowed_root=output_folder)
 
         return json_path
     except Exception as e:

@@ -67,6 +67,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
+from .http import open_federation_request
+
 # ---------------------------------------------------------------------------
 # Optional Prometheus dependency: same shim pattern as the reconciler /
 # failover engine so unit tests can run on minimal interpreters.
@@ -236,12 +238,14 @@ class CrossClusterCustodyEvent:
     event_type: str
     timestamp_utc: str
     dispatch_reason: str
+    tenant_id: str = ""
     signature: str = ""
 
     def to_signing_payload(self) -> dict[str, Any]:
         """Return the body used for signing (signature field excluded)."""
         return {
             "job_id": self.job_id,
+            "tenant_id": self.tenant_id,
             "source_cluster": self.source_cluster,
             "target_cluster": self.target_cluster,
             "parent_event_hash": self.parent_event_hash,
@@ -275,6 +279,7 @@ class CrossClusterCustodyEvent:
             event_type=self.event_type,
             timestamp_utc=self.timestamp_utc,
             dispatch_reason=self.dispatch_reason,
+            tenant_id=self.tenant_id,
             signature=sig,
         )
 
@@ -306,6 +311,7 @@ class _RebalanceObservation:
     source_cluster: str
     target_cluster: str
     reason: str
+    tenant_id: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +367,7 @@ class CrossClusterCustodyChain:
         target_cluster: str,
         parent_event_hash: str,
         dispatch_reason: str,
+        tenant_id: str = "",
     ) -> CrossClusterCustodyEvent:
         """Record a JOB_HANDED_OFF event."""
         return self._build_event(
@@ -370,6 +377,7 @@ class CrossClusterCustodyChain:
             parent_event_hash=parent_event_hash,
             event_type=EVENT_JOB_HANDED_OFF,
             dispatch_reason=dispatch_reason,
+            tenant_id=tenant_id,
         )
 
     def record_receive(
@@ -377,6 +385,7 @@ class CrossClusterCustodyChain:
         job_id: str,
         source_cluster: str,
         parent_event_hash: str,
+        tenant_id: str = "",
     ) -> CrossClusterCustodyEvent:
         """Record a JOB_RECEIVED event.
 
@@ -390,6 +399,7 @@ class CrossClusterCustodyChain:
             parent_event_hash=parent_event_hash,
             event_type=EVENT_JOB_RECEIVED,
             dispatch_reason=_RECEIVED_DEFAULT_REASON,
+            tenant_id=tenant_id,
         )
 
     def record_rebalance(
@@ -398,6 +408,7 @@ class CrossClusterCustodyChain:
         source_cluster: str,
         target_cluster: str,
         reason: str,
+        tenant_id: str = "",
     ) -> CrossClusterCustodyEvent:
         """Record a JOB_REBALANCED event.
 
@@ -412,6 +423,7 @@ class CrossClusterCustodyChain:
             parent_event_hash="",
             event_type=EVENT_JOB_REBALANCED,
             dispatch_reason=reason,
+            tenant_id=tenant_id,
         )
 
     def verify_chain(
@@ -432,15 +444,16 @@ class CrossClusterCustodyChain:
                     False,
                     f"event_type guard failed at index {idx}: {event.event_type!r}",
                 )
-            if not verify_signature(
-                event, self.hmac_key, insecure=self._insecure
-            ):
+            if not verify_signature(event, self.hmac_key, insecure=self._insecure):
                 return (
                     False,
                     f"signature verification failed at index {idx}",
                 )
             if event.event_type != EVENT_JOB_REBALANCED:
-                if previous_hash is not None and event.parent_event_hash != previous_hash:
+                if (
+                    previous_hash is not None
+                    and event.parent_event_hash != previous_hash
+                ):
                     return (
                         False,
                         f"parent-hash mismatch at index {idx}: "
@@ -478,7 +491,7 @@ class CrossClusterCustodyChain:
             if opener is not None:
                 resp = opener(req, timeout=timeout)
             else:
-                resp = urllib.request.urlopen(req, timeout=timeout)
+                resp = open_federation_request(req, timeout=timeout)
             try:
                 status = getattr(resp, "status", None)
                 if status is None and hasattr(resp, "getcode"):
@@ -530,6 +543,7 @@ class CrossClusterCustodyChain:
         parent_event_hash: str,
         event_type: str,
         dispatch_reason: str,
+        tenant_id: str = "",
     ) -> CrossClusterCustodyEvent:
         if not job_id:
             raise ValueError("job_id must be a non-empty string")
@@ -537,6 +551,9 @@ class CrossClusterCustodyChain:
             raise ValueError("target_cluster must be a non-empty string")
         if event_type not in VALID_EVENT_TYPES:
             raise ValueError(f"unknown event_type: {event_type!r}")
+        deployment = os.environ.get("DEPLOYMENT_ENV", "development").strip().lower()
+        if deployment in {"production", "prod"} and not tenant_id.strip():
+            raise ValueError("production federation custody events require tenant_id")
         timestamp = _utc_iso(self._clock())
         unsigned = CrossClusterCustodyEvent(
             job_id=job_id,
@@ -546,6 +563,7 @@ class CrossClusterCustodyChain:
             event_type=event_type,
             timestamp_utc=timestamp,
             dispatch_reason=dispatch_reason,
+            tenant_id=tenant_id,
             signature="",
         )
         with self._lock:
@@ -597,9 +615,7 @@ class CustodyChainReconcilerHook:
         try:
             observations = list(self.rebalance_provider())
         except Exception as exc:
-            _LOG.warning(
-                "custody.tick.provider_error error=%s", exc
-            )
+            _LOG.warning("custody.tick.provider_error error=%s", exc)
             return 0
         emitted = 0
         with self._lock:
@@ -615,6 +631,7 @@ class CustodyChainReconcilerHook:
                         source_cluster=obs.source_cluster,
                         target_cluster=obs.target_cluster,
                         reason=obs.reason,
+                        tenant_id=obs.tenant_id,
                     )
                 except Exception as exc:
                     _LOG.warning(
@@ -660,16 +677,12 @@ def build_custody_chain_from_env(
 
     local_cluster = src.get("OCR_CLUSTER_NAME", "").strip()
     if not local_cluster:
-        _LOG.warning(
-            "custody.factory.missing OCR_CLUSTER_NAME"
-        )
+        _LOG.warning("custody.factory.missing OCR_CLUSTER_NAME")
         return None
 
     hmac_key = src.get("OCR_FEDERATION_CUSTODY_HMAC_KEY", "").strip()
     if not hmac_key:
-        _LOG.warning(
-            "custody.factory.missing OCR_FEDERATION_CUSTODY_HMAC_KEY"
-        )
+        _LOG.warning("custody.factory.missing OCR_FEDERATION_CUSTODY_HMAC_KEY")
         return None
 
     auth_token = src.get("OCR_FEDERATION_CUSTODY_AUTH_TOKEN", "").strip()

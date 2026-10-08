@@ -63,8 +63,8 @@ class _FakeResponse:
         self.status = status
         self._buf = io.BytesIO(body)
 
-    def read(self) -> bytes:
-        return self._buf.read()
+    def read(self, size: int = -1) -> bytes:
+        return self._buf.read(size)
 
     def getcode(self) -> int:
         return self.status
@@ -126,9 +126,7 @@ class TestEventCreation:
         assert event.dispatch_reason == "cluster_unhealthy"
         assert verify_signature(event, HMAC_KEY)
 
-    def test_signature_is_deterministic(
-        self, chain: CrossClusterCustodyChain
-    ) -> None:
+    def test_signature_is_deterministic(self, chain: CrossClusterCustodyChain) -> None:
         e1 = chain.record_handoff("job-x", "cluster-b", "h1", "reason")
         e2 = chain.record_handoff("job-x", "cluster-b", "h1", "reason")
         # Timestamps are frozen by the fixture clock, so signatures match.
@@ -189,27 +187,19 @@ class TestChainVerification:
         # The second event's parent_event_hash must be the SHA-256 of
         # e1's signing payload, computed via the same helper.
         prev_hash = chain._sha256_hex(e1.to_signing_payload())
-        e2 = chain.record_handoff(
-            "job-1", "cluster-c", prev_hash, "rebalance"
-        )
+        e2 = chain.record_handoff("job-1", "cluster-c", prev_hash, "rebalance")
         ok, msg = chain.verify_chain([e1, e2])
         assert ok is True, msg
         assert "2" in msg
 
-    def test_broken_parent_hash_detected(
-        self, chain: CrossClusterCustodyChain
-    ) -> None:
+    def test_broken_parent_hash_detected(self, chain: CrossClusterCustodyChain) -> None:
         e1 = chain.record_handoff("job-1", "cluster-b", "anchor", "reason")
-        e2 = chain.record_handoff(
-            "job-1", "cluster-c", "wrong-hash", "rebalance"
-        )
+        e2 = chain.record_handoff("job-1", "cluster-c", "wrong-hash", "rebalance")
         ok, msg = chain.verify_chain([e1, e2])
         assert ok is False
         assert "parent-hash" in msg
 
-    def test_bad_signature_detected(
-        self, chain: CrossClusterCustodyChain
-    ) -> None:
+    def test_bad_signature_detected(self, chain: CrossClusterCustodyChain) -> None:
         e = chain.record_handoff("job-1", "cluster-b", "anchor", "reason")
         tampered = CrossClusterCustodyEvent(
             job_id=e.job_id,
@@ -225,9 +215,7 @@ class TestChainVerification:
         assert ok is False
         assert "signature" in msg
 
-    def test_unknown_event_type_detected(
-        self, chain: CrossClusterCustodyChain
-    ) -> None:
+    def test_unknown_event_type_detected(self, chain: CrossClusterCustodyChain) -> None:
         # Bypass _build_event to construct an unsigned bogus event.
         bogus = CrossClusterCustodyEvent(
             job_id="job-x",
@@ -263,9 +251,7 @@ class TestChainVerification:
 # Replication
 # ---------------------------------------------------------------------------
 class TestReplication:
-    def test_replicate_to_peer_200_ok(
-        self, chain: CrossClusterCustodyChain
-    ) -> None:
+    def test_replicate_to_peer_200_ok(self, chain: CrossClusterCustodyChain) -> None:
         captured: dict[str, Any] = {}
 
         def fake_opener(req: Any, timeout: float | None = None) -> _FakeResponse:
@@ -373,14 +359,10 @@ class TestReconcilerHook:
     def test_no_emit_when_no_observations(
         self, chain: CrossClusterCustodyChain
     ) -> None:
-        hook = CustodyChainReconcilerHook(
-            chain, rebalance_provider=lambda: []
-        )
+        hook = CustodyChainReconcilerHook(chain, rebalance_provider=lambda: [])
         assert hook.tick() == 0
 
-    def test_idempotent_across_ticks(
-        self, chain: CrossClusterCustodyChain
-    ) -> None:
+    def test_idempotent_across_ticks(self, chain: CrossClusterCustodyChain) -> None:
         """Same (job_id, target) pair must not be emitted twice."""
         observations = [
             _RebalanceObservation(
@@ -404,9 +386,7 @@ class TestReconcilerHook:
         def bad_provider() -> Any:
             raise RuntimeError("DB exploded")
 
-        hook = CustodyChainReconcilerHook(
-            chain, rebalance_provider=bad_provider
-        )
+        hook = CustodyChainReconcilerHook(chain, rebalance_provider=bad_provider)
         # Must not raise.
         assert hook.tick() == 0
 
@@ -491,14 +471,9 @@ class TestInsecureMode:
                 hmac_key=HMAC_KEY,
                 insecure=True,
             )
-        assert any(
-            "insecure" in rec.message.lower()
-            for rec in caplog.records
-        )
+        assert any("insecure" in rec.message.lower() for rec in caplog.records)
 
-    def test_insecure_via_env_factory(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_insecure_via_env_factory(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OCR_FEDERATION_CUSTODY_ENABLED", "true")
         monkeypatch.setenv("OCR_FEDERATION_CUSTODY_HMAC_KEY", "k")
         monkeypatch.setenv("OCR_CLUSTER_NAME", "c")
@@ -508,9 +483,7 @@ class TestInsecureMode:
         assert engine._insecure is True
 
     def test_insecure_default_is_false(self) -> None:
-        c = CrossClusterCustodyChain(
-            local_cluster="cluster-a", hmac_key=HMAC_KEY
-        )
+        c = CrossClusterCustodyChain(local_cluster="cluster-a", hmac_key=HMAC_KEY)
         assert c._insecure is False
 
 

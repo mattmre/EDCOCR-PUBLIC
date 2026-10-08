@@ -1,4 +1,4 @@
-"""Tests for Helm chart RBAC / ServiceAccount configuration.
+"""Tests for Helm chart RBAC / ServiceAccount configuration (maintenance review).
 
 Validates that:
 - values.yaml has rbac.create defaulting to true
@@ -142,11 +142,16 @@ class TestDeploymentServiceAccountName:
 
     @pytest.mark.parametrize("template_file", DEPLOYMENT_TEMPLATES)
     def test_deployment_uses_helper(self, template_file):
-        """Each deployment must use the ocr-local.serviceAccountName helper."""
+        """Only control-plane deployments may select the cloud identity."""
         template_path = os.path.join(TEMPLATES_DIR, template_file)
         with open(template_path, encoding="utf-8") as f:
             content = f.read()
 
-        assert 'include "ocr-local.serviceAccountName"' in content, (
-            f"{template_file} must use the ocr-local.serviceAccountName helper"
-        )
+        control_plane = template_file in {
+            "coordinator-deployment.yaml", "celery-beat-deployment.yaml",
+            "celery-coordinator-deployment.yaml",
+        }
+        helper = "controlPlaneServiceAccountName" if control_plane else "serviceAccountName"
+        assert f'include "ocr-local.{helper}"' in content
+        if not control_plane:
+            assert 'include "ocr-local.controlPlaneServiceAccountName"' not in content

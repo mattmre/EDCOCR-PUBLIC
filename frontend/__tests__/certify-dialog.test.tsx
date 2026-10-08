@@ -28,7 +28,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-describe("<CertifyDialog />", => {
+describe("<CertifyDialog />", () => {
   beforeEach(() => {
     setApiKey("test-key");
   });
@@ -37,7 +37,7 @@ describe("<CertifyDialog />", => {
     vi.restoreAllMocks();
   });
 
-  it("does not render when closed", => {
+  it("does not render when closed", () => {
     render(
       <CertifyDialog
         reviewId="rev_x"
@@ -49,7 +49,7 @@ describe("<CertifyDialog />", => {
     expect(screen.queryByTestId("certify-dialog")).toBeNull();
   });
 
-  it("requires the operator to pick an auth method before confirming", async => {
+  it("requires the operator to pick an auth method before confirming", async () => {
     render(
       <CertifyDialog
         reviewId="rev_ccccccccccca"
@@ -69,7 +69,7 @@ describe("<CertifyDialog />", => {
     );
   });
 
-  it("posts to /certify with the selected method and notifies on success", async => {
+  it("posts to /certify with the selected method and notifies on success", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(jsonResponse(itemFixture()));
@@ -111,7 +111,7 @@ describe("<CertifyDialog />", => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("shows a method-specific message when the backend returns 401", async => {
+  it("shows a method-specific message when the backend returns 401", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ detail: "strong auth required" }, 401)
     );
@@ -126,6 +126,9 @@ describe("<CertifyDialog />", => {
     );
 
     fireEvent.click(screen.getByTestId("certify-auth-hardware_token"));
+    fireEvent.change(screen.getByLabelText(/auth token/i), {
+      target: { value: "local-hardware-token-fixture" },
+    });
     fireEvent.click(screen.getByTestId("certify-confirm"));
 
     await waitFor(() => {

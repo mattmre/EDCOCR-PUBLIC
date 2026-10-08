@@ -19,7 +19,7 @@ PREFIX="${KAFKA_TOPIC_PREFIX:-}"
 REPLICATION_OVERRIDE="${KAFKA_REPLICATION_FACTOR:-}"
 CONFIG_FILE="${KAFKA_TOPICS_FILE:-/kafka-topics.yaml}"
 
-echo "=== EDCOCR Kafka topic initialization ==="
+echo "=== OCR_LOCAL Kafka topic initialization ==="
 echo "Bootstrap server: ${BOOTSTRAP}"
 echo "Topic prefix: ${PREFIX:-<none>}"
 echo "Config file: ${CONFIG_FILE}"

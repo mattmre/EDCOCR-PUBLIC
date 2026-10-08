@@ -1,3 +1,4 @@
+import { handleUnauthorized } from "./api-client";
 /**
  * Admin alerts API helpers.
  *
@@ -12,8 +13,13 @@
  * "access denied" empty-state when a non-admin caller hits these endpoints.
  */
 
-import { ApiError, UnauthorizedError } from "./api-client";
-import { clearApiKey, getApiKey } from "./auth";
+import {
+  ApiError,
+  UnauthorizedError,
+  buildUrl,
+  createTimeoutSignal,
+} from "./api-client";
+import { getApiKey, getAuthRequestCredentials } from "./auth";
 import type {
   Alert,
   AlertMuteRequest,
@@ -21,16 +27,6 @@ import type {
   AlertRuleUpdate,
   NotificationChannel,
 } from "./types";
-
-const API_BASE_URL =
-  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_BASE_URL) ||
-  "http://localhost:8000";
-
-function buildUrl(path: string): string {
-  const base = API_BASE_URL.replace(/\/+$/, "");
-  const suffix = path.startsWith("/") ? path : `/${path}`;
-  return `${base}${suffix}`;
-}
 
 function buildHeaders(extra?: HeadersInit): Headers {
   const headers = new Headers(extra);
@@ -60,7 +56,7 @@ async function handle<T>(response: Response): Promise<T> {
   if (response.status === 401) {
     // 401 -> drop cached key so we don't loop on a bad credential. The
     // route boundary will redirect to /login.
-    clearApiKey();
+    handleUnauthorized();
     const body = await parseBody(response);
     throw new UnauthorizedError(response.status, body);
   }
@@ -95,14 +91,20 @@ async function request<T>(
   if (body !== undefined && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetch(buildUrl(path), {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store",
-    signal: init?.signal,
-  });
-  return handle<T>(response);
+  const { signal, cleanup } = createTimeoutSignal(init?.signal);
+  try {
+    const response = await fetch(buildUrl(path), {
+      method,
+      headers,
+      credentials: getAuthRequestCredentials(),
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: "no-store",
+      signal,
+    });
+    return await handle<T>(response);
+  } finally {
+    cleanup();
+  }
 }
 
 // ---------------------------------------------------------------------------

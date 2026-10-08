@@ -1,4 +1,4 @@
-"""Tests for CORS middleware configuration.
+"""Tests for CORS middleware configuration (maintenance review).
 
 Verifies that CORS headers are present when CORS_ALLOWED_ORIGINS is
 configured and absent when it is not.

@@ -17,7 +17,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Iterable, Optional
 
 from api.config import OUTPUT_FOLDER
 from api.db_security import set_db_permissions
@@ -132,6 +132,27 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+_ALLOWED_JOB_IDS_TABLE = "_ocr_allowed_job_ids"
+
+
+def _set_allowed_job_ids(conn: sqlite3.Connection, job_ids: list[str]) -> None:
+    """Load a tenant allowlist into a connection-local temporary table.
+
+    SQLite's host-parameter limit is finite (often 999 or 32766).  A tenant
+    with a large job history must not turn a correctly scoped query into a
+    500 merely because the authorization list is long.
+    """
+    conn.execute(
+        f"CREATE TEMP TABLE IF NOT EXISTS {_ALLOWED_JOB_IDS_TABLE} "
+        "(job_id TEXT PRIMARY KEY)"
+    )
+    conn.execute(f"DELETE FROM {_ALLOWED_JOB_IDS_TABLE}")
+    conn.executemany(
+        f"INSERT OR IGNORE INTO {_ALLOWED_JOB_IDS_TABLE} (job_id) VALUES (?)",
+        ((str(job_id),) for job_id in job_ids),
+    )
+
+
 class EntityIndex:
     """SQLite-backed entity and extraction search index.
 
@@ -139,7 +160,7 @@ class EntityIndex:
     and an RLock to serialize all database operations.
 
     SQLite WAL mode: enables concurrent reads during writes.
-    See docs/architecture/adr-sqlite-to-postgresql-migration.md (/).
+    See docs/architecture/adr-sqlite-to-postgresql-migration.md (maintenance review/maintenance review).
     """
 
     def __init__(self, db_path: str = ""):
@@ -208,7 +229,7 @@ class EntityIndex:
                 CREATE INDEX IF NOT EXISTS idx_extractions_confidence
                     ON indexed_extractions (confidence);
             """)
-            # restrict DB file to owner read/write only. Must run
+            # maintenance review: restrict DB file to owner read/write only. Must run
             # after the first connect so the file exists on disk.
             set_db_permissions(self._db_path)
             self._initialized = True
@@ -228,17 +249,19 @@ class EntityIndex:
         rows = []
         for ent in entities:
             entity_id = _generate_id("ent")
-            rows.append((
-                entity_id,
-                job_id,
-                ent.get("type", ent.get("entity_type", "")),
-                ent.get("text", ""),
-                float(ent.get("confidence", 0.0)),
-                ent.get("source", ""),
-                int(ent.get("page", 0)),
-                document_name,
-                now,
-            ))
+            rows.append(
+                (
+                    entity_id,
+                    job_id,
+                    ent.get("type", ent.get("entity_type", "")),
+                    ent.get("text", ""),
+                    float(ent.get("confidence", 0.0)),
+                    ent.get("source", ""),
+                    int(ent.get("page", 0)),
+                    document_name,
+                    now,
+                )
+            )
 
         with self._lock:
             conn = self._get_conn()
@@ -252,7 +275,9 @@ class EntityIndex:
             conn.commit()
         logger.debug(
             "Indexed %d entities for job %s document %s",
-            len(rows), job_id, document_name,
+            len(rows),
+            job_id,
+            document_name,
         )
         return len(rows)
 
@@ -267,16 +292,18 @@ class EntityIndex:
         rows = []
         for ext in extractions:
             extraction_id = _generate_id("ext")
-            rows.append((
-                extraction_id,
-                job_id,
-                ext.get("key", ext.get("field_name", "")),
-                ext.get("value", ext.get("field_value", "")),
-                float(ext.get("confidence", 0.0)),
-                int(ext.get("page", 0)),
-                document_name,
-                now,
-            ))
+            rows.append(
+                (
+                    extraction_id,
+                    job_id,
+                    ext.get("key", ext.get("field_name", "")),
+                    ext.get("value", ext.get("field_value", "")),
+                    float(ext.get("confidence", 0.0)),
+                    int(ext.get("page", 0)),
+                    document_name,
+                    now,
+                )
+            )
 
         with self._lock:
             conn = self._get_conn()
@@ -290,7 +317,9 @@ class EntityIndex:
             conn.commit()
         logger.debug(
             "Indexed %d extractions for job %s document %s",
-            len(rows), job_id, document_name,
+            len(rows),
+            job_id,
+            document_name,
         )
         return len(rows)
 
@@ -328,13 +357,13 @@ class EntityIndex:
         if job_id:
             conditions.append("job_id = ?")
             params.append(job_id)
-        if allowed_job_ids is not None and not job_id:
+        if allowed_job_ids is not None:
             if not allowed_job_ids:
                 # No jobs for this tenant -- return empty
                 return [], 0
-            placeholders = ",".join("?" for _ in allowed_job_ids)
-            conditions.append(f"job_id IN ({placeholders})")
-            params.extend(allowed_job_ids)
+            conditions.append(
+                f"job_id IN (SELECT job_id FROM {_ALLOWED_JOB_IDS_TABLE})"
+            )
         if min_confidence > 0.0:
             conditions.append("confidence >= ?")
             params.append(min_confidence)
@@ -343,6 +372,8 @@ class EntityIndex:
 
         with self._lock:
             conn = self._get_conn()
+            if allowed_job_ids is not None:
+                _set_allowed_job_ids(conn, allowed_job_ids)
 
             # Total count
             count_row = conn.execute(
@@ -391,12 +422,12 @@ class EntityIndex:
         if job_id:
             conditions.append("job_id = ?")
             params.append(job_id)
-        if allowed_job_ids is not None and not job_id:
+        if allowed_job_ids is not None:
             if not allowed_job_ids:
                 return [], 0
-            placeholders = ",".join("?" for _ in allowed_job_ids)
-            conditions.append(f"job_id IN ({placeholders})")
-            params.extend(allowed_job_ids)
+            conditions.append(
+                f"job_id IN (SELECT job_id FROM {_ALLOWED_JOB_IDS_TABLE})"
+            )
         if min_confidence > 0.0:
             conditions.append("confidence >= ?")
             params.append(min_confidence)
@@ -405,6 +436,8 @@ class EntityIndex:
 
         with self._lock:
             conn = self._get_conn()
+            if allowed_job_ids is not None:
+                _set_allowed_job_ids(conn, allowed_job_ids)
 
             count_row = conn.execute(
                 f"SELECT COUNT(*) AS cnt FROM indexed_extractions{where}",
@@ -441,39 +474,108 @@ class EntityIndex:
             logger.debug("Removed %d index entries for job %s", total, job_id)
         return total
 
+    def remove_jobs(self, job_ids: Iterable[str]) -> int:
+        """Remove index entries for many jobs in one bounded transaction."""
+        ids = sorted({str(value) for value in job_ids if value})
+        if not ids:
+            return 0
+
+        with self._lock:
+            conn = self._get_conn()
+            _set_allowed_job_ids(conn, ids)
+            cursor_ent = conn.execute(
+                "DELETE FROM indexed_entities WHERE job_id IN "
+                f"(SELECT job_id FROM {_ALLOWED_JOB_IDS_TABLE})"
+            )
+            cursor_ext = conn.execute(
+                "DELETE FROM indexed_extractions WHERE job_id IN "
+                f"(SELECT job_id FROM {_ALLOWED_JOB_IDS_TABLE})"
+            )
+            conn.commit()
+            return max(cursor_ent.rowcount, 0) + max(cursor_ext.rowcount, 0)
+
+    def close(self) -> None:
+        """Close this instance's current-thread SQLite connection."""
+        with self._lock:
+            conn = getattr(self._local, "conn", None)
+            if conn is not None:
+                conn.close()
+                self._local.conn = None
+
     # ------------------------------------------------------------------
     # Statistics
     # ------------------------------------------------------------------
 
-    def stats(self) -> dict:
-        """Index statistics: total entities, total extractions, unique types, etc."""
+    def stats(self, allowed_job_ids: Optional[list[str]] = None) -> dict:
+        """Index statistics: total entities, total extractions, unique types, etc.
+
+        Args:
+            allowed_job_ids: When provided, restrict aggregates to these job IDs
+                only (multi-tenant isolation). ``None`` = global (single-tenant /
+                platform-admin). Empty list = zero stats (fail-closed).
+        """
+        if allowed_job_ids is not None and not allowed_job_ids:
+            return {
+                "total_entities": 0,
+                "total_extractions": 0,
+                "unique_entity_types": 0,
+                "unique_field_names": 0,
+                "jobs_indexed": 0,
+            }
+
+        job_filter_sql = ""
+        job_filter_params: list = []
+        if allowed_job_ids is not None:
+            job_filter_sql = (
+                f" WHERE job_id IN (SELECT job_id FROM {_ALLOWED_JOB_IDS_TABLE})"
+            )
+
         with self._lock:
             conn = self._get_conn()
+            if allowed_job_ids is not None:
+                _set_allowed_job_ids(conn, allowed_job_ids)
 
             ent_count = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM indexed_entities"
+                f"SELECT COUNT(*) AS cnt FROM indexed_entities{job_filter_sql}",
+                job_filter_params,
             ).fetchone()["cnt"]
 
             ext_count = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM indexed_extractions"
+                f"SELECT COUNT(*) AS cnt FROM indexed_extractions{job_filter_sql}",
+                job_filter_params,
             ).fetchone()["cnt"]
 
             unique_types = conn.execute(
-                "SELECT COUNT(DISTINCT entity_type) AS cnt FROM indexed_entities"
+                "SELECT COUNT(DISTINCT entity_type) AS cnt "
+                f"FROM indexed_entities{job_filter_sql}",
+                job_filter_params,
             ).fetchone()["cnt"]
 
             unique_fields = conn.execute(
-                "SELECT COUNT(DISTINCT field_name) AS cnt FROM indexed_extractions"
+                "SELECT COUNT(DISTINCT field_name) AS cnt "
+                f"FROM indexed_extractions{job_filter_sql}",
+                job_filter_params,
             ).fetchone()["cnt"]
 
-            # Union of distinct job_ids from both tables
-            jobs_indexed = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM ("
-                "  SELECT DISTINCT job_id FROM indexed_entities"
-                "  UNION"
-                "  SELECT DISTINCT job_id FROM indexed_extractions"
-                ")"
-            ).fetchone()["cnt"]
+            # Union of distinct job_ids from both tables (scoped when filtered)
+            if job_filter_sql:
+                jobs_indexed = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM ("
+                    "  SELECT DISTINCT job_id FROM indexed_entities"
+                    f"  WHERE job_id IN (SELECT job_id FROM {_ALLOWED_JOB_IDS_TABLE})"
+                    "  UNION"
+                    "  SELECT DISTINCT job_id FROM indexed_extractions"
+                    f"  WHERE job_id IN (SELECT job_id FROM {_ALLOWED_JOB_IDS_TABLE})"
+                    ")",
+                ).fetchone()["cnt"]
+            else:
+                jobs_indexed = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM ("
+                    "  SELECT DISTINCT job_id FROM indexed_entities"
+                    "  UNION"
+                    "  SELECT DISTINCT job_id FROM indexed_extractions"
+                    ")"
+                ).fetchone()["cnt"]
 
         return {
             "total_entities": ent_count,

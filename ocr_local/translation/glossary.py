@@ -2,8 +2,9 @@
 
 Glossary entries are tenant-scoped term overrides applied to translation
 output before sidecar serialization.  Literal entries do exact substring
-replacement (case-sensitive or insensitive); regex entries use ``re.sub``
-with compile-time validation and a runtime char-budget guard.
+replacement (case-sensitive or insensitive); regex entries use the bounded
+third-party ``regex`` engine with compile-time validation, a match timeout,
+and a runtime char-budget guard.
 
 Pure module: no Django imports at top level.  ``load_tenant_glossary``
 performs a lazy Django import inside the function body so this module
@@ -14,14 +15,21 @@ Custody emission: callers wrap span-level translation and emit
 ``GLOSSARY_APPLIED`` once per span when ``apply_glossary`` returns at
 least one hit.  See ``ocr_local.translation.custody_adapter.emit_glossary_applied``.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Iterable
+
+try:
+    import regex as _regex  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - depends on the runtime image
+    _regex = None
 
 if TYPE_CHECKING:
     from ocr_local.features.custody import CustodyChain
@@ -43,6 +51,17 @@ logger = logging.getLogger(__name__)
 # Cap input length per regex apply call to prevent ReDoS-style abuse.
 # 200K chars is well above any realistic OCR span (~1-2K chars).
 _REGEX_INPUT_CHAR_LIMIT = 200_000
+# ``regex`` enforces this timeout inside its matching engine, including
+# catastrophic-backtracking paths that cannot be interrupted by stdlib re.
+_REGEX_TIMEOUT_SECONDS = 0.1
+# Bound the complete regex glossary pass as well as each individual engine
+# call.  Otherwise 500 entries could each consume the per-entry timeout.
+_REGEX_APPLY_BUDGET_SECONDS = 1.0
+_MAX_GLOSSARY_ENTRIES = 10_000
+_MAX_GLOSSARY_ENTRIES_PER_APPLY = 500
+_MAX_GLOSSARY_HITS_PER_ENTRY = 10_000
+_MAX_GLOSSARY_HITS_PER_APPLY = 20_000
+_GLOSSARY_OUTPUT_CHAR_LIMIT = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -114,6 +133,13 @@ def load_tenant_glossary(
         target_lang=target_lang,
     ).order_by("priority", "id")
 
+    rows = list(queryset[: _MAX_GLOSSARY_ENTRIES + 1])
+    if len(rows) > _MAX_GLOSSARY_ENTRIES:
+        raise RuntimeError(
+            "tenant glossary exceeds the configured safety limit; "
+            "reduce entries before translation"
+        )
+
     return [
         GlossaryEntry(
             term_id=str(row.pk),
@@ -126,7 +152,7 @@ def load_tenant_glossary(
             is_regex=bool(row.is_regex),
             priority=int(row.priority),
         )
-        for row in queryset
+        for row in rows
     ]
 
 
@@ -151,10 +177,21 @@ def _literal_apply(
 
     out_parts: list[str] = []
     cursor = 0
+    output_chars = 0
     for match in re.finditer(needle, text, flags=flags):
         start, end = match.start(), match.end()
         out_parts.append(text[cursor:start])
         out_parts.append(entry.target_term)
+        output_chars += (start - cursor) + len(entry.target_term)
+        if (
+            len(hits) >= _MAX_GLOSSARY_HITS_PER_ENTRY
+            or output_chars + (len(text) - end) > _GLOSSARY_OUTPUT_CHAR_LIMIT
+        ):
+            logger.warning(
+                "Skipping glossary entry %s: hit/output safety limit exceeded",
+                entry.term_id,
+            )
+            return text, []
         hits.append(
             GlossaryHit(
                 term_id=entry.term_id,
@@ -167,6 +204,14 @@ def _literal_apply(
         )
         cursor = end
     out_parts.append(text[cursor:])
+    output_chars += len(text) - cursor
+    if output_chars > _GLOSSARY_OUTPUT_CHAR_LIMIT:
+        logger.warning(
+            "Skipping glossary entry %s: output exceeds %d chars",
+            entry.term_id,
+            _GLOSSARY_OUTPUT_CHAR_LIMIT,
+        )
+        return text, []
     return "".join(out_parts), hits
 
 
@@ -174,14 +219,25 @@ def _regex_apply(
     text: str,
     entry: GlossaryEntry,
     span_index: int,
+    *,
+    deadline: float | None = None,
 ) -> tuple[str, list[GlossaryHit]]:
     """Apply a regex glossary entry; return (new_text, hits).
 
-    Skips silently (and logs at WARNING) when the pattern fails to
-    compile.  Skips when the input is larger than ``_REGEX_INPUT_CHAR_LIMIT``
-    to bound worst-case backtracking; in that case no hits are recorded
-    and the original text is returned unchanged.
+    Regex matching is delegated to the third-party ``regex`` engine, which
+    supports a hard timeout for each matching operation.  The entry is
+    fail-closed when the bounded engine is unavailable, the pattern fails to
+    compile, the input exceeds ``_REGEX_INPUT_CHAR_LIMIT``, or matching times
+    out.  In all of those cases the original text and no hits are returned;
+    a timeout can therefore never expose a partial replacement.
     """
+    if _regex is None:
+        logger.warning(
+            "Skipping regex glossary entry %s: bounded regex engine unavailable",
+            entry.term_id,
+        )
+        return text, []
+
     if len(text) > _REGEX_INPUT_CHAR_LIMIT:
         logger.warning(
             "Skipping regex glossary entry %s: input exceeds %d chars",
@@ -190,10 +246,10 @@ def _regex_apply(
         )
         return text, []
 
-    flags = 0 if entry.case_sensitive else re.IGNORECASE
+    flags = 0 if entry.case_sensitive else _regex.IGNORECASE
     try:
-        compiled = re.compile(entry.source_term, flags=flags)
-    except re.error as exc:
+        compiled = _regex.compile(entry.source_term, flags=flags)
+    except _regex.error as exc:
         logger.warning(
             "Skipping invalid regex glossary entry %s: %s",
             entry.term_id,
@@ -204,27 +260,65 @@ def _regex_apply(
     hits: list[GlossaryHit] = []
     out_parts: list[str] = []
     cursor = 0
-    for match in compiled.finditer(text):
-        start, end = match.start(), match.end()
-        # Allow back-references via match.expand for parity with re.sub.
-        try:
-            replaced = match.expand(entry.target_term)
-        except (re.error, IndexError):
-            replaced = entry.target_term
-        out_parts.append(text[cursor:start])
-        out_parts.append(replaced)
-        hits.append(
-            GlossaryHit(
-                term_id=entry.term_id,
-                source_term=entry.source_term,
-                target_term=replaced,
-                position_start=start,
-                position_end=end,
-                span_index=span_index,
+    output_chars = 0
+    try:
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning(
+                    "Skipping regex glossary entry %s: aggregate match budget exhausted",
+                    entry.term_id,
+                )
+                return text, []
+            match_timeout = min(_REGEX_TIMEOUT_SECONDS, remaining)
+        else:
+            match_timeout = _REGEX_TIMEOUT_SECONDS
+        for match in compiled.finditer(text, timeout=match_timeout):
+            start, end = match.start(), match.end()
+            # Allow back-references via match.expand for parity with re.sub.
+            try:
+                replaced = match.expand(entry.target_term)
+            except (_regex.error, IndexError):
+                replaced = entry.target_term
+            out_parts.append(text[cursor:start])
+            out_parts.append(replaced)
+            output_chars += (start - cursor) + len(replaced)
+            if (
+                len(hits) >= _MAX_GLOSSARY_HITS_PER_ENTRY
+                or output_chars + (len(text) - end) > _GLOSSARY_OUTPUT_CHAR_LIMIT
+            ):
+                logger.warning(
+                    "Skipping regex glossary entry %s: hit/output safety limit exceeded",
+                    entry.term_id,
+                )
+                return text, []
+            hits.append(
+                GlossaryHit(
+                    term_id=entry.term_id,
+                    source_term=entry.source_term,
+                    target_term=replaced,
+                    position_start=start,
+                    position_end=end,
+                    span_index=span_index,
+                )
             )
+            cursor = end
+    except TimeoutError:
+        logger.warning(
+            "Skipping regex glossary entry %s: match exceeded %.3f seconds",
+            entry.term_id,
+            _REGEX_TIMEOUT_SECONDS,
         )
-        cursor = end
+        return text, []
     out_parts.append(text[cursor:])
+    output_chars += len(text) - cursor
+    if output_chars > _GLOSSARY_OUTPUT_CHAR_LIMIT:
+        logger.warning(
+            "Skipping regex glossary entry %s: output exceeds %d chars",
+            entry.term_id,
+            _GLOSSARY_OUTPUT_CHAR_LIMIT,
+        )
+        return text, []
     return "".join(out_parts), hits
 
 
@@ -250,13 +344,31 @@ def apply_glossary(
     if not entries or not text:
         return text, []
 
+    if len(entries) > _MAX_GLOSSARY_ENTRIES_PER_APPLY:
+        raise RuntimeError(
+            "glossary application exceeds the per-span safety limit; "
+            "narrow the language-pair glossary"
+        )
+
+    original_text = text
     current = text
     all_hits: list[GlossaryHit] = []
+    regex_deadline = time.monotonic() + _REGEX_APPLY_BUDGET_SECONDS
     for entry in entries:
         if entry.is_regex:
-            current, hits = _regex_apply(current, entry, span_index)
+            current, hits = _regex_apply(
+                current,
+                entry,
+                span_index,
+                deadline=regex_deadline,
+            )
         else:
             current, hits = _literal_apply(current, entry, span_index)
+        if len(all_hits) + len(hits) > _MAX_GLOSSARY_HITS_PER_APPLY:
+            logger.warning(
+                "Reverting glossary application: aggregate hit limit exceeded"
+            )
+            return original_text, []
         all_hits.extend(hits)
     return current, all_hits
 
@@ -417,7 +529,7 @@ def to_ct2_forbid_tokens(
         # Optional inline forbid directive in entry-style API:
         notes = getattr(entry, "notes", None)
         if isinstance(notes, str) and notes.startswith("forbid:"):
-            for tok in notes[len("forbid:"):].split(","):
+            for tok in notes[len("forbid:") :].split(","):
                 tok = tok.strip()
                 if tok:
                     blocked.add(tok)
@@ -464,9 +576,7 @@ def to_llm_prompt_block(
     lines: list[str] = [header]
     for entry in truncated:
         if entry.is_regex:
-            lines.append(
-                f'- (regex) "{entry.source_term}" -> "{entry.target_term}"'
-            )
+            lines.append(f'- (regex) "{entry.source_term}" -> "{entry.target_term}"')
         else:
             lines.append(f'- "{entry.source_term}" -> "{entry.target_term}"')
     if overflow > 0:

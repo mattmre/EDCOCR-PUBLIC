@@ -66,9 +66,9 @@ class TestRegistryCompleteness:
 
     def test_every_language_has_fasttext_codes(self):
         for code, entry in LANGUAGE_REGISTRY.items():
-            assert len(entry.fasttext_codes) >= 1, (
-                f"Language {code} has no FastText codes"
-            )
+            assert (
+                len(entry.fasttext_codes) >= 1
+            ), f"Language {code} has no FastText codes"
 
     def test_every_language_has_font(self):
         for code, entry in LANGUAGE_REGISTRY.items():
@@ -90,6 +90,7 @@ class TestLangMappingCoverage:
     def _full_mapping(self):
         """Build mapping from the full registry, not tier-filtered."""
         from scripts.validate_languages import _build_full_lang_mapping
+
         return _build_full_lang_mapping()
 
     def test_all_fasttext_codes_mapped(self):
@@ -136,12 +137,16 @@ class TestCheckFont:
             font_path.write_bytes(b"fake-font-data")
 
             entry = LanguageEntry(
-                "en", "English", ("en",), "latin", "core",
-                "eng", "en", "NotoSans-Regular.ttf",
+                "en",
+                "English",
+                ("en",),
+                "latin",
+                "core",
+                "eng",
+                "en",
+                "NotoSans-Regular.ttf",
             )
-            with mock.patch(
-                "scripts.validate_languages.NOTO_FONT_DIR", tmpdir
-            ):
+            with mock.patch("scripts.validate_languages.NOTO_FONT_DIR", tmpdir):
                 result = check_font(entry)
 
             assert result.has_mapping is True
@@ -151,12 +156,16 @@ class TestCheckFont:
     def test_font_missing_when_file_absent(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             entry = LanguageEntry(
-                "en", "English", ("en",), "latin", "core",
-                "eng", "en", "NotoSans-Regular.ttf",
+                "en",
+                "English",
+                ("en",),
+                "latin",
+                "core",
+                "eng",
+                "en",
+                "NotoSans-Regular.ttf",
             )
-            with mock.patch(
-                "scripts.validate_languages.NOTO_FONT_DIR", tmpdir
-            ):
+            with mock.patch("scripts.validate_languages.NOTO_FONT_DIR", tmpdir):
                 result = check_font(entry)
 
             assert result.has_mapping is True
@@ -165,7 +174,11 @@ class TestCheckFont:
 
     def test_font_no_mapping_when_empty(self):
         entry = LanguageEntry(
-            "x", "X Lang", ("x",), "latin", "core",
+            "x",
+            "X Lang",
+            ("x",),
+            "latin",
+            "core",
             font="",
         )
         result = check_font(entry)
@@ -175,12 +188,14 @@ class TestCheckFont:
     def test_font_result_contains_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             entry = LanguageEntry(
-                "ar", "Arabic", ("ar",), "arabic", "core",
+                "ar",
+                "Arabic",
+                ("ar",),
+                "arabic",
+                "core",
                 font="NotoSansArabic-Regular.ttf",
             )
-            with mock.patch(
-                "scripts.validate_languages.NOTO_FONT_DIR", tmpdir
-            ):
+            with mock.patch("scripts.validate_languages.NOTO_FONT_DIR", tmpdir):
                 result = check_font(entry)
 
             assert "NotoSansArabic-Regular.ttf" in result.file_path
@@ -191,9 +206,7 @@ class TestCheckFont:
             font_path.write_bytes(b"fake-cjk-font")
 
             entry = LANGUAGE_REGISTRY["ch"]
-            with mock.patch(
-                "scripts.validate_languages.NOTO_FONT_DIR", tmpdir
-            ):
+            with mock.patch("scripts.validate_languages.NOTO_FONT_DIR", tmpdir):
                 result = check_font(entry)
 
             assert result.status == "ok"
@@ -217,11 +230,13 @@ class TestCheckModel:
             model_file.write_bytes(b"x" * 2048)
 
             entry = LanguageEntry(
-                "en", "English", ("en",), "latin", "core",
+                "en",
+                "English",
+                ("en",),
+                "latin",
+                "core",
             )
-            with mock.patch(
-                "scripts.validate_languages.PADDLEOCR_MODEL_DIR", tmpdir
-            ):
+            with mock.patch("scripts.validate_languages.PADDLEOCR_MODEL_DIR", tmpdir):
                 result = check_model(entry)
 
             assert result.dir_exists is True
@@ -232,7 +247,11 @@ class TestCheckModel:
     def test_model_missing_when_no_dir(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             entry = LanguageEntry(
-                "en", "English", ("en",), "latin", "core",
+                "en",
+                "English",
+                ("en",),
+                "latin",
+                "core",
             )
             with mock.patch(
                 "scripts.validate_languages.PADDLEOCR_MODEL_DIR",
@@ -250,11 +269,13 @@ class TestCheckModel:
             rec_dir.mkdir(parents=True)
 
             entry = LanguageEntry(
-                "en", "English", ("en",), "latin", "core",
+                "en",
+                "English",
+                ("en",),
+                "latin",
+                "core",
             )
-            with mock.patch(
-                "scripts.validate_languages.PADDLEOCR_MODEL_DIR", tmpdir
-            ):
+            with mock.patch("scripts.validate_languages.PADDLEOCR_MODEL_DIR", tmpdir):
                 result = check_model(entry)
 
             assert result.status == "missing"
@@ -268,11 +289,13 @@ class TestCheckModel:
             model_file.write_bytes(b"")
 
             entry = LanguageEntry(
-                "en", "English", ("en",), "latin", "core",
+                "en",
+                "English",
+                ("en",),
+                "latin",
+                "core",
             )
-            with mock.patch(
-                "scripts.validate_languages.PADDLEOCR_MODEL_DIR", tmpdir
-            ):
+            with mock.patch("scripts.validate_languages.PADDLEOCR_MODEL_DIR", tmpdir):
                 result = check_model(entry)
 
             assert result.has_zero_size_files is True
@@ -286,11 +309,13 @@ class TestCheckModel:
             (nested / "model.pdparams").write_bytes(b"x" * 4096)
 
             entry = LanguageEntry(
-                "en", "English", ("en",), "latin", "core",
+                "en",
+                "English",
+                ("en",),
+                "latin",
+                "core",
             )
-            with mock.patch(
-                "scripts.validate_languages.PADDLEOCR_MODEL_DIR", tmpdir
-            ):
+            with mock.patch("scripts.validate_languages.PADDLEOCR_MODEL_DIR", tmpdir):
                 result = check_model(entry)
 
             assert result.dir_exists is True
@@ -298,17 +323,19 @@ class TestCheckModel:
 
     def test_model_result_has_size_info(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            rec_dir = Path(tmpdir) / "rec" / "fr_model"
+            rec_dir = Path(tmpdir) / "rec" / "latin_model"
             rec_dir.mkdir(parents=True)
             (rec_dir / "a.bin").write_bytes(b"x" * 1024)
             (rec_dir / "b.bin").write_bytes(b"y" * 2048)
 
             entry = LanguageEntry(
-                "fr", "French", ("fr",), "latin", "core",
+                "fr",
+                "French",
+                ("fr",),
+                "latin",
+                "core",
             )
-            with mock.patch(
-                "scripts.validate_languages.PADDLEOCR_MODEL_DIR", tmpdir
-            ):
+            with mock.patch("scripts.validate_languages.PADDLEOCR_MODEL_DIR", tmpdir):
                 result = check_model(entry)
 
             assert result.file_count == 2
@@ -336,28 +363,34 @@ class TestCheckMapping:
         for code, entry in LANGUAGE_REGISTRY.items():
             if entry.tier == "core":
                 result = check_mapping(entry)
-                assert result.has_lang_mapping is True, (
-                    f"Core language '{code}' has broken FastText mapping"
-                )
+                assert (
+                    result.has_lang_mapping is True
+                ), f"Core language '{code}' has broken FastText mapping"
 
     def test_all_extended_languages_have_valid_mappings(self):
         import language_config
+
         saved = language_config.OCR_LANGUAGE_TIERS
         try:
             language_config.OCR_LANGUAGE_TIERS = ["core", "extended"]
             for code, entry in LANGUAGE_REGISTRY.items():
                 if entry.tier == "extended":
                     result = check_mapping(entry)
-                    assert result.has_lang_mapping is True, (
-                        f"Extended language '{code}' has broken FastText mapping"
-                    )
+                    assert (
+                        result.has_lang_mapping is True
+                    ), f"Extended language '{code}' has broken FastText mapping"
         finally:
             language_config.OCR_LANGUAGE_TIERS = saved
 
     def test_missing_tesseract_code_reported(self):
         entry = LanguageEntry(
-            "x", "X Lang", ("x",), "latin", "core",
-            tesseract_code="", easyocr_code="x",
+            "x",
+            "X Lang",
+            ("x",),
+            "latin",
+            "core",
+            tesseract_code="",
+            easyocr_code="x",
         )
         # Patch the registry to include this entry for mapping lookup
         with mock.patch(
@@ -371,8 +404,13 @@ class TestCheckMapping:
 
     def test_missing_easyocr_code_reported(self):
         entry = LanguageEntry(
-            "y", "Y Lang", ("y",), "latin", "core",
-            tesseract_code="ylang", easyocr_code="",
+            "y",
+            "Y Lang",
+            ("y",),
+            "latin",
+            "core",
+            tesseract_code="ylang",
+            easyocr_code="",
         )
         with mock.patch(
             "scripts.validate_languages._build_full_lang_mapping",
@@ -384,8 +422,13 @@ class TestCheckMapping:
 
     def test_broken_mapping_when_fasttext_not_in_mapping(self):
         entry = LanguageEntry(
-            "z", "Z Lang", ("zz",), "latin", "core",
-            tesseract_code="zlang", easyocr_code="z",
+            "z",
+            "Z Lang",
+            ("zz",),
+            "latin",
+            "core",
+            tesseract_code="zlang",
+            easyocr_code="z",
         )
         with mock.patch(
             "scripts.validate_languages._build_full_lang_mapping",
@@ -397,8 +440,13 @@ class TestCheckMapping:
 
     def test_broken_mapping_when_fasttext_maps_wrong(self):
         entry = LanguageEntry(
-            "a", "A Lang", ("aa",), "latin", "core",
-            tesseract_code="alang", easyocr_code="a",
+            "a",
+            "A Lang",
+            ("aa",),
+            "latin",
+            "core",
+            tesseract_code="alang",
+            easyocr_code="a",
         )
         with mock.patch(
             "scripts.validate_languages._build_full_lang_mapping",
@@ -419,9 +467,7 @@ class TestCheckMappingCollisions:
 
     def test_no_collisions_in_real_registry(self):
         collisions = check_mapping_collisions()
-        assert collisions == [], (
-            f"Found FastText code collisions: {collisions}"
-        )
+        assert collisions == [], f"Found FastText code collisions: {collisions}"
 
 
 # ---------------------------------------------------------------------------
@@ -435,9 +481,7 @@ class TestFindUnmappedCodes:
     def test_no_unmapped_codes_across_all_tiers(self):
         """All FastText codes in the full registry should be mapped."""
         unmapped = find_unmapped_fasttext_codes()
-        assert unmapped == [], (
-            f"Found unmapped FastText codes: {unmapped}"
-        )
+        assert unmapped == [], f"Found unmapped FastText codes: {unmapped}"
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +517,20 @@ class TestRunValidation:
         assert not report.font_results
         assert not report.mapping_results
 
+    def test_missing_models_fail_requested_model_validation(self, tmp_path):
+        """A model validation gate cannot pass while assets are absent."""
+        missing_root = tmp_path / "missing-model-root"
+        with mock.patch(
+            "scripts.validate_languages.PADDLEOCR_MODEL_DIR", str(missing_root)
+        ), mock.patch("scripts.validate_languages.Path.is_file", return_value=False):
+            # Tesseract-only languages also need absent traineddata. The
+            # runtime image intentionally installs those outside Paddle home.
+            report = run_validation(["models"])
+
+        assert report.models_missing == len(LANGUAGE_REGISTRY)
+        assert report.all_passed is False
+        assert report.summary_line.startswith("45/45 languages checked")
+
     def test_mappings_only(self):
         report = run_validation(["mappings"])
         assert "mappings" in report.checks_performed
@@ -484,13 +542,14 @@ class TestRunValidation:
     def test_mappings_pass_for_all_languages(self):
         """All 45 languages should have correct mappings."""
         import language_config
+
         saved = language_config.OCR_LANGUAGE_TIERS
         try:
             language_config.OCR_LANGUAGE_TIERS = ["core", "extended"]
             report = run_validation(["mappings"])
-            assert report.mappings_broken == 0, (
-                f"Found {report.mappings_broken} broken mappings"
-            )
+            assert (
+                report.mappings_broken == 0
+            ), f"Found {report.mappings_broken} broken mappings"
             assert report.mapping_collisions == []
         finally:
             language_config.OCR_LANGUAGE_TIERS = saved
@@ -498,7 +557,7 @@ class TestRunValidation:
     def test_summary_line_populated(self):
         report = run_validation(["mappings"])
         assert "45" in report.summary_line
-        assert "validated" in report.summary_line
+        assert "languages checked" in report.summary_line
 
     def test_report_has_correct_warning_count(self):
         report = run_validation(["mappings"])
@@ -599,11 +658,15 @@ class TestCLIArgParsing:
             _parse_args(["--check", "invalid"])
 
     def test_combined_args(self):
-        args = _parse_args([
-            "--check", "fonts",
-            "--output-report", "/tmp/report.json",
-            "-v",
-        ])
+        args = _parse_args(
+            [
+                "--check",
+                "fonts",
+                "--output-report",
+                "/tmp/report.json",
+                "-v",
+            ]
+        )
         assert args.check == "fonts"
         assert args.output_report == "/tmp/report.json"
         assert args.verbose is True
@@ -626,17 +689,22 @@ class TestMainFunction:
         exit_code = main(["--check", "fonts"])
         assert exit_code == 0
 
-    def test_main_returns_zero_on_all(self):
+    def test_main_all_reflects_environment_validation(self):
+        report = run_validation(["all"])
         exit_code = main(["--check", "all"])
-        assert exit_code == 0
+        assert exit_code == (0 if report.all_passed else 1)
 
     def test_main_writes_json_report(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             json_path = os.path.join(tmpdir, "report.json")
-            exit_code = main([
-                "--check", "mappings",
-                "--output-report", json_path,
-            ])
+            exit_code = main(
+                [
+                    "--check",
+                    "mappings",
+                    "--output-report",
+                    json_path,
+                ]
+            )
             assert exit_code == 0
             assert os.path.isfile(json_path)
 
@@ -649,11 +717,16 @@ class TestMainFunction:
     def test_main_json_report_nested_dir(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             json_path = os.path.join(tmpdir, "sub", "dir", "report.json")
-            exit_code = main([
-                "--check", "all",
-                "--output-report", json_path,
-            ])
-            assert exit_code == 0
+            report = run_validation(["all"])
+            exit_code = main(
+                [
+                    "--check",
+                    "all",
+                    "--output-report",
+                    json_path,
+                ]
+            )
+            assert exit_code == (0 if report.all_passed else 1)
             assert os.path.isfile(json_path)
 
     def test_main_verbose_flag_accepted(self):
@@ -672,16 +745,29 @@ class TestJSONReportStructure:
     def test_json_has_required_fields(self):
         report = run_validation(["all"])
         from dataclasses import asdict
+
         data = asdict(report)
 
         required_fields = [
-            "timestamp", "checks_performed", "total_languages",
-            "fonts_total", "fonts_ok", "fonts_missing",
-            "models_total", "models_ok", "models_missing", "models_corrupt",
-            "mappings_total", "mappings_ok", "mappings_incomplete",
-            "mappings_broken", "mapping_collisions",
+            "timestamp",
+            "checks_performed",
+            "total_languages",
+            "fonts_total",
+            "fonts_ok",
+            "fonts_missing",
+            "models_total",
+            "models_ok",
+            "models_missing",
+            "models_corrupt",
+            "mappings_total",
+            "mappings_ok",
+            "mappings_incomplete",
+            "mappings_broken",
+            "mapping_collisions",
             "unmapped_fasttext_codes",
-            "all_passed", "warnings", "summary_line",
+            "all_passed",
+            "warnings",
+            "summary_line",
         ]
         for field_name in required_fields:
             assert field_name in data, f"Missing field: {field_name}"
@@ -689,6 +775,7 @@ class TestJSONReportStructure:
     def test_json_serializable(self):
         report = run_validation(["all"])
         from dataclasses import asdict
+
         data = asdict(report)
         json_str = json.dumps(data, indent=2, default=str)
         loaded = json.loads(json_str)
@@ -758,11 +845,13 @@ class TestEdgeCases:
             (rec_dir / "tiny.bin").write_bytes(b"x" * 10)
 
             entry = LanguageEntry(
-                "xx", "TestLang", ("xx",), "latin", "core",
+                "xx",
+                "TestLang",
+                ("xx",),
+                "latin",
+                "core",
             )
-            with mock.patch(
-                "scripts.validate_languages.PADDLEOCR_MODEL_DIR", tmpdir
-            ):
+            with mock.patch("scripts.validate_languages.PADDLEOCR_MODEL_DIR", tmpdir):
                 result = check_model(entry)
 
             # Total size < MODEL_MIN_SIZE_BYTES

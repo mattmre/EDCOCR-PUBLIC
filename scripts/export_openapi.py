@@ -6,6 +6,7 @@ Usage:
     python scripts/export_openapi.py --output api.json  # custom output path
     python scripts/export_openapi.py --yaml             # YAML format (requires pyyaml)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -16,6 +17,8 @@ import sys
 # Enable all feature gates so the spec includes every endpoint.
 os.environ.setdefault("ENABLE_MULTITENANCY", "true")
 os.environ.setdefault("ENABLE_DASHBOARD", "true")
+os.environ.setdefault("ENABLE_TRANSLATION_API", "true")
+os.environ.setdefault("OCR_FEDERATION_CUSTODY_ENABLED", "true")
 os.environ.setdefault("OCR_API_KEY", "export-dummy-key")
 os.environ.setdefault("OCR_OUTPUT_DIR", "/tmp/ocr_output")
 

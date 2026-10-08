@@ -1,6 +1,6 @@
 {{- if and .Values.federation.enabled .Values.federation.reconciler.enabled }}
 # =============================================================================
-# Federation Reconciler RBAC (item C2)
+# Federation Reconciler RBAC (Plan C Phase 1, item C2)
 #
 # Minimal namespace-scoped RBAC for the federation reconciler. The reconciler
 # only needs read access to its own ConfigMap registry and any per-peer

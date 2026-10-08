@@ -30,7 +30,8 @@ def get_paddle_version():
         version_str = getattr(paddle, "__version__", "0.0.0")
         major = int(version_str.split(".")[0])
         return major
-    except (ImportError, ValueError, IndexError):
+    except (ImportError, AttributeError, OSError, ValueError, IndexError) as exc:
+        logger.warning("PaddlePaddle unavailable or unusable: %s", exc)
         return None
 
 

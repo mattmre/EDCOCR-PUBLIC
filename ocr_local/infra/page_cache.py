@@ -1,14 +1,14 @@
-"""Memory-mapped page caching for the OCR pipeline.
+"""In-process LRU page cache for the OCR pipeline (S2-05 / R3 page_cache).
 
 Provides an LRU page cache that avoids re-processing pages already seen
-during a pipeline run.  The :class:`PageCache` supports configurable
-maximum size (both byte-count and entry-count), optional per-entry TTL,
-and pluggable eviction strategies.
+during a pipeline run.  The :class:`PageCache` stores ``bytes`` payloads
+in heap memory (not OS mmap).  Configurable maximum size (byte-count and
+entry-count), optional per-entry TTL, and LRU eviction.
 
 Thread safety is guaranteed by a :class:`threading.Lock` around every
 mutating operation.
 
-Environment Variables:
+Environment Variables (read by pipeline constructor callers; defaults below):
     PAGE_CACHE_MAX_SIZE_BYTES (int):
         Maximum aggregate size of cached data in bytes.
         Default: ``536870912`` (512 MiB).
@@ -185,16 +185,13 @@ class PageCache:
         now = time.time()
 
         with self._lock:
-            # If updating an existing key, remove old size first
+            # S2-05: fully remove existing entry first so eviction cannot
+            # double-subtract size (pre-subtract + _remove_entry) and undercount.
             if key in self._entries:
-                self._current_size_bytes -= self._entries[key].size_bytes
+                self._remove_entry(key)
 
             # Evict until there is room
-            while (
-                self._entries
-                and key not in self._entries
-                and len(self._entries) >= self._max_entries
-            ):
+            while self._entries and len(self._entries) >= self._max_entries:
                 self._evict()
 
             while (
@@ -202,6 +199,19 @@ class PageCache:
                 and (self._current_size_bytes + size) > self._max_size_bytes
             ):
                 self._evict()
+
+            # If still no room after eviction, refuse (should not happen when
+            # size <= max_size_bytes unless max_entries is 0).
+            if (self._current_size_bytes + size) > self._max_size_bytes:
+                logger.warning(
+                    "Cache entry %s (%d bytes) cannot fit after eviction "
+                    "(current=%d max=%d); skipping",
+                    key,
+                    size,
+                    self._current_size_bytes,
+                    self._max_size_bytes,
+                )
+                return False
 
             entry = CacheEntry(
                 key=key,
@@ -215,6 +225,9 @@ class PageCache:
             )
             self._entries[key] = entry
             self._current_size_bytes += size
+            # Clamp against numerical drift (never go negative).
+            if self._current_size_bytes < 0:
+                self._current_size_bytes = 0
 
             logger.debug("Cache PUT %s (%d bytes)", key, size)
             return True
@@ -317,3 +330,5 @@ class PageCache:
         entry = self._entries.pop(key, None)
         if entry is not None:
             self._current_size_bytes -= entry.size_bytes
+            if self._current_size_bytes < 0:
+                self._current_size_bytes = 0

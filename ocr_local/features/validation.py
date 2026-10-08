@@ -8,13 +8,16 @@ Output: EXPORT/VALIDATION/<subfolder>/<document_name>.validation.json
 
 import datetime
 import hashlib
-import json
 import logging
 import os
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
-from ocr_distributed.ocr_utils import build_sidecar_base_name
+from ocr_distributed.ocr_utils import (
+    build_sidecar_base_name,
+    resolve_safe_output_subfolder,
+    write_json_atomic,
+)
 
 __all__ = [
     "PageValidation",
@@ -39,6 +42,13 @@ class PageValidation:
     text_length: int = 0
     has_text: bool = False
     status: Literal["pending", "ok", "fallback", "image_only", "failed", "unknown"] = "pending"
+    detected_language: str = ""
+    model_language: str = ""
+    needs_review: bool = False
+    review_reasons: list = field(default_factory=list)
+    geometry_issues: list = field(default_factory=list)
+    candidate_reviews: list = field(default_factory=list)
+    independent_coverage: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -58,6 +68,7 @@ class DocumentValidation:
     pages_with_text: int = 0
     pages_image_only: int = 0
     pages_failed: int = 0
+    pages_needing_review: int = 0
     text_extraction_rate: float = 0.0
     total_text_length: int = 0
     ocr_methods_used: list = field(default_factory=list)
@@ -74,6 +85,16 @@ def classify_quality(doc_val: DocumentValidation) -> str:
     """
     rate = doc_val.text_extraction_rate
     conf = doc_val.overall_confidence
+
+    # Mean model confidence is neither completeness nor accuracy proof.
+    # Explicit page defects veto a positive document disposition.
+    if (
+        not doc_val.page_count_match
+        or doc_val.pages_failed
+        or doc_val.pages_image_only
+        or doc_val.pages_needing_review
+    ):
+        return "review_required"
 
     if rate >= 1.0 and conf >= 0.85:
         return "high_quality"
@@ -105,6 +126,7 @@ def finalize_validation(doc_val: DocumentValidation) -> DocumentValidation:
     doc_val.pages_with_text = 0
     doc_val.pages_image_only = 0
     doc_val.pages_failed = 0
+    doc_val.pages_needing_review = 0
     doc_val.total_text_length = 0
 
     for page_dict in doc_val.pages:
@@ -123,7 +145,9 @@ def finalize_validation(doc_val: DocumentValidation) -> DocumentValidation:
             doc_val.pages_image_only += 1
         if page.status == "failed":
             doc_val.pages_failed += 1
-        if page.ocr_confidence > 0:
+        if page.needs_review or page.status in {"unknown", "pending"}:
+            doc_val.pages_needing_review += 1
+        if 0.0 <= page.ocr_confidence <= 1.0:
             total_conf += page.ocr_confidence
             conf_count += 1
         doc_val.total_text_length += page.text_length
@@ -163,18 +187,7 @@ def write_validation_json(
     """
     try:
         validation_dir = os.path.join(output_folder, "EXPORT", "VALIDATION")
-        target_dir = (
-            os.path.join(validation_dir, subfolder)
-            if subfolder and subfolder != "."
-            else validation_dir
-        )
-        # Path traversal protection
-        resolved = os.path.realpath(target_dir)
-        if not resolved.startswith(os.path.realpath(validation_dir)):
-            logger.error(
-                "Path traversal blocked in validation output: %s", subfolder
-            )
-            return None
+        target_dir = resolve_safe_output_subfolder(validation_dir, subfolder)
         os.makedirs(target_dir, exist_ok=True)
 
         base_name = build_sidecar_base_name(doc_val.source_file)
@@ -203,14 +216,14 @@ def write_validation_json(
                 "pages_with_text": doc_val.pages_with_text,
                 "pages_image_only": doc_val.pages_image_only,
                 "pages_failed": doc_val.pages_failed,
+                "pages_needing_review": doc_val.pages_needing_review,
                 "ocr_methods_used": doc_val.ocr_methods_used,
             },
             "pages": doc_val.pages,
             "output_hash": doc_val.output_hash,
         }
 
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2, ensure_ascii=False, default=str)
+        write_json_atomic(json_path, report, allowed_root=validation_dir)
 
         return json_path
     except Exception as e:

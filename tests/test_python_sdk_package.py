@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -23,6 +24,7 @@ from edcocr_sdk import (  # noqa: E402
     AsyncEDCOCRClient,
     AuthenticationError,
     ConflictError,
+    EDCOCRClient,
     HealthResponse,
     Job,
     JobListResponse,
@@ -30,7 +32,6 @@ from edcocr_sdk import (  # noqa: E402
     JobStatus,
     JobSubmitResult,
     NotFoundError,
-    EDCOCRClient,
     OCRLocalError,
     Priority,
     RateLimitError,
@@ -217,9 +218,7 @@ class TestVersionAndMetadata:
 
     def test_sdk_version_matches(self):
         # SDK_VERSION should be a valid semver string
-        parts = SDK_VERSION.split(".")
-        assert len(parts) == 3
-        assert all(p.isdigit() for p in parts)
+        assert re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", SDK_VERSION)
 
     def test_user_agent_format(self):
         assert USER_AGENT == f"edcocr-sdk-python/{SDK_VERSION}"

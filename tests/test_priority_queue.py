@@ -120,7 +120,7 @@ class TestPriorityJobQueue:
         """Test that items added in interleaved order still respect priority."""
         from api.job_manager import PriorityJobQueue
 
-        q = PriorityJobQueue()
+        q = PriorityJobQueue(max_concurrent=5)
         q.put("normal-1", "normal")
         q.put("urgent-1", "urgent")
         q.put("low-1", "low")
@@ -207,6 +207,7 @@ class TestJobManagerPriorityIntegration:
 
     def test_priority_queue_class_exists(self):
         from api.job_manager import PriorityJobQueue
+
         q = PriorityJobQueue()
         assert hasattr(q, "put")
         assert hasattr(q, "get")
@@ -215,6 +216,7 @@ class TestJobManagerPriorityIntegration:
 
     def test_priority_map_exists(self):
         from api.job_manager import _PRIORITY_MAP
+
         assert "urgent" in _PRIORITY_MAP
         assert "normal" in _PRIORITY_MAP
         assert "low" in _PRIORITY_MAP
@@ -228,11 +230,9 @@ class TestDatabasePriorityIndex:
 
     def test_priority_index_declared(self):
         import os
+
         os.environ.setdefault("OCR_OUTPUT_DIR", "/tmp/test_output")
         from api.database import Job
 
-        index_names = [
-            idx.name for idx in Job.__table_args__
-            if hasattr(idx, "name")
-        ]
+        index_names = [idx.name for idx in Job.__table_args__ if hasattr(idx, "name")]
         assert "idx_jobs_priority" in index_names

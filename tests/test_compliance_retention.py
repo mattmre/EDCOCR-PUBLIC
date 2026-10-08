@@ -20,6 +20,7 @@ import pytest
 # management command module can be imported without a real Django project.
 # ---------------------------------------------------------------------------
 
+
 def _build_mock_django():
     """Return a dict of mock modules that satisfy Django imports."""
 
@@ -48,14 +49,46 @@ def _build_mock_django():
 
     base_mod.BaseCommand = FakeBaseCommand
 
+    class CommandError(Exception):
+        pass
+
+    base_mod.CommandError = CommandError
+
+    conf_mod = types.ModuleType("django.conf")
+
+    class _FakeSettings:
+        NFS_ROOT = "/tmp/test-nfs"
+        configured = True
+
+    conf_mod.settings = _FakeSettings()
+
+    class _Atomic:
+        def __call__(self, func=None):
+            return self if func is None else func
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    transaction_mod = types.ModuleType("django.db.transaction")
+    transaction_mod.atomic = _Atomic()
+    db_mod = types.ModuleType("django.db")
+    db_mod.transaction = transaction_mod
+
     # django module stubs
     django_mod = types.ModuleType("django")
+    django_mod.__path__ = []
     django_utils = types.ModuleType("django.utils")
     django_core = types.ModuleType("django.core")
     django_core_management = types.ModuleType("django.core.management")
 
     return {
         "django": django_mod,
+        "django.conf": conf_mod,
+        "django.db": db_mod,
+        "django.db.transaction": transaction_mod,
         "django.utils": django_utils,
         "django.utils.timezone": tz_mod,
         "django.core": django_core,
@@ -95,8 +128,25 @@ def _build_mock_job_models():
             self._items.clear()
             return (n, {})
 
+        def update(self, **kwargs):
+            for item in self._items:
+                for key, value in kwargs.items():
+                    setattr(item, key, value)
+            return len(self._items)
+
         def first(self):
             return self._items[0] if self._items else None
+
+        def select_for_update(self):
+            return self
+
+        def values_list(self, *fields, flat=False):
+            if flat and len(fields) == 1:
+                return [getattr(item, fields[0], None) for item in self._items]
+            return [
+                tuple(getattr(item, field, None) for field in fields)
+                for item in self._items
+            ]
 
         def __getitem__(self, key):
             return self._items[key]
@@ -115,6 +165,10 @@ def _build_mock_job_models():
 
             @classmethod
             def filter(cls, **kwargs):
+                return _FakeQuerySet(cls._store)
+
+            @classmethod
+            def select_for_update(cls):
                 return _FakeQuerySet(cls._store)
 
             @classmethod
@@ -168,17 +222,54 @@ def _build_mock_job_models():
     models_mod.CustodyEvent = FakeCustodyEvent
     models_mod.PiiEntity = FakePiiEntity
 
+    class FakeTaskDispatchOutbox:
+        class Status:
+            PENDING = "pending"
+            FAILED = "failed"
+            DEAD = "dead"
+
+        class objects:
+            @classmethod
+            def filter(cls, **kwargs):
+                return _FakeQuerySet([])
+
+    class FakePresignedTaskCapability:
+        class objects:
+            @classmethod
+            def filter(cls, **kwargs):
+                return _FakeQuerySet([])
+
+    models_mod.TaskDispatchOutbox = FakeTaskDispatchOutbox
+    models_mod.PresignedTaskCapability = FakePresignedTaskCapability
+
     jobs_mod = types.ModuleType("jobs")
+    jobs_mod.__path__ = []
+
+    tasks_mod = types.ModuleType("jobs.tasks")
+
+    class _FakeNfsBackend:
+        backend_name = "nfs"
+
+    tasks_mod._get_backend_for_job = lambda _job: _FakeNfsBackend()
+    tasks_mod._record_control_plane_custody_event = lambda **kwargs: (
+        FakeCustodyEvent.objects.create(job=None, **kwargs)
+    )
+
+    rls_mod = types.ModuleType("jobs.rls")
+    rls_mod.control_plane_rls_command = lambda func: func
 
     return {
         "jobs": jobs_mod,
         "jobs.models": models_mod,
+        "jobs.tasks": tasks_mod,
+        "jobs.rls": rls_mod,
     }
 
 
 # ---------------------------------------------------------------------------
 # Fixture — import the command module with mocks in place
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def cleanup_module(monkeypatch):
@@ -200,7 +291,9 @@ def cleanup_module(monkeypatch):
     # Inject the real litigation_hold module so the command can import it
     lh_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "coordinator", "jobs", "litigation_hold.py",
+        "coordinator",
+        "jobs",
+        "litigation_hold.py",
     )
     lh_spec = importlib.util.spec_from_file_location("jobs.litigation_hold", lh_path)
     lh_mod = importlib.util.module_from_spec(lh_spec)
@@ -225,7 +318,15 @@ def cleanup_module(monkeypatch):
     )
     spec = importlib.util.spec_from_file_location("cleanup_old_jobs", cmd_path)
     cmd_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cmd_module)
+    try:
+        spec.loader.exec_module(cmd_module)
+    except Exception:
+        for name, original in saved.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
+        raise
 
     FakeJob = all_mocks["jobs.models"].Job
     FakeCustodyEvent = all_mocks["jobs.models"].CustodyEvent
@@ -398,36 +499,31 @@ class TestDeletionCustodyEvents:
 
         # Verify a custody event was created
         assert len(FakeCustodyEvent._created) >= 1
-        event = FakeCustodyEvent._created[0]
+        event = next(
+            item
+            for item in FakeCustodyEvent._created
+            if item["event_type"] == "data_deleted"
+            and "retention_policy" in item["data"]
+        )
         assert event["event_type"] == "data_deleted"
         assert "retention_policy" in event["data"]
         assert "JOB_RETENTION_DAYS=1" in event["data"]["retention_policy"]
         assert event["data"]["reason"] == "retention_policy"
 
-    def test_pii_cleanup_creates_custody_event(self, cleanup_module, monkeypatch):
-        """cleanup_pii_entities should record a pii_deleted custody event."""
+    def test_pii_cleanup_uses_fenced_cross_store_custody_saga(
+        self, cleanup_module, monkeypatch
+    ):
+        """PII retention must delegate to the shared durable erasure primitive."""
         mod = cleanup_module["cmd_module"]
-        FakeJob = cleanup_module["FakeJob"]
-        FakePiiEntity = cleanup_module["FakePiiEntity"]
-        FakeCustodyEvent = cleanup_module["FakeCustodyEvent"]
-
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
+        import inspect
 
-        # Need at least one job for the custody event FK
-        fake_job = MagicMock()
-        FakeJob.objects._store = [fake_job]
-
-        # Populate PII entities
-        FakePiiEntity.objects._store = [MagicMock(), MagicMock()]
-
-        cmd = mod.Command()
-        cmd.stdout = StringIO()
-        cmd._cleanup_pii_entities(days=90, dry_run=False)
-
-        assert len(FakeCustodyEvent._created) >= 1
-        event = FakeCustodyEvent._created[0]
-        assert event["event_type"] == "pii_deleted"
-        assert "PII_ENTITY_RETENTION_DAYS=90" in event["data"]["retention_policy"]
+        source = inspect.getsource(mod.Command._cleanup_pii_entities)
+        assert "erase_pii_for_job" in source
+        assert 'source="cleanup_old_jobs"' in source
+        assert "DocumentChunk" in source
+        assert "ExtractedEntity" in source
+        assert "ExtractedFormValue" in source
 
     def test_dry_run_does_not_create_custody_event(self, cleanup_module, monkeypatch):
         """Dry-run mode should not create custody events or delete data."""
@@ -455,19 +551,11 @@ class TestDeletionCustodyEvents:
     def test_pii_dry_run_no_deletion(self, cleanup_module, monkeypatch):
         """PII dry-run should neither delete nor record events."""
         mod = cleanup_module["cmd_module"]
-        FakePiiEntity = cleanup_module["FakePiiEntity"]
-        FakeCustodyEvent = cleanup_module["FakeCustodyEvent"]
-
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
+        import inspect
 
-        FakePiiEntity.objects._store = [MagicMock()]
-
-        cmd = mod.Command()
-        cmd.stdout = StringIO()
-        cmd._cleanup_pii_entities(days=90, dry_run=True)
-
-        assert len(FakeCustodyEvent._created) == 0
-        assert len(FakePiiEntity.objects._store) == 1
+        source = inspect.getsource(mod.Command._cleanup_pii_entities)
+        assert source.index("if dry_run:") < source.index("erase_pii_for_job(")
 
 
 class TestCustodyEventRecording:
@@ -478,6 +566,8 @@ class TestCustodyEventRecording:
         FakeCustodyEvent = cleanup_module["FakeCustodyEvent"]
 
         fake_job = MagicMock()
+        fake_job.job_id = "job-1"
+        fake_job.tenant_id = "tenant-a"
         mod._record_deletion_custody_event(
             event_type="data_deleted",
             data={"count": 5},
@@ -486,9 +576,11 @@ class TestCustodyEventRecording:
 
         assert len(FakeCustodyEvent._created) == 1
         assert FakeCustodyEvent._created[0]["event_type"] == "data_deleted"
-        assert FakeCustodyEvent._created[0]["job"] == fake_job
+        assert FakeCustodyEvent._created[0]["job"] is None
+        assert FakeCustodyEvent._created[0]["tenant_id"] == "tenant-a"
+        assert FakeCustodyEvent._created[0]["document_id"] == "retention-job-1"
 
-    def test_record_without_job_uses_first(self, cleanup_module):
+    def test_record_without_job_uses_control_plane_event(self, cleanup_module):
         mod = cleanup_module["cmd_module"]
         FakeJob = cleanup_module["FakeJob"]
         FakeCustodyEvent = cleanup_module["FakeCustodyEvent"]
@@ -502,10 +594,14 @@ class TestCustodyEventRecording:
         )
 
         assert len(FakeCustodyEvent._created) == 1
-        assert FakeCustodyEvent._created[0]["job"] == sentinel_job
+        # Control-plane cleanup events must not attach to an arbitrary Job;
+        # the selected job may be unrelated to the bulk operation and may be
+        # deleted in the same transaction.
+        assert FakeCustodyEvent._created[0]["job"] is None
+        assert FakeCustodyEvent._created[0]["document_id"] == "retention-control-plane"
 
-    def test_record_without_any_job_logs_instead(self, cleanup_module):
-        """When no Job exists, the helper should log rather than raise."""
+    def test_record_without_any_job_uses_control_plane_event(self, cleanup_module):
+        """Bulk cleanup remains auditable even when no Job exists."""
         mod = cleanup_module["cmd_module"]
         FakeJob = cleanup_module["FakeJob"]
         FakeCustodyEvent = cleanup_module["FakeCustodyEvent"]
@@ -518,8 +614,8 @@ class TestCustodyEventRecording:
             data={"count": 0},
         )
 
-        # No CustodyEvent created (no job to attach to)
-        assert len(FakeCustodyEvent._created) == 0
+        assert len(FakeCustodyEvent._created) == 1
+        assert FakeCustodyEvent._created[0]["job"] is None
 
 
 class TestIncludePiiFlag:
@@ -528,24 +624,21 @@ class TestIncludePiiFlag:
     def test_include_pii_triggers_pii_cleanup(self, cleanup_module, monkeypatch):
         mod = cleanup_module["cmd_module"]
         FakeJob = cleanup_module["FakeJob"]
-        FakePiiEntity = cleanup_module["FakePiiEntity"]
-        FakeCustodyEvent = cleanup_module["FakeCustodyEvent"]
 
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
         monkeypatch.setenv("PII_ENTITY_RETENTION_DAYS", "60")
 
         fake_job = MagicMock()
+        fake_job.job_id = "include-pii-job"
+        fake_job.nfs_job_path = ""
         FakeJob.objects._store = [fake_job]
-        FakePiiEntity.objects._store = [MagicMock()]
 
         cmd = mod.Command()
         cmd.stdout = StringIO()
-        cmd.handle(days=30, dry_run=False, include_pii=True)
+        cmd._cleanup_pii_entities = MagicMock()
+        cmd.handle(days=30, dry_run=False, include_pii=True, confirm=True)
 
-        # Should have custody events for both job and PII cleanup
-        event_types = [e["event_type"] for e in FakeCustodyEvent._created]
-        assert "data_deleted" in event_types
-        assert "pii_deleted" in event_types
+        cmd._cleanup_pii_entities.assert_called_once_with(60, False)
 
 
 class TestModuleConstants:

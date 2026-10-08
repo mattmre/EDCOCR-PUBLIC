@@ -98,7 +98,10 @@ class TestEvaluateLowConfidence:
 
         router = ExceptionRouter()
         decision = router.evaluate(
-            validation_data={"overall_confidence": 0.9, "classification": "high_quality"}
+            validation_data={
+                "overall_confidence": 0.9,
+                "classification": "high_quality",
+            }
         )
         # Only low_confidence rule checked here, not degraded
         assert "low_confidence" not in decision.triggered_rules
@@ -186,9 +189,7 @@ class TestEvaluateHandwriting:
         from exception_router import ExceptionRouter
 
         router = ExceptionRouter()
-        decision = router.evaluate(
-            handwriting_data={"handwriting_detected": True}
-        )
+        decision = router.evaluate(handwriting_data={"handwriting_detected": True})
         assert decision.should_route is True
         assert "handwriting_detected" in decision.triggered_rules
 
@@ -277,9 +278,7 @@ class TestEvaluateCustomPatterns:
     def test_custom_pattern_match_routes(self):
         from exception_router import ExceptionRouter
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(
                 [
                     {
@@ -309,9 +308,7 @@ class TestEvaluateCustomPatterns:
     def test_custom_pattern_no_match(self):
         from exception_router import ExceptionRouter
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(
                 [{"name": "ssn_pattern", "pattern": r"\d{3}-\d{2}-\d{4}"}],
                 f,
@@ -329,9 +326,7 @@ class TestEvaluateCustomPatterns:
     def test_invalid_regex_skipped(self):
         from exception_router import ExceptionRouter
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(
                 [
                     {
@@ -349,6 +344,37 @@ class TestEvaluateCustomPatterns:
             router = ExceptionRouter(custom_rules_path=rules_path)
             # Invalid regex should be skipped during load
             assert len(router.custom_patterns) == 0
+        finally:
+            os.unlink(rules_path)
+
+    def test_non_string_pattern_is_skipped(self):
+        from exception_router import ExceptionRouter
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump([{"name": "bad_type", "pattern": {"not": "regex"}}], f)
+            f.flush()
+            rules_path = f.name
+
+        try:
+            router = ExceptionRouter(custom_rules_path=rules_path)
+            assert router.custom_patterns == []
+        finally:
+            os.unlink(rules_path)
+
+    def test_ambiguous_quantified_alternation_is_skipped(self):
+        from exception_router import ExceptionRouter
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(
+                [{"name": "ambiguous", "pattern": r"(a|aa)+$"}],
+                f,
+            )
+            f.flush()
+            rules_path = f.name
+
+        try:
+            router = ExceptionRouter(custom_rules_path=rules_path)
+            assert router.custom_patterns == []
         finally:
             os.unlink(rules_path)
 
@@ -517,9 +543,7 @@ class TestGetRules:
     def test_includes_custom_rules(self):
         from exception_router import ExceptionRouter
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(
                 [
                     {
@@ -552,12 +576,14 @@ class TestCustomRulesLoading:
     def test_load_valid_rules(self):
         from exception_router import ExceptionRouter
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(
                 [
-                    {"name": "r1", "pattern": r"\bconfidential\b", "reason": "manual_flag"},
+                    {
+                        "name": "r1",
+                        "pattern": r"\bconfidential\b",
+                        "reason": "manual_flag",
+                    },
                     {"name": "r2", "pattern": r"\bsecret\b"},
                 ],
                 f,
@@ -588,9 +614,7 @@ class TestCustomRulesLoading:
     def test_load_non_array_json(self):
         from exception_router import ExceptionRouter
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump({"not": "an array"}, f)
             f.flush()
             rules_path = f.name
@@ -604,9 +628,7 @@ class TestCustomRulesLoading:
     def test_load_missing_name_skipped(self):
         from exception_router import ExceptionRouter
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(
                 [{"pattern": "test"}],  # missing name
                 f,
@@ -623,9 +645,7 @@ class TestCustomRulesLoading:
     def test_load_missing_pattern_skipped(self):
         from exception_router import ExceptionRouter
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(
                 [{"name": "test"}],  # missing pattern
                 f,
@@ -642,9 +662,7 @@ class TestCustomRulesLoading:
     def test_load_invalid_json_file(self):
         from exception_router import ExceptionRouter
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write("not valid json{{{")
             f.flush()
             rules_path = f.name
@@ -658,9 +676,7 @@ class TestCustomRulesLoading:
     def test_load_non_dict_entries_skipped(self):
         from exception_router import ExceptionRouter
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(
                 ["string_entry", 42, None, {"name": "valid", "pattern": "ok"}],
                 f,

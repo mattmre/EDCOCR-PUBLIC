@@ -19,7 +19,7 @@ import sys
 import pytest
 
 # ---------------------------------------------------------------------------
-# Add coordinator to sys.path for model imports.  See .
+# Add coordinator to sys.path for model imports.  See docs/release-candidate.md.
 # ---------------------------------------------------------------------------
 _coordinator_dir = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "coordinator"
@@ -38,9 +38,7 @@ if importlib.util.find_spec("django") is not None:
         except Exception:
             pass
 
-_skip_no_django = pytest.mark.skipif(
-    not _HAS_DJANGO, reason="Django not configured"
-)
+_skip_no_django = pytest.mark.skipif(not _HAS_DJANGO, reason="Django not configured")
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +81,14 @@ class TestQueueDepthGaugeM11:
         families = {f.name: f for f in self.collector.collect()}
         family = families["ocr_queue_depth"]
         labels = {s.labels["queue"] for s in family.samples}
-        expected = {"extraction", "ocr_gpu", "ocr_cpu", "compression", "nlp", "assembly"}
+        expected = {
+            "extraction",
+            "ocr_gpu",
+            "ocr_cpu",
+            "compression",
+            "nlp",
+            "assembly",
+        }
         assert labels == expected
 
     def test_queue_depth_empty_database_all_zero(self):
@@ -189,13 +194,18 @@ class TestPageThroughputCounterM13:
     def test_pages_processed_metric_exists(self):
         """ocr_pages_processed_total is present in collect() output."""
         families = {f.name: f for f in self.collector.collect()}
-        assert "ocr_pages_processed_total" in families
+        # prometheus_client strips the conventional _total suffix from a
+        # counter family name while retaining it on exported samples.
+        assert "ocr_pages_processed" in families
 
     def test_pages_processed_is_counter_type(self):
         """ocr_pages_processed_total is a Counter metric family."""
         families = {f.name: f for f in self.collector.collect()}
-        family = families["ocr_pages_processed_total"]
+        family = families["ocr_pages_processed"]
         assert family.type == "counter"
+        assert all(
+            sample.name == "ocr_pages_processed_total" for sample in family.samples
+        )
 
     def test_pages_processed_has_engine_and_status_labels(self):
         """Samples have both 'engine' and 'status' labels."""
@@ -203,13 +213,16 @@ class TestPageThroughputCounterM13:
 
         job = Job.objects.create(source_file="/test.pdf", total_pages=1)
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=1,
-            status="ok", processing_time_ms=100,
+            job=job,
+            document_id="d1",
+            page_num=1,
+            status="ok",
+            processing_time_ms=100,
             ocr_method="PaddleOCR",
         )
 
         families = {f.name: f for f in self.collector.collect()}
-        family = families["ocr_pages_processed_total"]
+        family = families["ocr_pages_processed"]
         assert len(family.samples) > 0
         for sample in family.samples:
             assert "engine" in sample.labels
@@ -218,7 +231,7 @@ class TestPageThroughputCounterM13:
     def test_pages_processed_empty_database(self):
         """No samples when database has no pages."""
         families = {f.name: f for f in self.collector.collect()}
-        family = families["ocr_pages_processed_total"]
+        family = families["ocr_pages_processed"]
         assert len(family.samples) == 0
 
     def test_engine_normalization_paddle(self):
@@ -227,21 +240,26 @@ class TestPageThroughputCounterM13:
 
         job = Job.objects.create(source_file="/test.pdf", total_pages=2)
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=1,
-            status="ok", processing_time_ms=100,
+            job=job,
+            document_id="d1",
+            page_num=1,
+            status="ok",
+            processing_time_ms=100,
             ocr_method="PaddleOCR",
         )
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=2,
-            status="ok", processing_time_ms=200,
+            job=job,
+            document_id="d1",
+            page_num=2,
+            status="ok",
+            processing_time_ms=200,
             ocr_method="PaddleOCR",
         )
 
         families = {f.name: f for f in self.collector.collect()}
-        family = families["ocr_pages_processed_total"]
+        family = families["ocr_pages_processed"]
         engine_status = {
-            (s.labels["engine"], s.labels["status"]): s.value
-            for s in family.samples
+            (s.labels["engine"], s.labels["status"]): s.value for s in family.samples
         }
         assert ("paddle", "success") in engine_status
         assert engine_status[("paddle", "success")] == 2
@@ -252,16 +270,18 @@ class TestPageThroughputCounterM13:
 
         job = Job.objects.create(source_file="/test.pdf", total_pages=1)
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=1,
-            status="fallback", processing_time_ms=300,
+            job=job,
+            document_id="d1",
+            page_num=1,
+            status="fallback",
+            processing_time_ms=300,
             ocr_method="Tesseract",
         )
 
         families = {f.name: f for f in self.collector.collect()}
-        family = families["ocr_pages_processed_total"]
+        family = families["ocr_pages_processed"]
         engine_status = {
-            (s.labels["engine"], s.labels["status"]): s.value
-            for s in family.samples
+            (s.labels["engine"], s.labels["status"]): s.value for s in family.samples
         }
         assert ("tesseract", "success") in engine_status
         assert engine_status[("tesseract", "success")] == 1
@@ -272,16 +292,18 @@ class TestPageThroughputCounterM13:
 
         job = Job.objects.create(source_file="/test.pdf", total_pages=1)
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=1,
-            status="ok", processing_time_ms=150,
+            job=job,
+            document_id="d1",
+            page_num=1,
+            status="ok",
+            processing_time_ms=150,
             ocr_method="ONNX",
         )
 
         families = {f.name: f for f in self.collector.collect()}
-        family = families["ocr_pages_processed_total"]
+        family = families["ocr_pages_processed"]
         engine_status = {
-            (s.labels["engine"], s.labels["status"]): s.value
-            for s in family.samples
+            (s.labels["engine"], s.labels["status"]): s.value for s in family.samples
         }
         assert ("onnx", "success") in engine_status
 
@@ -290,18 +312,22 @@ class TestPageThroughputCounterM13:
         from jobs.models import Job, PageResult
 
         job = Job.objects.create(source_file="/test.pdf", total_pages=4)
-        for i, status in enumerate(["ok", "completed", "fallback", "image_only"], start=1):
+        for i, status in enumerate(
+            ["ok", "completed", "fallback", "image_only"], start=1
+        ):
             PageResult.objects.create(
-                job=job, document_id="d1", page_num=i,
-                status=status, processing_time_ms=100,
+                job=job,
+                document_id="d1",
+                page_num=i,
+                status=status,
+                processing_time_ms=100,
                 ocr_method="PaddleOCR",
             )
 
         families = {f.name: f for f in self.collector.collect()}
-        family = families["ocr_pages_processed_total"]
+        family = families["ocr_pages_processed"]
         engine_status = {
-            (s.labels["engine"], s.labels["status"]): s.value
-            for s in family.samples
+            (s.labels["engine"], s.labels["status"]): s.value for s in family.samples
         }
         assert engine_status[("paddle", "success")] == 4
 
@@ -311,16 +337,18 @@ class TestPageThroughputCounterM13:
 
         job = Job.objects.create(source_file="/test.pdf", total_pages=1)
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=1,
-            status="failed", processing_time_ms=0,
+            job=job,
+            document_id="d1",
+            page_num=1,
+            status="failed",
+            processing_time_ms=0,
             ocr_method="PaddleOCR",
         )
 
         families = {f.name: f for f in self.collector.collect()}
-        family = families["ocr_pages_processed_total"]
+        family = families["ocr_pages_processed"]
         engine_status = {
-            (s.labels["engine"], s.labels["status"]): s.value
-            for s in family.samples
+            (s.labels["engine"], s.labels["status"]): s.value for s in family.samples
         }
         assert ("paddle", "failed") in engine_status
         assert engine_status[("paddle", "failed")] == 1
@@ -331,16 +359,18 @@ class TestPageThroughputCounterM13:
 
         job = Job.objects.create(source_file="/test.pdf", total_pages=1)
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=1,
-            status="failed", processing_time_ms=0,
+            job=job,
+            document_id="d1",
+            page_num=1,
+            status="failed",
+            processing_time_ms=0,
             ocr_method="",
         )
 
         families = {f.name: f for f in self.collector.collect()}
-        family = families["ocr_pages_processed_total"]
+        family = families["ocr_pages_processed"]
         engine_status = {
-            (s.labels["engine"], s.labels["status"]): s.value
-            for s in family.samples
+            (s.labels["engine"], s.labels["status"]): s.value for s in family.samples
         }
         assert ("unknown", "failed") in engine_status
         assert engine_status[("unknown", "failed")] == 1
@@ -351,26 +381,34 @@ class TestPageThroughputCounterM13:
 
         job = Job.objects.create(source_file="/test.pdf", total_pages=3)
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=1,
-            status="ok", processing_time_ms=100,
+            job=job,
+            document_id="d1",
+            page_num=1,
+            status="ok",
+            processing_time_ms=100,
             ocr_method="PaddleOCR",
         )
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=2,
-            status="fallback", processing_time_ms=200,
+            job=job,
+            document_id="d1",
+            page_num=2,
+            status="fallback",
+            processing_time_ms=200,
             ocr_method="Tesseract",
         )
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=3,
-            status="failed", processing_time_ms=0,
+            job=job,
+            document_id="d1",
+            page_num=3,
+            status="failed",
+            processing_time_ms=0,
             ocr_method="PaddleOCR",
         )
 
         families = {f.name: f for f in self.collector.collect()}
-        family = families["ocr_pages_processed_total"]
+        family = families["ocr_pages_processed"]
         engine_status = {
-            (s.labels["engine"], s.labels["status"]): s.value
-            for s in family.samples
+            (s.labels["engine"], s.labels["status"]): s.value for s in family.samples
         }
         assert engine_status[("paddle", "success")] == 1
         assert engine_status[("tesseract", "success")] == 1
@@ -379,7 +417,7 @@ class TestPageThroughputCounterM13:
     def test_pages_processed_in_describe(self):
         """ocr_pages_processed_total appears in describe() output."""
         descriptor_names = [d.name for d in self.collector.describe()]
-        assert "ocr_pages_processed_total" in descriptor_names
+        assert "ocr_pages_processed" in descriptor_names
 
     def test_pending_pages_excluded(self):
         """Pages with pending status are not counted in throughput."""
@@ -387,18 +425,24 @@ class TestPageThroughputCounterM13:
 
         job = Job.objects.create(source_file="/test.pdf", total_pages=2)
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=1,
-            status="pending", processing_time_ms=0,
+            job=job,
+            document_id="d1",
+            page_num=1,
+            status="pending",
+            processing_time_ms=0,
             ocr_method="PaddleOCR",
         )
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=2,
-            status="ok", processing_time_ms=100,
+            job=job,
+            document_id="d1",
+            page_num=2,
+            status="ok",
+            processing_time_ms=100,
             ocr_method="PaddleOCR",
         )
 
         families = {f.name: f for f in self.collector.collect()}
-        family = families["ocr_pages_processed_total"]
+        family = families["ocr_pages_processed"]
         total = sum(s.value for s in family.samples)
         assert total == 1
 

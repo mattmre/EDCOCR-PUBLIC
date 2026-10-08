@@ -1,9 +1,9 @@
 # =============================================================================
 # .dockerignore - Coordinator build context
 # =============================================================================
-# Applies to: coordinator/Dockerfile.coordinator
-# Build context is coordinator/ directory (docker-compose.coordinator.yml).
-# The Dockerfile uses COPY . . so exclusions here directly prevent bloat.
+# Legacy direct coordinator-directory context exclusions.
+# Canonical builds use the repository-root context and the root .dockerignore
+# because jobs.tasks imports shared ocr_distributed/ocr_local source.
 # =============================================================================
 
 # -- Version control ----------------------------------------------------------

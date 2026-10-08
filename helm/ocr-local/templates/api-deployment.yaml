@@ -1,0 +1,219 @@
+{{- if .Values.api.enabled }}
+{{- if gt (int (.Values.api.replicas | default 1)) 1 }}
+{{- fail "api.replicas must remain 1 while FastAPI job state is SQLite/in-process; provide an externally coordinated API implementation before scaling" }}
+{{- end }}
+{{- $jobs := int .Values.api.maxConcurrentJobs }}
+{{- $workers := int .Values.api.pipeline.workers }}
+{{- $extractors := int .Values.api.pipeline.extractors }}
+{{- $compressors := int .Values.api.pipeline.compressors }}
+{{- $omp := int .Values.api.pipeline.ompThreads }}
+{{- $mkl := int .Values.api.pipeline.mklThreads }}
+{{- $predictorThreads := int .Values.api.pipeline.nativeThreadsPerPredictor }}
+{{- $replicas := int .Values.api.pipeline.modelReplicasPerKey }}
+{{- $slots := int .Values.api.pipeline.inferenceSlotsPerDevice }}
+{{- $pipelineMemoryMiB := int .Values.api.pipeline.memoryBudgetMiB }}
+{{- $cpuLimit := .Values.api.resources.limits.cpu | toString }}
+{{- $memoryLimit := .Values.api.resources.limits.memory | toString }}
+{{- if or (lt $jobs 1) (lt $workers 1) (lt $extractors 1) (lt $compressors 1) (lt $omp 1) (lt $mkl 1) (lt $predictorThreads 1) (lt $replicas 1) (lt $slots 1) (lt $pipelineMemoryMiB 1) }}
+{{- fail "api pipeline concurrency, thread, replica, slot and planning-memory settings must be positive" }}
+{{- end }}
+{{- if or (not (regexMatch "^([0-9]+(\\.[0-9]+)?|[0-9]+m)$" $cpuLimit)) (not (regexMatch "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|K|M|G|T)?$" $memoryLimit)) }}
+{{- fail "api resource limits must use Kubernetes CPU cores/millicores and binary/decimal memory quantities" }}
+{{- end }}
+{{- $cpuCores := float64 $cpuLimit }}
+{{- if hasSuffix "m" $cpuLimit }}{{- $cpuCores = divf (float64 (trimSuffix "m" $cpuLimit)) 1000 }}{{- end }}
+{{- $memoryMiB := float64 (regexFind "^[0-9]+(\\.[0-9]+)?" $memoryLimit) }}
+{{- if hasSuffix "Ki" $memoryLimit }}{{- $memoryMiB = divf $memoryMiB 1024 }}{{- end }}
+{{- if hasSuffix "Gi" $memoryLimit }}{{- $memoryMiB = mulf $memoryMiB 1024 }}{{- end }}
+{{- if hasSuffix "Ti" $memoryLimit }}{{- $memoryMiB = mulf $memoryMiB 1048576 }}{{- end }}
+{{- if hasSuffix "K" $memoryLimit }}{{- $memoryMiB = divf (mulf $memoryMiB 1000) 1048576 }}{{- end }}
+{{- if hasSuffix "M" $memoryLimit }}{{- $memoryMiB = divf (mulf $memoryMiB 1000000) 1048576 }}{{- end }}
+{{- if hasSuffix "G" $memoryLimit }}{{- $memoryMiB = divf (mulf $memoryMiB 1000000000) 1048576 }}{{- end }}
+{{- if hasSuffix "T" $memoryLimit }}{{- $memoryMiB = divf (mulf $memoryMiB 1000000000000) 1048576 }}{{- end }}
+{{- if regexMatch "^[0-9]+(\\.[0-9]+)?$" $memoryLimit }}{{- $memoryMiB = divf $memoryMiB 1048576 }}{{- end }}
+{{- if or (le $cpuCores 0.0) (le $memoryMiB 0.0) }}
+{{- fail "api CPU and memory limits must be positive" }}
+{{- end }}
+{{- if gt (mulf (float64 $jobs) (float64 $pipelineMemoryMiB)) $memoryMiB }}
+{{- fail "api concurrent jobs exceed explicit per-pipeline planning memory budget; use coordinator fleet for larger parallelism" }}
+{{- end }}
+{{- if gt (mulf (float64 $jobs) (float64 $workers) (float64 (max $omp $mkl $predictorThreads))) $cpuCores }}
+{{- fail "api jobs × OCR workers × native thread limit exceeds CPU limit; use coordinator fleet for larger parallelism" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas | default 1 }}
+  # FastAPI still owns SQLite/in-process state. RollingUpdate may surge a
+  # second writer even when replicas=1, so updates must never overlap pods.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ocr-local.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "ocr-local.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      serviceAccountName: {{ include "ocr-local.controlPlaneServiceAccountName" . }}
+      {{- include "ocr-local.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.api.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ include "ocr-local.apiImage" . }}
+          imagePullPolicy: {{ .Values.image.api.pullPolicy | default "IfNotPresent" }}
+          command:
+            - python3
+            - -m
+            - uvicorn
+            - api.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+          env:
+            - name: OCR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: OCR_API_KEY
+            - name: DJANGO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: DJANGO_SECRET_KEY
+            # The FastAPI SQLAlchemy store is SQLite-only. Django coordinator
+            # models use a distinct variable so API startup does not mistake
+            # the PostgreSQL URL for its own database backend.
+            - name: COORDINATOR_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: DATABASE_URL
+            - name: CELERY_BROKER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: CELERY_BROKER_URL
+            - name: CELERY_RESULT_BACKEND
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: CELERY_RESULT_BACKEND
+            - name: CELERY_TASK_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: CELERY_TASK_SIGNING_KEY
+            - name: SOURCE_FOLDER
+              value: {{ printf "%s/%s" .Values.api.dataMountPath .Values.api.sourceSubdir | quote }}
+            - name: OUTPUT_FOLDER
+              value: {{ printf "%s/%s" .Values.api.dataMountPath .Values.api.outputSubdir | quote }}
+            - name: API_DB_PATH
+              value: {{ printf "%s/%s/jobs.db" .Values.api.dataMountPath .Values.api.outputSubdir | quote }}
+            - name: MAX_CONCURRENT_JOBS
+              value: {{ .Values.api.maxConcurrentJobs | quote }}
+            - name: MAX_QUEUED_JOBS
+              value: {{ .Values.api.maxQueuedJobs | quote }}
+            - name: NUM_WORKERS
+              value: {{ .Values.api.pipeline.workers | quote }}
+            - name: NUM_EXTRACTORS
+              value: {{ .Values.api.pipeline.extractors | quote }}
+            - name: NUM_COMPRESSORS
+              value: {{ .Values.api.pipeline.compressors | quote }}
+            - name: OMP_NUM_THREADS
+              value: {{ .Values.api.pipeline.ompThreads | quote }}
+            - name: MKL_NUM_THREADS
+              value: {{ .Values.api.pipeline.mklThreads | quote }}
+            - name: OCR_NATIVE_THREADS_PER_PREDICTOR
+              value: {{ .Values.api.pipeline.nativeThreadsPerPredictor | quote }}
+            - name: OCR_ENGINE_REPLICAS_PER_KEY
+              value: {{ .Values.api.pipeline.modelReplicasPerKey | quote }}
+            - name: OCR_INFERENCE_SLOTS_PER_DEVICE
+              value: {{ .Values.api.pipeline.inferenceSlotsPerDevice | quote }}
+            - name: WEBHOOK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: WEBHOOK_SECRET_KEY
+            - name: PII_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: PII_ENCRYPTION_KEY
+          volumeMounts:
+            - name: api-data
+              mountPath: {{ .Values.api.dataMountPath | quote }}
+            {{- include "ocr-local.s3CacheStagingMount" . | nindent 12 }}
+            {{- include "ocr-local.tlsCaVolumeMount" . | nindent 12 }}
+            {{- if .Values.reviewStrongAuth.caSecretName }}
+            - name: review-auth-ca
+              mountPath: /etc/review-auth
+              readOnly: true
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/v1/readiness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          {{- with .Values.api.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        {{- include "ocr-local.tlsCaVolume" . | nindent 8 }}
+        {{- include "ocr-local.s3CacheStagingVolume" . | nindent 8 }}
+        - name: api-data
+          {{- if .Values.api.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-api-data
+          {{- else }}
+          # Explicitly ephemeral only when the operator opts out of API
+          # persistence. This is a lab/non-durable mode.
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.reviewStrongAuth.caSecretName }}
+        - name: review-auth-ca
+          secret:
+            secretName: {{ .Values.reviewStrongAuth.caSecretName | quote }}
+            items:
+              - key: {{ .Values.reviewStrongAuth.caSecretKey | quote }}
+                path: ca.crt
+        {{- end }}
+{{- end }}

@@ -1,0 +1,59 @@
+# Scheduling example for sixteen one-visible-GPU DGX Spark nodes.
+# This chart overlay renders, but the repository's pinned Paddle GPU image
+# rejects ARM64. Supply and qualify an audited ARM64/CUDA/model image before
+# deploying it; this file is not evidence that Spark OCR works.
+ocrStagedPage:
+  enabled: true
+  globalBytes: "17179869184"       # 16 GiB decoded-raster reservations fleet-wide
+  maxPageBytes: "268435456"        # 256 MiB/page; encoded/native copies add RSS
+  maxInflightPagesPerDocument: "64"
+  render:
+    replicas: 8
+    concurrency: 2                  # 16 CPU render claims; OMP threads=1
+    autoscaling: {enabled: false}
+    resources:
+      requests: {cpu: "2", memory: 4Gi}
+      limits: {cpu: "4", memory: 8Gi}
+    nodeSelector: {kubernetes.io/arch: arm64}
+  finalize:
+    replicas: 8
+    concurrency: 2                  # 16 CPU finalizer claims
+    autoscaling: {enabled: false}
+    resources:
+      requests: {cpu: "2", memory: 4Gi}
+      limits: {cpu: "4", memory: 8Gi}
+    nodeSelector: {kubernetes.io/arch: arm64}
+gpuWorker:
+  replicas: 16                      # one prefork process per visible GPU
+  maxTasksPerChild: 512             # finite warm-run budget; measure RSS growth
+  autoscaling: {enabled: false}
+  stagedInference:
+    pool: prefork
+    concurrency: 1
+    slotsPerDevice: 1
+    replicasPerKey: 1
+  nodeSelector: {kubernetes.io/arch: arm64}
+tesseractWorker:
+  enabled: true
+  replicas: 8
+  concurrency: 2
+  autoscaling: {enabled: false}
+  nodeSelector: {kubernetes.io/arch: arm64}
+coordinator:
+  env:
+    OCR_TASK_ROUTING: gpu
+# Supply an actual RWX PV/StorageClass and a distinct authenticated fleet
+# ingress host in an operator overlay. Neither is inferred from this example.
+storage:
+  backend: nfs
+  nfs:
+    persistence: {enabled: true}
+
+# Planning allowance: 127 coordinator/worker process slots plus headroom.
+# This ceiling is not measured simultaneous PostgreSQL sessions or RSS.
+postgresql:
+  config:
+    maxConnections: 200
+  resources:
+    requests: {cpu: "1", memory: 2Gi}
+    limits: {cpu: "2", memory: 4Gi}

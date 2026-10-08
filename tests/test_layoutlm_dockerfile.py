@@ -98,9 +98,9 @@ class TestLayoutlmDockerfile:
         path = COORDINATOR_DIR / "Dockerfile.worker.layoutlm"
         assert path.exists(), "coordinator/Dockerfile.worker.layoutlm not found"
 
-    def test_base_image_is_python311(self, dockerfile_content):
-        """Base image should be python:3.11-slim-bookworm."""
-        assert "python:3.11-slim-bookworm" in dockerfile_content
+    def test_base_image_is_python312(self, dockerfile_content):
+        """Base image matches the qualified Django 6 coordinator runtime."""
+        assert "python:3.12-slim-bookworm" in dockerfile_content
 
     def test_installs_torch(self, dockerfile_content):
         """Dockerfile must install torch for LayoutLMv3."""
@@ -289,10 +289,9 @@ class TestLayoutlmWorkerDeployment:
         assert "import transformers" in deployment_content
 
     def test_liveness_probe(self, deployment_content):
-        """Deployment must have a liveness probe using celery inspect ping."""
+        """Deployment must target the exact local worker nodename."""
         assert "livenessProbe" in deployment_content
-        assert "inspect" in deployment_content
-        assert "ping" in deployment_content
+        assert "/app/coordinator/worker_healthcheck.py" in deployment_content
 
     def test_mtls_annotation(self, deployment_content):
         """Deployment should support mTLS annotation when enabled."""
@@ -311,10 +310,13 @@ class TestLayoutlmWorkerDeployment:
         """Replicas should be omitted when autoscaling is enabled."""
         assert "layoutlmWorker.autoscaling.enabled" in deployment_content
 
-    def test_envfrom_configmap_and_secret(self, deployment_content):
-        """Deployment must use envFrom for configmap and secret."""
-        assert "configMapRef" in deployment_content
-        assert "secretRef" in deployment_content
+    def test_envfrom_configmap_and_secret(self, deployment_content, helpers_content):
+        """Deployment must use the shared least-secret env contract."""
+        assert 'include "ocr-local.workerEnvFrom"' in deployment_content
+        assert "configMapRef" in helpers_content
+        assert "secretKeyRef" in helpers_content
+        # The helper retains the explicitly opt-in legacy full-secret path.
+        assert "secretRef" in helpers_content
 
     def test_custom_env_loop(self, deployment_content):
         """Deployment should support custom env vars from values."""
@@ -393,7 +395,10 @@ class TestLayoutlmValuesYaml:
 
     def test_model_name_default(self, helm_values):
         """Default model should be microsoft/layoutlmv3-base."""
-        assert helm_values["layoutlmWorker"]["model"]["name"] == "microsoft/layoutlmv3-base"
+        assert (
+            helm_values["layoutlmWorker"]["model"]["name"]
+            == "microsoft/layoutlmv3-base"
+        )
 
     def test_model_cache_dir(self, helm_values):
         """Model cache directory should default to /models."""
@@ -422,7 +427,10 @@ class TestLayoutlmValuesYaml:
 
     def test_image_repository(self, helm_values):
         """Image repository should be ocr-local/worker-layoutlm."""
-        assert helm_values["image"]["layoutlmWorker"]["repository"] == "ocr-local/worker-layoutlm"
+        assert (
+            helm_values["image"]["layoutlmWorker"]["repository"]
+            == "ocr-local/worker-layoutlm"
+        )
 
 
 # ===========================================================================
@@ -439,8 +447,8 @@ class TestHelpersTemplate:
 
     def test_layoutlm_image_uses_correct_values_path(self, helpers_content):
         """layoutlmWorkerImage helper should reference image.layoutlmWorker."""
-        assert ".Values.image.layoutlmWorker.tag" in helpers_content
-        assert ".Values.image.layoutlmWorker.repository" in helpers_content
+        assert ".Values.image.layoutlmWorker " in helpers_content
+        assert 'include "ocr-local.imageRef"' in helpers_content
 
 
 # ===========================================================================
@@ -503,10 +511,9 @@ class TestValidateKedaIntegration:
 
         report = run_validation(chart_dir)
         components = [so.component for so in report.scaled_objects]
-        assert "layoutlm-worker" in components, (
-            f"Expected layoutlm-worker in ScaledObject components, "
-            f"found: {components}"
-        )
+        assert (
+            "layoutlm-worker" in components
+        ), f"Expected layoutlm-worker in ScaledObject components, found: {components}"
 
     def test_full_validation_passes(self):
         """Full KEDA validation should pass with no errors after adding layoutlm."""
@@ -524,7 +531,6 @@ class TestValidateKedaIntegration:
 
         report = run_validation(chart_dir)
         errors = [r for r in report.results if not r.passed and r.severity == "error"]
-        assert len(errors) == 0, (
-            "Validation errors:\n"
-            + "\n".join(f"  {r.check}: {r.message}" for r in errors)
+        assert len(errors) == 0, "Validation errors:\n" + "\n".join(
+            f"  {r.check}: {r.message}" for r in errors
         )

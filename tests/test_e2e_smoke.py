@@ -33,9 +33,9 @@ def _isolate_db(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
 
-    with patch("api.config.DB_PATH", db_file), \
-         patch("api.database.DB_PATH", db_file), \
-         patch("api.config.SOURCE_FOLDER", str(source)), \
+    with patch("api.config.DB_PATH", db_file),\
+         patch("api.database.DB_PATH", db_file),\
+         patch("api.config.SOURCE_FOLDER", str(source)),\
          patch("api.config.OUTPUT_FOLDER", str(output)):
         reset_engine()
         get_engine(db_file)
@@ -51,9 +51,9 @@ def client(tmp_path):
     source.mkdir(exist_ok=True)
     output.mkdir(exist_ok=True)
 
-    with patch("api.auth.OCR_API_KEY", _SMOKE_KEY), \
-         patch("api.config.SOURCE_FOLDER", str(source)), \
-         patch("api.config.OUTPUT_FOLDER", str(output)), \
+    with patch("api.auth.OCR_API_KEY", _SMOKE_KEY),\
+         patch("api.config.SOURCE_FOLDER", str(source)),\
+         patch("api.config.OUTPUT_FOLDER", str(output)),\
          patch("api.job_manager.config") as mock_config:
         mock_config.SOURCE_FOLDER = str(source)
         mock_config.OUTPUT_FOLDER = str(output)
@@ -82,23 +82,25 @@ class TestServerStartup:
 
         app = create_app()
         assert app is not None
-        assert app.title == "EDCOCR API"
+        assert app.title == "Industrial Adaptive OCR API"
 
     def test_routes_registered(self):
         from api.main import create_app
 
         app = create_app()
-        route_paths = [r.path for r in app.routes if hasattr(r, "path")]
-        assert "/api/v1/health" in route_paths
-        assert "/api/v1/health/detailed" in route_paths
-        # /docs and /redoc are conditional on EXPOSE_API_DOCS env var
+        # FastAPI 0.115+ nests routers as _IncludedRouter without a top-level
+        # `.path`; OpenAPI paths are the stable surface for smoke.
+        paths = set((app.openapi().get("paths") or {}))
+        assert "/api/v1/health" in paths
+        assert "/api/v1/health/detailed" in paths
+        # /docs and /redoc are conditional on EXPOSE_API_DOCS env var (maintenance review)
 
     def test_jobs_route_registered(self):
         from api.main import create_app
 
         app = create_app()
-        route_paths = [r.path for r in app.routes if hasattr(r, "path")]
-        jobs_routes = [p for p in route_paths if p.startswith("/api/v1/jobs")]
+        paths = set((app.openapi().get("paths") or {}))
+        jobs_routes = [p for p in paths if p.startswith("/api/v1/jobs")]
         assert len(jobs_routes) > 0
 
 
@@ -142,7 +144,7 @@ class TestHealthSmoke:
 class TestOpenAPISmoke:
     @pytest.fixture(autouse=True)
     def _enable_docs(self):
-        with patch("api.main.EXPOSE_API_DOCS", True), \
+        with patch("api.main.EXPOSE_API_DOCS", True),\
              patch("api.auth.EXPOSE_API_DOCS", True):
             yield
 
@@ -150,7 +152,7 @@ class TestOpenAPISmoke:
         r = client.get("/openapi.json")
         assert r.status_code == 200
         spec = r.json()
-        assert spec["info"]["title"] == "EDCOCR API"
+        assert spec["info"]["title"] == "Industrial Adaptive OCR API"
 
     def test_docs_page_loads(self, client):
         r = client.get("/docs")
@@ -207,7 +209,7 @@ class TestAuthSmoke:
 
         Only health endpoints are unconditionally exempt.  OpenAPI docs
         (/docs, /redoc, /openapi.json) are gated behind the
-        ``EXPOSE_API_DOCS`` env var and are not mounted by default,
+        ``EXPOSE_API_DOCS`` env var (maintenance review) and are not mounted by default,
         so they should return 401 or 404 here (never 200).
         """
         r = client.get("/api/v1/health")
@@ -322,12 +324,12 @@ class TestVersionSmoke:
     def test_version_in_openapi(self):
         """Verify version is reflected in the OpenAPI spec.
 
-        Rebuilds the app with EXPOSE_API_DOCS enabled ( gates it off
+        Rebuilds the app with EXPOSE_API_DOCS enabled (maintenance review gates it off
         by default) so ``/openapi.json`` is mounted.
         """
         from version import __version__
 
-        with patch("api.main.EXPOSE_API_DOCS", True), \
+        with patch("api.main.EXPOSE_API_DOCS", True),\
              patch("api.auth.EXPOSE_API_DOCS", True):
             from api.main import create_app
             app = create_app()

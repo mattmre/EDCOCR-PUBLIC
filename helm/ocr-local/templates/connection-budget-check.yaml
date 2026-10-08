@@ -1,0 +1,48 @@
+{{- /* Bound the in-chart PostgreSQL connection budget for staged OCR. This is a
+conservative potential-session envelope, not measured open connections.
+External PostgreSQL remains an operator-measured contract. */ -}}
+{{- if and .Values.ocrStagedPage.enabled .Values.postgresql.enabled -}}
+{{- $cap := int (.Values.keda.maxReplicaCount | default 50) -}}
+{{- $render := .Values.ocrStagedPage.render -}}
+{{- $finalize := .Values.ocrStagedPage.finalize -}}
+{{- $renderPods := int $render.replicas -}}
+{{- if $render.autoscaling.enabled -}}{{- $renderPods = min (int $render.autoscaling.maxReplicas) $cap -}}{{- end -}}
+{{- $finalizePods := int $finalize.replicas -}}
+{{- if $finalize.autoscaling.enabled -}}{{- $finalizePods = min (int $finalize.autoscaling.maxReplicas) $cap -}}{{- end -}}
+{{- $gpuPods := int .Values.gpuWorker.replicas -}}
+{{- if .Values.gpuWorker.autoscaling.enabled -}}{{- $gpuPods = min (int .Values.gpuWorker.autoscaling.maxReplicas) $cap -}}{{- end -}}
+{{- /* A threaded Celery task may open its own Django connection. */ -}}
+{{- $gpuSessions := mul $gpuPods (add 1 (int .Values.gpuWorker.stagedInference.concurrency)) -}}
+{{- $cpuPods := int .Values.cpuWorker.replicas -}}
+{{- if .Values.cpuWorker.autoscaling.enabled -}}{{- $cpuPods = min (int .Values.cpuWorker.autoscaling.maxReplicas) $cap -}}{{- end -}}
+{{- $sessions := add (mul $renderPods (add 1 (int $render.concurrency))) (mul $finalizePods (add 1 (int $finalize.concurrency))) $gpuSessions (mul $cpuPods (add 1 (int .Values.cpuWorker.concurrency))) (mul (int .Values.celeryCoordinator.replicas) (add 1 (int .Values.celeryCoordinator.concurrency))) (mul (int .Values.coordinator.replicas) (add 1 (int .Values.coordinator.gunicorn.workers))) 1 -}}
+{{- if .Values.tesseractWorker.enabled -}}
+  {{- $tessPods := int .Values.tesseractWorker.replicas -}}
+  {{- if .Values.tesseractWorker.autoscaling.enabled -}}{{- $tessPods = min (int .Values.tesseractWorker.autoscaling.maxReplicas) $cap -}}{{- end -}}
+  {{- $sessions = add $sessions (mul $tessPods (add 1 (int .Values.tesseractWorker.concurrency))) -}}
+{{- end -}}
+{{- if .Values.cpuOcrWorker.enabled -}}
+  {{- $pods := int .Values.cpuOcrWorker.replicas -}}
+  {{- if .Values.cpuOcrWorker.autoscaling.enabled -}}{{- $pods = min (int .Values.cpuOcrWorker.autoscaling.maxReplicas) $cap -}}{{- end -}}
+  {{- $sessions = add $sessions (mul $pods (add 1 (int .Values.cpuOcrWorker.concurrency))) -}}
+{{- end -}}
+{{- if .Values.layoutCpuWorker.enabled -}}
+  {{- $pods := int .Values.layoutCpuWorker.replicas -}}
+  {{- if .Values.layoutCpuWorker.autoscaling.enabled -}}{{- $pods = min (int .Values.layoutCpuWorker.autoscaling.maxReplicas) $cap -}}{{- end -}}
+  {{- $sessions = add $sessions (mul $pods (add 1 (int .Values.layoutCpuWorker.concurrency))) -}}
+{{- end -}}
+{{- if .Values.nlpGpuWorker.enabled -}}
+  {{- $pods := int .Values.nlpGpuWorker.replicas -}}
+  {{- if .Values.nlpGpuWorker.autoscaling.enabled -}}{{- $pods = min (int .Values.nlpGpuWorker.autoscaling.maxReplicas) $cap -}}{{- end -}}
+  {{- $sessions = add $sessions (mul $pods (add 1 (int .Values.nlpGpuWorker.concurrency))) -}}
+{{- end -}}
+{{- if .Values.layoutlmWorker.enabled -}}
+  {{- $pods := int .Values.layoutlmWorker.replicas -}}
+  {{- if .Values.layoutlmWorker.autoscaling.enabled -}}{{- $pods = min (int .Values.layoutlmWorker.autoscaling.maxReplicas) $cap -}}{{- end -}}
+  {{- $sessions = add $sessions (mul $pods (add 1 (int .Values.layoutlmWorker.concurrency))) -}}
+{{- end -}}
+{{- $required := div (add (mul $sessions 6) 4) 5 -}}
+{{- if lt (int .Values.postgresql.config.maxConnections) $required -}}
+  {{- fail (printf "staged OCR PostgreSQL connection budget requires maxConnections >= %d for %d configured potential sessions (20%% planning headroom); got %d. Size PostgreSQL memory and measure pg_stat_activity before deployment" $required $sessions (int .Values.postgresql.config.maxConnections)) -}}
+{{- end -}}
+{{- end -}}

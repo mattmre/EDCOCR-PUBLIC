@@ -42,8 +42,8 @@ const event3: CustodyEvent = {
   hash: "11b5d32beec9958459ca9e784c7f2e5fb1acd57e2b17d1781106144874a75207",
 };
 
-describe("canonicalize", => {
-  it("emits keys in lexicographic order with Python-compatible whitespace", => {
+describe("canonicalize", () => {
+  it("emits keys in lexicographic order with Python-compatible whitespace", () => {
     const canonical = canonicalize({
       document_id: "doc-1",
       event_type: "file_ingested",
@@ -56,39 +56,39 @@ describe("canonicalize", => {
     );
   });
 
-  it("emits null / true / false / numbers as bare tokens", => {
+  it("emits null / true / false / numbers as bare tokens", () => {
     expect(canonicalize({ a: null, b: true, c: false, d: 42 })).toBe(
       '{"a": null, "b": true, "c": false, "d": 42}'
     );
   });
 
-  it("emits non-ASCII strings as \\uXXXX escapes", => {
+  it("emits non-ASCII strings as \\uXXXX escapes", () => {
     expect(canonicalize({ x: "résumé" })).toBe(
       '{"x": "r\\u00e9sum\\u00e9"}'
     );
   });
 });
 
-describe("recomputeEventHash", => {
-  it("matches the producer hash for a known-good event", async => {
+describe("recomputeEventHash", () => {
+  it("matches the producer hash for a known-good event", async () => {
     const computed = await recomputeEventHash(event1);
     expect(computed).toBe(event1.hash);
   });
 
-  it("matches across the full chain", async => {
+  it("matches across the full chain", async () => {
     expect(await recomputeEventHash(event2)).toBe(event2.hash);
     expect(await recomputeEventHash(event3)).toBe(event3.hash);
   });
 });
 
-describe("verifyChain", => {
-  it("returns 'empty' for an empty chain", async => {
+describe("verifyChain", () => {
+  it("returns 'empty' for an empty chain", async () => {
     const result = await verifyChain([]);
     expect(result.status).toBe("empty");
     expect(result.totalEvents).toBe(0);
   });
 
-  it("returns 'intact' for a known-good 3-event chain", async => {
+  it("returns 'intact' for a known-good 3-event chain", async () => {
     const result = await verifyChain([event1, event2, event3]);
     expect(result.status).toBe("intact");
     expect(result.totalEvents).toBe(3);
@@ -96,7 +96,7 @@ describe("verifyChain", => {
     expect(result.brokenAtIndex).toBeUndefined();
   });
 
-  it("returns 'broken' at the tampered event when payload is altered", async => {
+  it("returns 'broken' at the tampered event when payload is altered", async () => {
     const tampered: CustodyEvent = {
       ...event2,
       data: { page: 999 },
@@ -109,7 +109,7 @@ describe("verifyChain", => {
     expect(result.verifiedEvents).toBe(1);
   });
 
-  it("returns 'broken' when prev_hash linkage is wrong", async => {
+  it("returns 'broken' when prev_hash linkage is wrong", async () => {
     const detached: CustodyEvent = {
       ...event2,
       prev_hash: "0000000000000000000000000000000000000000000000000000000000000000",
@@ -120,7 +120,7 @@ describe("verifyChain", => {
     expect(result.reason).toMatch(/Broken prev_hash/);
   });
 
-  it("identifies tamper at index 0 when the very first event is altered", async => {
+  it("identifies tamper at index 0 when the very first event is altered", async () => {
     const tampered: CustodyEvent = {
       ...event1,
       timestamp: "2099-12-31T23:59:59.999+00:00",

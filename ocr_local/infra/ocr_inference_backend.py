@@ -26,6 +26,93 @@ INFERENCE_BACKEND = os.environ.get("OCR_INFERENCE_BACKEND", "paddle").lower().st
 
 # Valid backends
 VALID_BACKENDS = ("paddle", "onnx", "openvino", "auto")
+DEFAULT_DET_LIMIT_SIDE_LEN = 1536
+MIN_DET_LIMIT_SIDE_LEN = 960
+MAX_DET_LIMIT_SIDE_LEN = 4096
+# Keep low-confidence recognized spans available for review and legal
+# completeness.  Disposition is decided after OCR, not inside PaddleOCR.
+OCR_DROP_SCORE = 0.0
+
+
+def _explicit_bounded_int(name, minimum, maximum):
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be in {minimum}..{maximum}")
+    return value
+
+
+def get_native_threads_per_predictor():
+    """Explicit Paddle CPU native threads, separate from worker concurrency."""
+    return _explicit_bounded_int("OCR_NATIVE_THREADS_PER_PREDICTOR", 1, 64)
+
+
+def get_recognizer_batch_size():
+    """Paddle 2.x recognition-crop batch size, not page batching."""
+    return _explicit_bounded_int("OCR_RECOGNIZER_BATCH_SIZE", 1, 128)
+
+
+def get_gpu_device_configuration(device):
+    """Return use_gpu/gpu_id after validating explicit local-device binding.
+
+    Fleet GPU pods expose one device each. ``gpu:0`` is its process-local
+    index; the physical UUID remains in CUDA/NVIDIA_VISIBLE_DEVICES and the
+    runtime-pool key. Multiple visible devices need separate workers rather
+    than global Paddle device changes from concurrent predictor threads.
+    """
+    if device == "cpu":
+        return False, None
+    if device == "gpu":
+        return True, None  # legacy single-device configuration
+    if device != "gpu:0":
+        raise ValueError("explicit Paddle device must be local gpu:0")
+    if "CUDA_VISIBLE_DEVICES" in os.environ:
+        visible = os.environ["CUDA_VISIBLE_DEVICES"]
+    else:
+        visible = os.environ.get("NVIDIA_VISIBLE_DEVICES", "")
+    tokens = [item.strip() for item in visible.split(",") if item.strip()]
+    if len(tokens) != 1 or tokens[0].lower() in {
+        "all", "none", "void", "-1", "nodevfiles"
+    }:
+        raise RuntimeError("gpu:0 requires exactly one explicitly visible GPU")
+    return True, 0
+
+
+def get_detection_limit_side_len():
+    """Return the validated long-side detector resolution.
+
+    PaddleOCR defaults to 960 pixels, which can discard otherwise legible text
+    lines when a 300-DPI document page is reduced for detection. The qualified
+    default preserves those lines while keeping CPU inference bounded.
+    """
+    raw = os.environ.get(
+        "OCR_DET_LIMIT_SIDE_LEN", str(DEFAULT_DET_LIMIT_SIDE_LEN)
+    ).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid OCR_DET_LIMIT_SIDE_LEN=%r; using %d",
+            raw,
+            DEFAULT_DET_LIMIT_SIDE_LEN,
+        )
+        return DEFAULT_DET_LIMIT_SIDE_LEN
+    if not MIN_DET_LIMIT_SIDE_LEN <= value <= MAX_DET_LIMIT_SIDE_LEN:
+        logger.warning(
+            "OCR_DET_LIMIT_SIDE_LEN=%d is outside %d..%d; using %d",
+            value,
+            MIN_DET_LIMIT_SIDE_LEN,
+            MAX_DET_LIMIT_SIDE_LEN,
+            DEFAULT_DET_LIMIT_SIDE_LEN,
+        )
+        return DEFAULT_DET_LIMIT_SIDE_LEN
+    return value
+
 
 # Set OpenVINO device type at module load time (before worker threads start)
 # to avoid race conditions in multi-threaded pipelines.
@@ -118,17 +205,31 @@ def create_ocr_engine(lang_code, device="gpu"):
     """
     from paddleocr import PaddleOCR
 
+    from ocr_local.config.language_config import get_paddle_runtime_code
+
     backend = get_backend()
+    runtime_lang_code = get_paddle_runtime_code(lang_code)
 
     # Base configuration (shared across all backends).
     # PaddleOCR 2.x uses use_gpu boolean and use_angle_cls for
     # text-line orientation classification.
+    use_gpu, gpu_id = get_gpu_device_configuration(device)
+    native_threads = get_native_threads_per_predictor()
+    recognizer_batch = get_recognizer_batch_size()
     kwargs = {
         "use_angle_cls": True,
-        "lang": lang_code,
-        "use_gpu": (device == "gpu"),
+        "lang": runtime_lang_code,
+        "use_gpu": use_gpu,
         "show_log": False,
+        "det_limit_side_len": get_detection_limit_side_len(),
+        "drop_score": OCR_DROP_SCORE,
     }
+    if gpu_id is not None:
+        kwargs["gpu_id"] = gpu_id
+    if native_threads is not None:
+        kwargs["cpu_threads"] = native_threads
+    if recognizer_batch is not None:
+        kwargs["rec_batch_num"] = recognizer_batch
 
     # Backend-specific configuration.
     # PaddleOCR 2.x uses use_onnx=True to enable ONNX Runtime inference.
@@ -136,14 +237,14 @@ def create_ocr_engine(lang_code, device="gpu"):
         kwargs["use_onnx"] = True
         logger.info(
             "Creating PaddleOCR engine: lang=%s, device=%s, backend=%s (use_onnx=True)",
-            lang_code,
+            runtime_lang_code,
             device,
             backend,
         )
     else:
         logger.info(
             "Creating PaddleOCR engine: lang=%s, device=%s, backend=paddle",
-            lang_code,
+            runtime_lang_code,
             device,
         )
 
@@ -158,12 +259,31 @@ def create_ocr_engine(lang_code, device="gpu"):
         )
         fallback_kwargs = {
             "use_angle_cls": True,
-            "lang": lang_code,
-            "use_gpu": (device == "gpu"),
+            "lang": runtime_lang_code,
+            "use_gpu": use_gpu,
+            "drop_score": OCR_DROP_SCORE,
         }
+        for key in ("gpu_id", "cpu_threads", "rec_batch_num"):
+            if key in kwargs:
+                fallback_kwargs[key] = kwargs[key]
         if kwargs.get("use_onnx"):
             fallback_kwargs["use_onnx"] = True
-        return PaddleOCR(**fallback_kwargs)
+        try:
+            return PaddleOCR(**fallback_kwargs)
+        except TypeError as fallback_exc:
+            if not fallback_kwargs.pop("use_onnx", None):
+                raise
+            # PaddleOCR releases that removed the legacy ``use_onnx``
+            # constructor flag must still remain usable.  An explicitly
+            # requested accelerator is best-effort; native Paddle is the
+            # safe compatibility fallback when the installed constructor
+            # rejects that flag even after all unrelated kwargs are removed.
+            logger.warning(
+                "PaddleOCR rejected legacy use_onnx (%s); falling back to "
+                "native Paddle inference",
+                fallback_exc,
+            )
+            return PaddleOCR(**fallback_kwargs)
 
 
 def get_backend_info():
@@ -183,6 +303,10 @@ def get_backend_info():
     info = {
         "backend": backend,
         "configured": INFERENCE_BACKEND,
+        "det_limit_side_len": get_detection_limit_side_len(),
+        "drop_score": OCR_DROP_SCORE,
+        "native_threads_per_predictor": get_native_threads_per_predictor(),
+        "recognizer_batch_size": get_recognizer_batch_size(),
         "onnx_available": False,
         "openvino_available": False,
     }

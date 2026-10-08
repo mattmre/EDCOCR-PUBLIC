@@ -21,9 +21,11 @@ def _build_test_client(app, client_addr=None):
     except TypeError:
         return TestClient(app)
 
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def client(tmp_path):
@@ -33,9 +35,22 @@ def client(tmp_path):
     source.mkdir()
     output.mkdir()
 
-    with patch("api.config.SOURCE_FOLDER", str(source)), \
-         patch("api.config.OUTPUT_FOLDER", str(output)), \
-         patch("api.job_manager.config") as mock_config:
+    from api import event_store
+
+    event_store.reset_event_store()
+    with (
+        patch("api.config.SOURCE_FOLDER", str(source)),
+        patch("api.config.OUTPUT_FOLDER", str(output)),
+        patch("api.config.EVENT_STORE_PATH", str(output / "event_store.db")),
+        patch("api.config.OCR_API_KEY", ""),
+        patch("api.auth.OCR_API_KEY", ""),
+        patch("api.config.ANONYMOUS_ROLE", "operator"),
+        patch("api.auth.ANONYMOUS_ROLE", "operator"),
+        patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+        patch("api.config.ALLOW_UNAUTHENTICATED", True),
+        patch("api.identity._anonymous_role", return_value="operator"),
+        patch("api.job_manager.config") as mock_config,
+    ):
         mock_config.SOURCE_FOLDER = str(source)
         mock_config.OUTPUT_FOLDER = str(output)
         mock_config.PIPELINE_SCRIPT = "echo"
@@ -43,8 +58,17 @@ def client(tmp_path):
         mock_config.MAX_CONCURRENT_JOBS = 64
 
         from api.main import create_app
+
         app = create_app()
-        yield TestClient(app)
+        from api import limits as api_limits
+        from api import main as api_main
+
+        api_limits.limiter.enabled = False
+        api_main.limiter.enabled = False
+        try:
+            yield TestClient(app)
+        finally:
+            event_store.reset_event_store()
 
 
 @pytest.fixture()
@@ -66,23 +90,32 @@ def sample_pdf(tmp_path) -> Path:
 # API Key Authentication Tests
 # ---------------------------------------------------------------------------
 
+
 class TestAPIKeyAuth:
     def test_startup_fails_when_auth_key_missing_without_override(self):
         """App startup fails unless empty OCR_API_KEY has explicit override."""
         from api.main import create_app
 
-        with patch("api.auth.OCR_API_KEY", ""), patch(
-            "api.auth.ALLOW_UNAUTHENTICATED", False
+        with (
+            patch("api.auth.OCR_API_KEY", ""),
+            patch("api.auth.ALLOW_UNAUTHENTICATED", False),
+            patch("api.config.OCR_API_KEY", ""),
+            patch("api.config.ALLOW_UNAUTHENTICATED", False),
         ):
             with pytest.raises(RuntimeError, match="OCR_API_KEY"):
                 create_app()
 
-    def test_startup_allows_empty_key_with_explicit_override(self):
+    def test_startup_allows_empty_key_with_explicit_override(self, tmp_path):
         """App startup succeeds when ALLOW_UNAUTHENTICATED=true is set."""
         from api.main import create_app
 
-        with patch("api.auth.OCR_API_KEY", ""), patch(
-            "api.auth.ALLOW_UNAUTHENTICATED", True
+        with (
+            patch("api.auth.OCR_API_KEY", ""),
+            patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+            patch(
+                "api.config.API_AUDIT_LOG_PATH",
+                str(tmp_path / "api-audit.jsonl"),
+            ),
         ):
             app = create_app()
             client = TestClient(app)
@@ -96,10 +129,12 @@ class TestAPIKeyAuth:
         source.mkdir()
         output.mkdir()
 
-        with patch("api.auth.OCR_API_KEY", "unit-test-api-token"), \
-             patch("api.config.SOURCE_FOLDER", str(source)), \
-             patch("api.config.OUTPUT_FOLDER", str(output)), \
-             patch("api.job_manager.config") as mock_config:
+        with (
+            patch("api.auth.OCR_API_KEY", "unit-test-api-token"),
+            patch("api.config.SOURCE_FOLDER", str(source)),
+            patch("api.config.OUTPUT_FOLDER", str(output)),
+            patch("api.job_manager.config") as mock_config,
+        ):
             mock_config.SOURCE_FOLDER = str(source)
             mock_config.OUTPUT_FOLDER = str(output)
             mock_config.PIPELINE_SCRIPT = "echo"
@@ -107,6 +142,7 @@ class TestAPIKeyAuth:
             mock_config.MAX_CONCURRENT_JOBS = 64
 
             from api.main import create_app
+
             app = create_app()
             client = TestClient(app)
             resp = client.get("/api/v1/jobs")
@@ -119,10 +155,12 @@ class TestAPIKeyAuth:
         source.mkdir()
         output.mkdir()
 
-        with patch("api.auth.OCR_API_KEY", "unit-test-api-token"), \
-             patch("api.config.SOURCE_FOLDER", str(source)), \
-             patch("api.config.OUTPUT_FOLDER", str(output)), \
-             patch("api.job_manager.config") as mock_config:
+        with (
+            patch("api.auth.OCR_API_KEY", "unit-test-api-token"),
+            patch("api.config.SOURCE_FOLDER", str(source)),
+            patch("api.config.OUTPUT_FOLDER", str(output)),
+            patch("api.job_manager.config") as mock_config,
+        ):
             mock_config.SOURCE_FOLDER = str(source)
             mock_config.OUTPUT_FOLDER = str(output)
             mock_config.PIPELINE_SCRIPT = "echo"
@@ -130,10 +168,13 @@ class TestAPIKeyAuth:
             mock_config.MAX_CONCURRENT_JOBS = 64
 
             from api.main import create_app
+
             app = create_app()
             client = TestClient(app)
 
-            resp = client.get("/api/v1/jobs", headers={"X-API-Key": "unit-test-api-token"})
+            resp = client.get(
+                "/api/v1/jobs", headers={"X-API-Key": "unit-test-api-token"}
+            )
             assert resp.status_code == 200
 
     def test_health_exempt_from_auth(self, tmp_path):
@@ -143,10 +184,12 @@ class TestAPIKeyAuth:
         source.mkdir()
         output.mkdir()
 
-        with patch("api.auth.OCR_API_KEY", "unit-test-api-token"), \
-             patch("api.config.SOURCE_FOLDER", str(source)), \
-             patch("api.config.OUTPUT_FOLDER", str(output)), \
-             patch("api.job_manager.config") as mock_config:
+        with (
+            patch("api.auth.OCR_API_KEY", "unit-test-api-token"),
+            patch("api.config.SOURCE_FOLDER", str(source)),
+            patch("api.config.OUTPUT_FOLDER", str(output)),
+            patch("api.job_manager.config") as mock_config,
+        ):
             mock_config.SOURCE_FOLDER = str(source)
             mock_config.OUTPUT_FOLDER = str(output)
             mock_config.PIPELINE_SCRIPT = "echo"
@@ -154,6 +197,7 @@ class TestAPIKeyAuth:
             mock_config.MAX_CONCURRENT_JOBS = 64
 
             from api.main import create_app
+
             app = create_app()
             client = TestClient(app)
 
@@ -166,6 +210,7 @@ class TestAPIKeyAuth:
 # Ingress Allowlist Tests
 # ---------------------------------------------------------------------------
 
+
 class TestIngressAllowlist:
     def test_allowlisted_client_can_access_api(self, tmp_path):
         """When API_ALLOWED_IPS is configured, allowlisted clients are permitted."""
@@ -174,10 +219,16 @@ class TestIngressAllowlist:
         source.mkdir()
         output.mkdir()
 
-        with patch("api.auth.API_ALLOWED_IPS", ("203.0.113.10", "testclient")), \
-             patch("api.config.SOURCE_FOLDER", str(source)), \
-             patch("api.config.OUTPUT_FOLDER", str(output)), \
-             patch("api.job_manager.config") as mock_config:
+        with (
+            patch("api.auth.API_ALLOWED_IPS", ("203.0.113.10", "testclient")),
+            patch("api.config.SOURCE_FOLDER", str(source)),
+            patch("api.config.OUTPUT_FOLDER", str(output)),
+            patch("api.config.OCR_API_KEY", ""),
+            patch("api.auth.OCR_API_KEY", ""),
+            patch("api.config.ALLOW_UNAUTHENTICATED", True),
+            patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+            patch("api.job_manager.config") as mock_config,
+        ):
             mock_config.SOURCE_FOLDER = str(source)
             mock_config.OUTPUT_FOLDER = str(output)
             mock_config.PIPELINE_SCRIPT = "echo"
@@ -185,6 +236,7 @@ class TestIngressAllowlist:
             mock_config.MAX_CONCURRENT_JOBS = 64
 
             from api.main import create_app
+
             app = create_app()
             client = _build_test_client(app, ("203.0.113.10", 50001))
 
@@ -198,10 +250,12 @@ class TestIngressAllowlist:
         source.mkdir()
         output.mkdir()
 
-        with patch("api.auth.API_ALLOWED_IPS", ("203.0.113.10",)), \
-             patch("api.config.SOURCE_FOLDER", str(source)), \
-             patch("api.config.OUTPUT_FOLDER", str(output)), \
-             patch("api.job_manager.config") as mock_config:
+        with (
+            patch("api.auth.API_ALLOWED_IPS", ("203.0.113.10",)),
+            patch("api.config.SOURCE_FOLDER", str(source)),
+            patch("api.config.OUTPUT_FOLDER", str(output)),
+            patch("api.job_manager.config") as mock_config,
+        ):
             mock_config.SOURCE_FOLDER = str(source)
             mock_config.OUTPUT_FOLDER = str(output)
             mock_config.PIPELINE_SCRIPT = "echo"
@@ -209,6 +263,7 @@ class TestIngressAllowlist:
             mock_config.MAX_CONCURRENT_JOBS = 64
 
             from api.main import create_app
+
             app = create_app()
             client = _build_test_client(app, ("198.51.100.44", 50002))
 
@@ -223,10 +278,12 @@ class TestIngressAllowlist:
         source.mkdir()
         output.mkdir()
 
-        with patch("api.auth.API_ALLOWED_IPS", ("203.0.113.10",)), \
-             patch("api.config.SOURCE_FOLDER", str(source)), \
-             patch("api.config.OUTPUT_FOLDER", str(output)), \
-             patch("api.job_manager.config") as mock_config:
+        with (
+            patch("api.auth.API_ALLOWED_IPS", ("203.0.113.10",)),
+            patch("api.config.SOURCE_FOLDER", str(source)),
+            patch("api.config.OUTPUT_FOLDER", str(output)),
+            patch("api.job_manager.config") as mock_config,
+        ):
             mock_config.SOURCE_FOLDER = str(source)
             mock_config.OUTPUT_FOLDER = str(output)
             mock_config.PIPELINE_SCRIPT = "echo"
@@ -234,6 +291,7 @@ class TestIngressAllowlist:
             mock_config.MAX_CONCURRENT_JOBS = 64
 
             from api.main import create_app
+
             app = create_app()
             client = _build_test_client(app, ("198.51.100.44", 50003))
 
@@ -246,18 +304,32 @@ class TestIngressAllowlist:
 # Queue Capacity Tests
 # ---------------------------------------------------------------------------
 
+
 class TestQueueCapacity:
     def test_submit_rejected_when_queue_full(self, tmp_path, sample_pdf):
         """Submit returns 429 when MAX_CONCURRENT_JOBS reached."""
+        from api import event_store
+
         source = tmp_path / "source"
         output = tmp_path / "output"
         source.mkdir()
         output.mkdir()
 
-        with patch("api.config.SOURCE_FOLDER", str(source)), \
-             patch("api.config.OUTPUT_FOLDER", str(output)), \
-             patch("api.config.MAX_CONCURRENT_JOBS", 2), \
-             patch("api.job_manager.config") as mock_config:
+        event_store.reset_event_store()
+        with (
+            patch("api.config.SOURCE_FOLDER", str(source)),
+            patch("api.config.OUTPUT_FOLDER", str(output)),
+            patch("api.config.EVENT_STORE_PATH", str(output / "event_store.db")),
+            patch("api.config.MAX_CONCURRENT_JOBS", 2),
+            patch("api.config.OCR_API_KEY", ""),
+            patch("api.auth.OCR_API_KEY", ""),
+            patch("api.config.ANONYMOUS_ROLE", "operator"),
+            patch("api.auth.ANONYMOUS_ROLE", "operator"),
+            patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+            patch("api.config.ALLOW_UNAUTHENTICATED", True),
+            patch("api.identity._anonymous_role", return_value="operator"),
+            patch("api.job_manager.config") as mock_config,
+        ):
             mock_config.SOURCE_FOLDER = str(source)
             mock_config.OUTPUT_FOLDER = str(output)
             mock_config.PIPELINE_SCRIPT = "echo"
@@ -265,7 +337,13 @@ class TestQueueCapacity:
             mock_config.MAX_CONCURRENT_JOBS = 2
 
             from api.main import create_app
+
             app = create_app()
+            from api import limits as api_limits
+            from api import main as api_main
+
+            api_limits.limiter.enabled = False
+            api_main.limiter.enabled = False
             app.state.limiter.enabled = False
             app.state.limiter.reset()
             client = TestClient(app)
@@ -289,6 +367,7 @@ class TestQueueCapacity:
                 )
             assert resp.status_code == 429
             assert resp.json()["detail"]["error"] == "queue_full"
+        event_store.reset_event_store()
 
     def test_submit_accepted_when_queue_has_space(self, client, sample_pdf):
         """Submit succeeds when queue is not full."""
@@ -306,6 +385,7 @@ class TestQueueCapacity:
 # Rate Limiting Tests
 # ---------------------------------------------------------------------------
 
+
 class TestRateLimiting:
     def test_rate_limit_uses_default_from_env(self):
         """Rate limiter respects OCR_RATE_LIMIT env var."""
@@ -313,6 +393,7 @@ class TestRateLimiting:
             import importlib  # noqa: E402
 
             from api import limits
+
             importlib.reload(limits)
             assert limits.get_default_rate() == "5/minute"
 
@@ -322,6 +403,7 @@ class TestRateLimiting:
             import importlib  # noqa: E402
 
             from api import limits
+
             importlib.reload(limits)
             assert limits.get_submit_rate() == "3/minute"
 
@@ -340,12 +422,18 @@ class TestRateLimiting:
         # Create a strict limiter (2 requests/minute)
         strict_limiter = Limiter(key_func=get_remote_address)
 
-        with patch("api.config.SOURCE_FOLDER", str(source)), \
-             patch("api.config.OUTPUT_FOLDER", str(output)), \
-             patch("api.limits.limiter", strict_limiter), \
-             patch("api.limits.get_default_rate", return_value="2/minute"), \
-             patch("api.limits.get_submit_rate", return_value="2/minute"), \
-             patch("api.job_manager.config") as mock_config:
+        with (
+            patch("api.config.SOURCE_FOLDER", str(source)),
+            patch("api.config.OUTPUT_FOLDER", str(output)),
+            patch("api.config.OCR_API_KEY", ""),
+            patch("api.auth.OCR_API_KEY", ""),
+            patch("api.config.ALLOW_UNAUTHENTICATED", True),
+            patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+            patch("api.limits.limiter", strict_limiter),
+            patch("api.limits.get_default_rate", return_value="2/minute"),
+            patch("api.limits.get_submit_rate", return_value="2/minute"),
+            patch("api.job_manager.config") as mock_config,
+        ):
             mock_config.SOURCE_FOLDER = str(source)
             mock_config.OUTPUT_FOLDER = str(output)
             mock_config.PIPELINE_SCRIPT = "echo"
@@ -354,26 +442,31 @@ class TestRateLimiting:
 
             # Reload jobs router so decorators pick up patched limiter & rates
             from api.routers import jobs as jobs_mod
+
             importlib.reload(jobs_mod)
 
             from api.main import create_app
+
             app = create_app()
             app.state.limiter = strict_limiter
             client = TestClient(app)
 
-            # Make requests up to and beyond the limit
-            statuses = []
-            for _ in range(5):
-                resp = client.get("/api/v1/jobs")
-                statuses.append(resp.status_code)
+            try:
+                # Make requests up to and beyond the limit
+                statuses = []
+                for _ in range(5):
+                    resp = client.get("/api/v1/jobs")
+                    statuses.append(resp.status_code)
 
-            # At least one response should be 429
-            assert 429 in statuses, f"Expected 429 in {statuses}"
+                # At least one response should be 429
+                assert 429 in statuses, f"Expected 429 in {statuses}"
+            finally:
+                # Restore original modules even when the assertion fails so
+                # this test cannot poison later API suites with its limiter.
+                from api import limits as limits_mod
 
-            # Restore original modules for other tests
-            from api import limits as limits_mod
-            importlib.reload(limits_mod)
-            importlib.reload(jobs_mod)
+                importlib.reload(limits_mod)
+                importlib.reload(jobs_mod)
 
 
 class TestPathConfiguration:
@@ -425,6 +518,7 @@ class TestPathConfiguration:
 # Path Traversal Tests
 # ---------------------------------------------------------------------------
 
+
 class TestPathTraversal:
     def test_source_path_rejects_traversal(self):
         """Form parser rejects source_path with path traversal characters."""
@@ -475,6 +569,7 @@ class TestPathTraversal:
 # ---------------------------------------------------------------------------
 # Dependency Injection Tests
 # ---------------------------------------------------------------------------
+
 
 class TestFormParsing:
     def test_parse_job_submit_form_defaults(self):

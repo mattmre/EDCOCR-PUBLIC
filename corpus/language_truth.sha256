@@ -227,7 +227,7 @@
       "sha256": "dba85b76-f8c8f361-88f552bc-1c0348dd-d48ea4a3-c4a5e0df-f3c19492-c33f1ab3"
     }
   ],
-  "gate": " E-A-010 frozen language corpus",
+  "gate": "Plan A E-A-010 frozen language corpus",
   "schema_version": "1.0",
   "truth_path": "corpus/language_truth.json"
 }

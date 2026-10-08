@@ -1,6 +1,6 @@
 {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
 {{- /*
-  Federation mTLS — RabbitMQ server certificate (item C8).
+  Federation mTLS — RabbitMQ server certificate (Plan C Phase 1, item C8).
 
   Mounted into the RabbitMQ pod as the AMQPS / federation listener cert.
   Used by federation upstream peers connecting in over 5671 / 25672 / 4369.

@@ -1,7 +1,7 @@
-"""Python SDK client for EDCOCR API.
+"""Python SDK client for OCR_LOCAL API.
 
 .. deprecated:: 1.2.1
-    **This module is the legacy in-tree SDK and is retained only for
+    **maintenance review: This module is the legacy in-tree SDK and is retained only for
     backward compatibility with older internal scripts.** It exposes
     ``OcrClient`` / ``JobInfo`` / ``JobStatus`` enums that are NOT compatible
     with the canonical published SDK under ``sdk/python/src/edcocr_sdk``.
@@ -50,7 +50,7 @@ from ocr_local.config.version import __version__ as _sdk_version
 logger = logging.getLogger(__name__)
 
 warnings.warn(
-    "sdk.python_client is the legacy in-tree SDK and is deprecated. "
+    "sdk.python_client is the legacy in-tree SDK (maintenance review) and is deprecated. "
     "Use the canonical SDK: `from edcocr_sdk import EDCOCRClient` "
     "(see sdk/python/src/edcocr_sdk). This module will be removed in a "
     "future major release.",
@@ -67,6 +67,7 @@ def _get_requests():
     if _requests is None:
         try:
             import requests as req
+
             _requests = req
         except ImportError:
             raise ImportError(
@@ -211,7 +212,7 @@ class ServerError(OcrClientError):
 
 
 class OcrClient:
-    """Python SDK client for EDCOCR API.
+    """Python SDK client for OCR_LOCAL API.
 
     Args:
         base_url: Root URL of the OCR API (e.g. ``http://localhost:8000``).
@@ -390,7 +391,8 @@ class OcrClient:
             job_id: Job identifier.
             output_type: One of: ocr_text, searchable_pdf, structure, entities,
                 ner, extraction, classification, validation, handwriting,
-                signature, vertical, custody.
+                signature, vertical, custody, retrieval, form, ai_text,
+                language, symbology.
 
         Returns:
             Raw bytes of the output file.
@@ -408,8 +410,9 @@ class OcrClient:
     def get_output_json(self, job_id: str, output_type: str) -> dict:
         """Download a JSON output artifact and parse it.
 
-        For JSON sidecar outputs (entities, ner, extraction, classification,
-        validation, handwriting, signature, vertical, structure).
+        For JSON sidecar outputs (structure, entities, ner, extraction,
+        classification, validation, handwriting, signature, vertical,
+        retrieval, form, ai_text, language, symbology).
         """
         content = self.get_output(job_id, output_type)
         return json.loads(content)
@@ -515,7 +518,7 @@ class OcrClient:
             except (ConnectionError, OSError) as exc:
                 last_error = exc
                 if attempt < self.max_retries - 1:
-                    time.sleep(min(2 ** attempt, 10))
+                    time.sleep(min(2**attempt, 10))
                 continue
 
         raise OcrClientError(

@@ -1,4 +1,4 @@
-"""Tests for ingest_document refactored helpers.
+"""Tests for ingest_document refactored helpers (maintenance review).
 
 Validates that:
 - Extracted helper functions work correctly in isolation.
@@ -8,6 +8,7 @@ Validates that:
 Run with: cd coordinator && python -m pytest jobs/tests/test_ingest_refactor.py -v
 """
 
+import hashlib
 import os
 import shutil
 import sys
@@ -27,6 +28,7 @@ from jobs.tasks import (
     _IngestError,
     _load_source_classifiers,
     _log_worker_availability,
+    _materialize_preuploaded_source,
     _setup_ingest_work_dir,
     _upload_source_to_s3,
     _validate_and_resolve_source,
@@ -70,9 +72,7 @@ class TestSetupIngestWorkDir(TestCase):
             source_file="/some/path/test.pdf",
             status=Job.Status.SUBMITTED,
         )
-        job_path, source_path = _setup_ingest_work_dir(
-            job, str(job.job_id), "s3"
-        )
+        job_path, source_path = _setup_ingest_work_dir(job, str(job.job_id), "s3")
         try:
             assert os.path.isdir(job_path)
             assert os.path.basename(source_path) == "test.pdf"
@@ -126,13 +126,17 @@ class TestValidateAndResolveSource(TestCase):
 
     def test_rejects_source_outside_allowed_root(self):
         """Raises _IngestError when source file is outside NFS_ROOT."""
-        with tempfile.TemporaryDirectory() as allowed_root, \
-             tempfile.TemporaryDirectory() as other_root:
+        with (
+            tempfile.TemporaryDirectory() as allowed_root,
+            tempfile.TemporaryDirectory() as other_root,
+        ):
             outside_file = os.path.join(other_root, "outside.pdf")
             with open(outside_file, "wb") as f:
                 f.write(b"%PDF-1.4 outside content")
 
-            dest_path = os.path.join(allowed_root, "jobs", "dest", "source", "outside.pdf")
+            dest_path = os.path.join(
+                allowed_root, "jobs", "dest", "source", "outside.pdf"
+            )
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
             with override_settings(NFS_ROOT=allowed_root):
@@ -177,6 +181,69 @@ class TestUploadSourceToS3(TestCase):
         assert "S3 upload failed" in str(ctx.exception)
 
 
+class TestMaterializePreuploadedSource(TestCase):
+    """Tests the durable API-admission handoff into coordinator ingest."""
+
+    def _job(self, payload=b"durable source"):
+        job = Job.objects.create(
+            source_file="scan.pdf",
+            source_hash=hashlib.sha256(payload).hexdigest(),
+            source_size_bytes=len(payload),
+            source_object_key="",
+            submission_ready=True,
+            storage_backend_used="s3",
+            status=Job.Status.SUBMITTED,
+        )
+        job.source_object_key = f"jobs/{job.job_id}/source/scan.pdf"
+        job.save(update_fields=["source_object_key"])
+        return job
+
+    def test_downloads_and_verifies_exact_admitted_source(self):
+        payload = b"durable source"
+        job = self._job(payload)
+        backend = MagicMock()
+
+        def download(_key, destination):
+            with open(destination, "wb") as output:
+                output.write(payload)
+
+        backend.download_file.side_effect = download
+        with tempfile.TemporaryDirectory() as tmpdir:
+            destination = os.path.join(tmpdir, "scan.pdf")
+            self.assertTrue(_materialize_preuploaded_source(job, backend, destination))
+            with open(destination, "rb") as source:
+                self.assertEqual(source.read(), payload)
+        backend.download_file.assert_called_once_with(
+            job.source_object_key, destination
+        )
+
+    def test_returns_false_for_legacy_non_admitted_job(self):
+        job = Job.objects.create(source_file="scan.pdf", status=Job.Status.SUBMITTED)
+        self.assertFalse(
+            _materialize_preuploaded_source(job, MagicMock(), "/unused/scan.pdf")
+        )
+
+    def test_rejects_noncanonical_key_or_changed_bytes(self):
+        job = self._job()
+        backend = MagicMock()
+        job.source_object_key = "jobs/foreign/source/scan.pdf"
+        with self.assertRaisesRegex(_IngestError, "binding is not canonical"):
+            _materialize_preuploaded_source(job, backend, "/unused/scan.pdf")
+
+        job.source_object_key = f"jobs/{job.job_id}/source/scan.pdf"
+
+        def download(_key, destination):
+            with open(destination, "wb") as output:
+                output.write(b"changed")
+
+        backend.download_file.side_effect = download
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(_IngestError, "integrity check failed"):
+                _materialize_preuploaded_source(
+                    job, backend, os.path.join(tmpdir, "scan.pdf")
+                )
+
+
 class TestLoadSourceClassifiers(TestCase):
     """Tests for _load_source_classifiers helper."""
 
@@ -188,7 +255,10 @@ class TestLoadSourceClassifiers(TestCase):
             if key.startswith("ocr_distributed"):
                 saved[key] = sys.modules.pop(key)
         try:
-            with patch.dict(sys.modules, {"ocr_distributed": None, "ocr_distributed.ocr_utils": None}):
+            with patch.dict(
+                sys.modules,
+                {"ocr_distributed": None, "ocr_distributed.ocr_utils": None},
+            ):
                 classify, count = _load_source_classifiers()
 
             result_type, warning = classify("/some/file.pdf")
@@ -223,10 +293,13 @@ class TestClassifyAndCountPages(TestCase):
                 if key.startswith("ocr_distributed"):
                     saved[key] = sys.modules.pop(key)
             try:
-                with patch.dict(sys.modules, {
-                    "ocr_distributed": None,
-                    "ocr_distributed.ocr_utils": None,
-                }):
+                with patch.dict(
+                    sys.modules,
+                    {
+                        "ocr_distributed": None,
+                        "ocr_distributed.ocr_utils": None,
+                    },
+                ):
                     with self.assertRaises(_IngestError) as ctx:
                         _classify_and_count_pages(job, path)
                     assert "Unsupported file" in str(ctx.exception)
@@ -251,8 +324,8 @@ class TestClassifyAndCountPages(TestCase):
 class TestDetectLanguage(TestCase):
     """Tests for _detect_language helper."""
 
-    def test_defaults_to_en_on_failure(self):
-        """Language detection failure defaults to 'en' without raising."""
+    def test_detection_failure_preserves_unknown_without_claiming_english(self):
+        """A failed detector leaves language unknown and reviewable."""
         job = Job.objects.create(
             source_file="/test.pdf",
             status=Job.Status.SUBMITTED,
@@ -262,7 +335,13 @@ class TestDetectLanguage(TestCase):
             _detect_language(job, "/nonexistent.pdf", "pdf")
 
         job.refresh_from_db()
-        assert job.detected_language == "en"
+        assert job.detected_language == "und"
+        from ocr_local.language_routing import route_language
+
+        route = route_language(job.detected_language)
+        assert route.detected_label == "und"
+        assert route.model_language == "en"  # bounded bootstrap, not a detection
+        assert route.needs_review
 
 
 class TestCleanupTempDir(TestCase):
@@ -288,7 +367,17 @@ class TestCleanupTempDir(TestCase):
 
     def test_handles_missing_dir(self):
         """No error when directory does not exist."""
-        _cleanup_temp_dir("/nonexistent/path/12345", "s3")
+        assert _cleanup_temp_dir("/nonexistent/path/12345", "s3") is True
+
+    def test_reports_failed_removal_instead_of_succeeding_silently(self):
+        """A retained S3 workspace must be visible to ingest callers."""
+        tmpdir = tempfile.mkdtemp(prefix="test_cleanup_failure_")
+        with patch(
+            "jobs.tasks.shutil.rmtree",
+            side_effect=PermissionError("cleanup denied"),
+        ):
+            assert _cleanup_temp_dir(tmpdir, "s3") is False
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class TestWorkDirCleanupOnError(TestCase):
@@ -316,6 +405,7 @@ class TestWorkDirCleanupOnError(TestCase):
         class _FakeDetector:
             def __init__(self, _):
                 pass
+
             def detect_from_pdf(self, _):
                 return "en"
 
@@ -508,8 +598,10 @@ class TestWorkDirCleanupOnError(TestCase):
         backend.backend_name = "s3"
         mock_get_storage.return_value = backend
 
-        with tempfile.TemporaryDirectory() as allowed_root, \
-             tempfile.TemporaryDirectory() as other_root:
+        with (
+            tempfile.TemporaryDirectory() as allowed_root,
+            tempfile.TemporaryDirectory() as other_root,
+        ):
             outside_file = os.path.join(other_root, "outside.pdf")
             with open(outside_file, "wb") as f:
                 f.write(b"%PDF-1.4 outside content")
@@ -540,14 +632,15 @@ class TestWorkDirCleanupOnError(TestCase):
 class TestDispatchProcessing(TestCase):
     """Tests for _dispatch_processing helper."""
 
-    @patch("jobs.tasks.process_document.apply_async")
-    def test_small_doc_dispatches_single_worker(self, mock_dispatch):
+    @patch("jobs.tasks.extract_pages.apply_async")
+    def test_small_doc_dispatches_page_fenced_worker(self, mock_dispatch):
         job = Job.objects.create(
             source_file="/test.pdf",
+            source_type="pdf",
             status=Job.Status.INGESTING,
         )
         result = _dispatch_processing(job, str(job.job_id), total_pages=5)
-        assert result["mode"] == "single"
+        assert result["mode"] == "fanout"
         mock_dispatch.assert_called_once()
         job.refresh_from_db()
         assert job.status == Job.Status.PROCESSING
@@ -556,6 +649,7 @@ class TestDispatchProcessing(TestCase):
     def test_large_doc_dispatches_fanout(self, mock_dispatch):
         job = Job.objects.create(
             source_file="/test.pdf",
+            source_type="pdf",
             status=Job.Status.INGESTING,
         )
         result = _dispatch_processing(job, str(job.job_id), total_pages=50)
@@ -572,6 +666,40 @@ class TestDispatchProcessing(TestCase):
         result = _dispatch_processing(job, str(job.job_id), total_pages=5)
         assert result["mode"] == "skip_ocr"
         mock_dispatch.assert_called_once()
+
+    @patch("jobs.tasks.process_text_only.apply_async")
+    def test_text_source_dispatches_native_text_processing(self, mock_dispatch):
+        job = Job.objects.create(
+            source_file="/test.json",
+            source_type="text",
+            status=Job.Status.INGESTING,
+        )
+        result = _dispatch_processing(job, str(job.job_id), total_pages=1)
+        assert result["mode"] == "text_only"
+        mock_dispatch.assert_called_once()
+        assert mock_dispatch.call_args.kwargs["queue"] == "cpu_general"
+
+    @patch("jobs.tasks._record_custody_event")
+    @patch(
+        "jobs.tasks.extract_pages.apply_async",
+        side_effect=RuntimeError("broker down"),
+    )
+    def test_broker_publication_failure_remains_retryable_in_outbox(
+        self, mock_dispatch, mock_custody
+    ):
+        job = Job.objects.create(
+            source_file="/test.pdf",
+            source_type="pdf",
+            status=Job.Status.INGESTING,
+        )
+        result = _dispatch_processing(job, str(job.job_id), total_pages=1)
+
+        assert result["status"] == "queued"
+        assert result["job_id"] == str(job.job_id)
+        job.refresh_from_db()
+        assert job.status == Job.Status.PROCESSING
+        mock_dispatch.assert_called_once()
+        mock_custody.assert_not_called()
 
 
 class TestLogWorkerAvailability(TestCase):

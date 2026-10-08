@@ -18,11 +18,35 @@ const defaultApiUrl = process.env.PLAYWRIGHT_API_BASE_URL || (isCI ? `http://127
 // Some CI workflows run Playwright without Python API dependencies or
 // provisioned service URLs; those should remain in the blocked/skip posture
 // instead of hard-failing on webServer startup.
-const needsWebServer =
+const needsApiWebServer =
   !process.env.PLAYWRIGHT_API_BASE_URL &&
   isCI &&
   process.env.PLAYWRIGHT_AUTO_API === "true";
-const webServerConfig = needsWebServer
+
+if (needsApiWebServer) {
+  process.env.PLAYWRIGHT_API_BASE_URL = defaultApiUrl;
+}
+
+// Auto-managed Next operator console: when PLAYWRIGHT_AUTO_FRONTEND=true and
+// no external frontend URL is supplied, default to a local Next dev server.
+const FRONTEND_WEB_SERVER_PORT = 3100;
+const hasExplicitFrontendUrl = Boolean(
+  process.env.PLAYWRIGHT_FRONTEND_BASE_URL &&
+    process.env.PLAYWRIGHT_FRONTEND_BASE_URL.trim(),
+);
+const autoFrontend = process.env.PLAYWRIGHT_AUTO_FRONTEND === "true";
+const needsFrontendWebServer = !hasExplicitFrontendUrl && autoFrontend;
+const frontendBaseUrl = hasExplicitFrontendUrl
+  ? process.env.PLAYWRIGHT_FRONTEND_BASE_URL.trim()
+  : autoFrontend
+    ? `http://127.0.0.1:${FRONTEND_WEB_SERVER_PORT}`
+    : undefined;
+
+if (needsFrontendWebServer) {
+  process.env.PLAYWRIGHT_FRONTEND_BASE_URL = frontendBaseUrl;
+}
+
+const apiWebServerConfig = needsApiWebServer
   ? {
       command: `python -m uvicorn api.main:app --host 127.0.0.1 --port ${WEB_SERVER_PORT}`,
       port: WEB_SERVER_PORT,
@@ -30,6 +54,9 @@ const webServerConfig = needsWebServer
       timeout: 30_000,
       env: {
         ALLOW_UNAUTHENTICATED: "true",
+        // Request smoke tests submit, retry, and cancel jobs, so the
+        // unauthenticated local harness must exercise operator-scoped paths.
+        ANONYMOUS_ROLE: "operator",
         OCR_SUBMIT_RATE_LIMIT: "10000/minute",
         OCR_RATE_LIMIT: "10000/minute",
         MAX_CONCURRENT_JOBS: "100",
@@ -38,6 +65,18 @@ const webServerConfig = needsWebServer
       },
     }
   : undefined;
+
+const frontendWebServerConfig = needsFrontendWebServer
+  ? {
+      command: `npm run dev -- --port ${FRONTEND_WEB_SERVER_PORT} --hostname 127.0.0.1`,
+      cwd: path.join(__dirname, "frontend"),
+      url: frontendBaseUrl,
+      reuseExistingServer: !isCI,
+      timeout: 120_000,
+    }
+  : undefined;
+
+const webServers = [apiWebServerConfig, frontendWebServerConfig].filter(Boolean);
 
 const config = {
   testDir: path.join(__dirname, "playwright", "tests"),
@@ -69,15 +108,16 @@ const config = {
   metadata: {
     runId,
     artifactRoot,
-    apiBaseUrl: defaultApiUrl || "",
+    apiBaseUrl: process.env.PLAYWRIGHT_API_BASE_URL || defaultApiUrl || "",
     coordinatorBaseUrl: process.env.PLAYWRIGHT_COORDINATOR_BASE_URL || "",
+    frontendBaseUrl: process.env.PLAYWRIGHT_FRONTEND_BASE_URL || frontendBaseUrl || "",
   },
   projects: [
     {
       name: "request-api",
       testMatch: /request\/.*\.spec\.js$/,
       use: {
-        baseURL: defaultApiUrl,
+        baseURL: process.env.PLAYWRIGHT_API_BASE_URL || defaultApiUrl,
       },
     },
     {
@@ -85,7 +125,7 @@ const config = {
       testMatch: /browser\/.*\.spec\.js$/,
       use: {
         browserName: "chromium",
-        baseURL: defaultApiUrl,
+        baseURL: process.env.PLAYWRIGHT_API_BASE_URL || defaultApiUrl,
       },
     },
     {
@@ -100,14 +140,14 @@ const config = {
       name: "feature-flags-api",
       testMatch: /feature-flags\/.*\.spec\.js$/,
       use: {
-        baseURL: defaultApiUrl,
+        baseURL: process.env.PLAYWRIGHT_API_BASE_URL || defaultApiUrl,
       },
     },
     {
       name: "ops-api",
       testMatch: /ops\/.*\.spec\.js$/,
       use: {
-        baseURL: defaultApiUrl,
+        baseURL: process.env.PLAYWRIGHT_API_BASE_URL || defaultApiUrl,
       },
     },
     {
@@ -117,11 +157,23 @@ const config = {
         baseURL: process.env.PLAYWRIGHT_COORDINATOR_BASE_URL,
       },
     },
+    {
+      name: "operator-console",
+      testMatch: /operator-console\/.*\.spec\.js$/,
+      use: {
+        browserName: "chromium",
+        baseURL: process.env.PLAYWRIGHT_FRONTEND_BASE_URL || frontendBaseUrl,
+      },
+    },
   ],
 };
 
-if (webServerConfig) {
-  config.webServer = webServerConfig;
+// Preserve a single webServer object when only one server is enabled so
+// existing contract probes that read webServer.env continue to work.
+if (webServers.length === 1) {
+  config.webServer = webServers[0];
+} else if (webServers.length > 1) {
+  config.webServer = webServers;
 }
 
 module.exports = config;

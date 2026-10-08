@@ -21,6 +21,7 @@ Wave M2 PR B14 (router_v2) adds the tenant-aware entry point
 * Emits ``TENANT_POLICY_HYDRATED``, ``TENANT_ENGINE_SELECTED``, or
   ``TENANT_ENGINE_NO_CANDIDATES`` custody events with full filter reasons.
 """
+
 from __future__ import annotations
 
 import os
@@ -28,6 +29,7 @@ from typing import TYPE_CHECKING
 
 from ocr_local.translation.custody_adapter import (
     ReasonCode,
+    emit_nc_license_acknowledged,
     emit_tenant_engine_no_candidates,
     emit_tenant_engine_selected,
     emit_tenant_policy_hydrated,
@@ -96,40 +98,46 @@ def select_engine(
             f"No engine supports {req.src_lang}->{req.tgt_lang}",
         )
 
-    engine_cls = candidates[0]
-    cap: EngineCapability = engine_cls.capability
+    last_denial = None
+    for engine_cls in candidates:
+        cap: EngineCapability = engine_cls.capability
+        if cap.is_cloud and req.privilege_flag:
+            last_denial = (
+                ReasonCode.PRIVILEGE_BLOCKED,
+                cap.id,
+                "Privilege-flagged document cannot use cloud translation engine",
+            )
+            continue
+        if cap.is_cloud and not tenant.allow_cloud_translation:
+            last_denial = (
+                ReasonCode.TENANT_POLICY,
+                cap.id,
+                "Tenant policy prohibits cloud translation",
+            )
+            continue
+        if cap.is_cloud and tenant.residency_region:
+            last_denial = (
+                ReasonCode.RESIDENCY_VIOLATION,
+                cap.id,
+                f"Tenant residency_region={tenant.residency_region!r} blocks cloud "
+                f"engine {cap.id!r} (no region-affinity cloud adapters; S2-04)",
+            )
+            continue
+        return engine_cls()
 
-    # Privilege hard-block: privilege_flag forbids cloud engines, period.
-    # This check comes BEFORE the tenant cloud-policy check so the more
-    # specific rejection reason wins.
-    if cap.is_cloud and req.privilege_flag:
-        emit_translation_rejected(
-            chain,
-            reason_code=ReasonCode.PRIVILEGE_BLOCKED,
-            engine_id=cap.id,
-            message="Privilege-flagged document cannot use cloud translation engine",
-            tenant_id=req.tenant_id,
-        )
-        raise PolicyDenied(
-            ReasonCode.PRIVILEGE_BLOCKED,
-            "Privilege-flagged document cannot use cloud translation engine",
-        )
-
-    # Tenant policy: cloud blocked when not explicitly allowed.
-    if cap.is_cloud and not tenant.allow_cloud_translation:
-        emit_translation_rejected(
-            chain,
-            reason_code=ReasonCode.TENANT_POLICY,
-            engine_id=cap.id,
-            message="Tenant policy prohibits cloud translation",
-            tenant_id=req.tenant_id,
-        )
-        raise PolicyDenied(
-            ReasonCode.TENANT_POLICY,
-            "Tenant policy prohibits cloud translation",
-        )
-
-    return engine_cls()
+    reason_code, engine_id, message = last_denial or (
+        ReasonCode.UNSUPPORTED_LANGUAGE,
+        "",
+        f"No policy-eligible engine supports {req.src_lang}->{req.tgt_lang}",
+    )
+    emit_translation_rejected(
+        chain,
+        reason_code=reason_code,
+        engine_id=engine_id,
+        message=message,
+        tenant_id=req.tenant_id,
+    )
+    raise PolicyDenied(reason_code, message)
 
 
 def _rank_candidates(
@@ -137,6 +145,7 @@ def _rank_candidates(
     tenant: TenantPolicy,
 ) -> list[type["TranslationEngine"]]:
     """Return engine classes ordered by preference for ``req`` + ``tenant``."""
+    from ocr_local.translation.cache import _is_nc_licensed
     from ocr_local.translation.engines import ENGINE_REGISTRY
 
     deployment_env = _deployment_env()
@@ -150,6 +159,9 @@ def _rank_candidates(
         if engine_id == "passthrough":
             continue
 
+        if not getattr(engine_cls, "production_ready", True):
+            continue
+
         # Tenant allow/block lists.
         if engine_id in tenant.blocked_engine_ids:
             continue
@@ -160,13 +172,17 @@ def _rank_candidates(
         if tenant.require_local_only and cap.is_cloud:
             continue
 
+        # Note: residency_region does NOT filter here — so cloud-only
+        # candidate sets still surface as RESIDENCY_VIOLATION (hard check
+        # in select_engine) rather than a misleading UNSUPPORTED_LANGUAGE.
+
         # Language pair support.
         if not _supports_pair(cap, req.src_lang, req.tgt_lang):
             continue
 
         # NLLB-derived engines use a non-commercial license -- skip when
         # tenant cannot use NC-licensed weights.
-        if not tenant.allow_nllb_commercial and "nc" in cap.license.lower():
+        if not tenant.allow_nllb_commercial and _is_nc_licensed(cap.license):
             continue
 
         # Gemini AI Studio is not allowed in production.
@@ -357,6 +373,10 @@ def select_engine_for_tenant(
         if engine_id == "passthrough":
             continue
 
+        if not getattr(engine_cls, "production_ready", True):
+            filter_reasons.append(f"{engine_id}: adapter not production-ready")
+            continue
+
         if engine_id in tenant.blocked_engine_ids:
             filter_reasons.append(f"{engine_id}: tenant block list")
             continue
@@ -396,6 +416,14 @@ def select_engine_for_tenant(
             )
             continue
 
+        # S2-04: residency_region set rejects all cloud engines.
+        if cap.is_cloud and tenant.residency_region:
+            filter_reasons.append(
+                f"{engine_id}: RESIDENCY_VIOLATION "
+                f"(residency_region={tenant.residency_region!r})"
+            )
+            continue
+
         # Cache-availability probe -- only meaningful for local engines.
         ok, reason = _is_engine_cached(
             engine_cls, tenant, allow_download=allow_download
@@ -427,19 +455,37 @@ def select_engine_for_tenant(
     ranked = _order_candidates(raw_candidates, tenant)
     engine_cls = ranked[0]
     selected_model_id = _engine_default_model_id(engine_cls)
+    selected_cap = engine_cls.capability
 
     if chain is not None:
         try:
             emit_tenant_engine_selected(
                 chain,
                 tenant_id=tenant.tenant_id,
-                engine_id=engine_cls.capability.id,
+                engine_id=selected_cap.id,
                 model_id=selected_model_id,
                 source_lang=source_lang,
                 target_lang=target_lang,
             )
         except Exception:
             pass
+        # NC soft-warning companion (Slice 1.2): when an NC-licensed engine is
+        # admitted under default-on allow_nllb_commercial / allow_nc_licensed,
+        # record acknowledgment so custody captures both block and admit paths.
+        if "nc" in (selected_cap.license or "").lower() and (
+            getattr(tenant, "allow_nllb_commercial", True)
+            or getattr(tenant, "allow_nc_licensed", True)
+        ):
+            try:
+                emit_nc_license_acknowledged(
+                    chain,
+                    tenant_id=tenant.tenant_id,
+                    engine_id=selected_cap.id,
+                    license=selected_cap.license,
+                    model_id=selected_model_id,
+                )
+            except Exception:
+                pass
 
     # Instantiate.  Engines that resolve a model via the cache module
     # accept ``model_id`` + ``tenant_policy`` kwargs; pass them when the

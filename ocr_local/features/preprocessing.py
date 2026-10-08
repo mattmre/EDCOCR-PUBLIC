@@ -106,6 +106,7 @@ _ALLOWED_ONNX_MODEL_ROOTS = tuple(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _pil_to_gray(img: Image.Image) -> np.ndarray:
     """Convert a PIL Image to a single-channel uint8 numpy array."""
     return np.array(img.convert("L"))
@@ -315,8 +316,7 @@ def _validate_onnx_model_path(model_path: str) -> str | None:
         return None
 
     if not any(
-        _is_within_allowed_root(resolved, root)
-        for root in _ALLOWED_ONNX_MODEL_ROOTS
+        _is_within_allowed_root(resolved, root) for root in _ALLOWED_ONNX_MODEL_ROOTS
     ):
         logger.warning("Rejecting ONNX model path outside allowed roots: %s", resolved)
         return None
@@ -534,15 +534,14 @@ def binarize_unet(img: Image.Image) -> Image.Image:
         binary = np.where(binarized > 127, 255, 0).astype(np.uint8)
         return Image.fromarray(binary, mode="L")
     except Exception as exc:
-        logger.warning(
-            "U-Net binarize failed, falling back to adaptive: %s", exc
-        )
+        logger.warning("U-Net binarize failed, falling back to adaptive: %s", exc)
         return binarize_adaptive(img)
 
 
 # ---------------------------------------------------------------------------
 # Public preprocessing functions
 # ---------------------------------------------------------------------------
+
 
 def deskew_image(img: Image.Image) -> Image.Image:
     """Correct skew using a hybrid estimator with projection scoring.
@@ -711,7 +710,13 @@ def enhance_contrast(img: Image.Image) -> Image.Image:
 # Pipeline function
 # ---------------------------------------------------------------------------
 
-def preprocess_for_ocr(img: Image.Image, level: str = "standard") -> Image.Image:
+
+def preprocess_for_ocr(
+    img: Image.Image,
+    level: str = "standard",
+    *,
+    preserve_geometry: bool = False,
+) -> Image.Image:
     """Apply a preprocessing pipeline based on the requested level.
 
     Levels
@@ -733,6 +738,10 @@ def preprocess_for_ocr(img: Image.Image, level: str = "standard") -> Image.Image
         The source document page image.
     level : str
         One of ``"none"``, ``"standard"``, ``"enhanced"``, ``"aggressive"``.
+    preserve_geometry : bool
+        When true, skip deskew and advanced preprocessing because those
+        operations may move pixels without returning a coordinate transform.
+        Use this for OCR text-layer generation over an unchanged source image.
 
     Returns
     -------
@@ -780,7 +789,7 @@ def preprocess_for_ocr(img: Image.Image, level: str = "standard") -> Image.Image
         result = img
 
         # Standard: deskew only
-        if level in ("standard", "enhanced", "aggressive"):
+        if not preserve_geometry and level in ("standard", "enhanced", "aggressive"):
             result = deskew_image(result)
 
         # Enhanced: add denoise + contrast (uses backend-aware routing)
@@ -797,7 +806,8 @@ def preprocess_for_ocr(img: Image.Image, level: str = "standard") -> Image.Image
             result = binarize_image(result)
 
         # Advanced preprocessing (opt-in via ENABLE_ADVANCED_PREPROCESSING)
-        result = _apply_advanced_preprocessing(result)
+        if not preserve_geometry:
+            result = _apply_advanced_preprocessing(result)
 
         return result
 
@@ -838,9 +848,7 @@ def _apply_advanced_preprocessing(img: Image.Image) -> Image.Image:
 
         transforms = metadata.get("transforms_applied", [])
         if transforms:
-            logger.info(
-                "Advanced preprocessing applied: %s", ", ".join(transforms)
-            )
+            logger.info("Advanced preprocessing applied: %s", ", ".join(transforms))
 
         # Convert back to PIL
         return _bgr_to_pil(processed)

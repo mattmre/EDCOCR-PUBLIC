@@ -1,9 +1,9 @@
 # @edcocr/sdk
 
-TypeScript SDK for the [EDCOCR](https://github.com/mattmre/EDCOCR-PUBLIC) forensic-grade OCR pipeline.
+TypeScript SDK for the [OCR_LOCAL](https://github.com/mattmre/EDCOCR-PUBLIC) forensic-grade OCR pipeline.
 
 - Zero runtime dependencies
-- Works in Node.js 18+ and modern browsers
+- Works in Node.js 20.19+ or 22.12+ and modern browsers
 - Full TypeScript type definitions
 - Automatic retry with exponential backoff
 - WebSocket streaming for real-time progress
@@ -25,7 +25,7 @@ const client = new EDCOCRClient({
 });
 
 // Check API health
-const health = await client.healthCheck;
+const health = await client.healthCheck();
 console.log(health.status); // "healthy"
 
 // Submit a document and wait for completion
@@ -41,7 +41,7 @@ if (status.status === 'completed') {
   const text = await client.downloadArtifact(status.job_id, 'text');
 }
 
-client.close;
+client.close();
 ```
 
 ## Usage
@@ -148,6 +148,9 @@ console.log(list.jobs);      // Array of JobStatusResponse
 ```typescript
 const ws = client.streamProgress('job_a1b2c3d4e5f6');
 
+// When apiKey is configured, the SDK sends it in the first WebSocket auth
+// frame. Credentials are never placed in the connection URL/query string.
+
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
   switch (msg.type) {
@@ -159,11 +162,11 @@ ws.onmessage = (event) => {
       break;
     case 'completed':
       console.log('Job completed!');
-      ws.close;
+      ws.close();
       break;
     case 'failed':
       console.error('Job failed:', msg.error);
-      ws.close;
+      ws.close();
       break;
   }
 };
@@ -210,7 +213,7 @@ try {
 
 | Method | Description |
 |--------|-------------|
-| `healthCheck` | Check API health status |
+| `healthCheck()` | Check API health status |
 | `submitJob(options)` | Submit a document for OCR |
 | `getStatus(jobId)` | Get current job status |
 | `getResult(jobId)` | Get result metadata for completed job |
@@ -221,7 +224,7 @@ try {
 | `waitForCompletion(jobId, options)` | Poll until job completes |
 | `submitAndWait(options, waitOptions)` | Submit and poll in one call |
 | `streamProgress(jobId)` | Open WebSocket for live progress |
-| `close` | Release resources |
+| `close()` | Release resources |
 
 ### Types
 
@@ -244,7 +247,7 @@ The SDK works in modern browsers with native `fetch` and `FormData`:
   const fileInput = document.getElementById('fileInput');
   fileInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
-    const buffer = new Uint8Array(await file.arrayBuffer);
+    const buffer = new Uint8Array(await file.arrayBuffer());
 
     const job = await client.submitJob({
       fileBuffer: buffer,
@@ -259,4 +262,4 @@ The SDK works in modern browsers with native `fetch` and `FormData`:
 
 ## License
 
-Apache-2.0
+MIT

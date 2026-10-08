@@ -63,7 +63,7 @@ export function ReviewQueueFiltersBar({
     debounceRef.current = setTimeout(() => {
       onChange({ ...value, q: searchDraft });
     }, searchDebounceMs);
-    return => {
+    return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [searchDraft, searchDebounceMs, value, onChange]);

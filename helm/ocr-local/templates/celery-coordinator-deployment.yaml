@@ -17,17 +17,34 @@ spec:
         {{- include "ocr-local.labels" . | nindent 8 }}
         app.kubernetes.io/component: celery-coordinator
     spec:
-      serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      serviceAccountName: {{ include "ocr-local.controlPlaneServiceAccountName" . }}
+      {{- include "ocr-local.imagePullSecrets" . | nindent 6 }}
       terminationGracePeriodSeconds: {{ .Values.workerTerminationGracePeriodSeconds | default 360 }}
+      {{- include "ocr-local.haScheduling" (dict "root" . "component" "celery-coordinator") | nindent 6 }}
       {{- with .Values.celeryCoordinator.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if or (eq (include "ocr-local.hasClientCaVolumes" .) "true") (and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled) (eq .Values.storage.backend "s3") }}
+      volumes:
+        {{- include "ocr-local.tlsCaVolume" . | nindent 8 }}
+        {{- include "ocr-local.s3CacheStagingVolume" . | nindent 8 }}
+        {{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+        - name: nfs-data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-nfs-data
+        {{- end }}
+      {{- end }}
+      initContainers:
+        {{- include "ocr-local.schemaReadinessInit" (dict "root" . "envKind" "coordinator" "securityContext" .Values.celeryCoordinator.containerSecurityContext) | nindent 8 }}
       containers:
         - name: celery-coordinator
           image: {{ include "ocr-local.coordinatorImage" . }}
           imagePullPolicy: {{ .Values.image.coordinator.pullPolicy | default "IfNotPresent" }}
           command:
+            - /usr/bin/tini
+            - -g
+            - --
             - celery
             - -A
             - coordinator.coordinator
@@ -36,11 +53,18 @@ spec:
             - --queues=coordinator
             - --concurrency={{ .Values.celeryCoordinator.concurrency }}
             - --hostname=coordinator@%h
-          envFrom:
-            - configMapRef:
-                name: {{ .Release.Name }}-config
-            - secretRef:
-                name: {{ .Release.Name }}-secret
+          {{- if or (eq (include "ocr-local.hasClientCaVolumes" .) "true") (and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled) (eq .Values.storage.backend "s3") }}
+          volumeMounts:
+            {{- include "ocr-local.tlsCaVolumeMount" . | nindent 12 }}
+            {{- include "ocr-local.s3CacheStagingMount" . | nindent 12 }}
+            {{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+            - name: nfs-data
+              mountPath: {{ .Values.storage.nfs.mountPath | default "/shared" }}
+            {{- end }}
+          {{- end }}
+          {{- include "ocr-local.coordinatorEnvFrom" . | nindent 10 }}
+          env:
+            {{- include "ocr-local.coordinatorSecretEnv" . | nindent 12 }}
           livenessProbe:
             exec:
               command:
@@ -51,6 +75,19 @@ spec:
                 - ping
                 - --timeout=10
             periodSeconds: 60
+            timeoutSeconds: 15
+          readinessProbe:
+            exec:
+              command:
+                - celery
+                - -A
+                - coordinator.coordinator
+                - inspect
+                - ping
+                - --timeout=5
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 10
           resources:
             {{- toYaml .Values.celeryCoordinator.resources | nindent 12 }}
           {{- with .Values.celeryCoordinator.containerSecurityContext }}

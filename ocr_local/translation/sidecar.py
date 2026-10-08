@@ -19,6 +19,12 @@ import json
 import os
 from typing import TYPE_CHECKING
 
+from ocr_distributed.ocr_utils import (
+    resolve_safe_output_subfolder,
+    write_json_atomic,
+    write_text_atomic,
+)
+
 if TYPE_CHECKING:
     from ocr_local.translation.models import DocumentTranslation
 
@@ -72,12 +78,22 @@ def _validate_doc(doc: "DocumentTranslation") -> None:
         raise SchemaValidationError(str(exc)) from exc
 
 
-def _ensure_subfolder(output_dir: str, subfolder: str) -> str:
-    """Resolve and create the destination directory under EXPORT/TRANSLATION."""
-    base = os.path.join(output_dir, "EXPORT", "TRANSLATION")
-    target = os.path.join(base, subfolder) if subfolder else base
+def _translation_root(output_dir: str) -> str:
+    """Return the EXPORT/TRANSLATION root for *output_dir*."""
+    return os.path.join(output_dir, "EXPORT", "TRANSLATION")
+
+
+def _ensure_subfolder(output_dir: str, subfolder: str) -> tuple[str, str]:
+    """Resolve and create the destination directory under EXPORT/TRANSLATION.
+
+    Returns:
+        ``(allowed_root, target_dir)`` where *allowed_root* is the
+        TRANSLATION family root used for containment checks.
+    """
+    base = _translation_root(output_dir)
+    target = resolve_safe_output_subfolder(base, subfolder)
     os.makedirs(target, exist_ok=True)
-    return target
+    return base, target
 
 
 def write_translation_json(
@@ -94,13 +110,17 @@ def write_translation_json(
     """
     _validate_doc(doc)
 
-    target_dir = _ensure_subfolder(output_dir, subfolder)
+    allowed_root, target_dir = _ensure_subfolder(output_dir, subfolder)
     filename = f"{doc.document_id}.{doc.target_language}.translation.json"
     json_path = os.path.join(target_dir, filename)
 
     payload = dataclasses.asdict(doc)
-    with open(json_path, "w", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False, indent=2))
+    write_json_atomic(
+        json_path,
+        payload,
+        allowed_root=allowed_root,
+        default=None,
+    )
 
     return os.path.abspath(json_path)
 
@@ -115,7 +135,7 @@ def write_translation_md(
     Returns the absolute path of the written file.  Does not run schema
     validation -- ``write_translation_json`` is the gating writer.
     """
-    target_dir = _ensure_subfolder(output_dir, subfolder)
+    allowed_root, target_dir = _ensure_subfolder(output_dir, subfolder)
     filename = f"{doc.document_id}.{doc.target_language}.translation.md"
     md_path = os.path.join(target_dir, filename)
 
@@ -145,7 +165,10 @@ def write_translation_md(
         "",
     ]
 
-    with open(md_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    write_text_atomic(
+        md_path,
+        "\n".join(lines),
+        allowed_root=allowed_root,
+    )
 
     return os.path.abspath(md_path)

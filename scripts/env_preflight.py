@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Environment preflight checker for EDCOCR.
+"""Environment preflight checker for OCR_LOCAL.
 
 Quick pre-deployment check that validates all prerequisites are met.
 Focuses on binary availability, file structure, and runtime readiness
@@ -331,7 +331,7 @@ def format_text_report(report: PreflightReport) -> str:
     """Format the report as a text table."""
     lines: list[str] = []
     lines.append("=" * 72)
-    lines.append("EDCOCR Environment Preflight Check")
+    lines.append("OCR_LOCAL Environment Preflight Check")
     lines.append(f"Timestamp: {report.timestamp}")
     lines.append("=" * 72)
     lines.append("")
@@ -424,7 +424,7 @@ def run_preflight(
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(
-        description="EDCOCR environment preflight checker.",
+        description="OCR_LOCAL environment preflight checker.",
     )
     parser.add_argument(
         "--check-ports",

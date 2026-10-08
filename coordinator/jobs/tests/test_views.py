@@ -9,10 +9,46 @@ Run with: cd coordinator && python -m pytest jobs/tests/test_views.py -v
 import json
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 
 from jobs.metrics_cache import _cache
 from jobs.models import Job, PageResult, Worker
+
+
+class TestDashboardAuthentication(TestCase):
+    """The operator dashboard must never expose job data anonymously."""
+
+    def setUp(self):
+        self.client = Client()
+
+    def test_dashboard_redirects_anonymous_users_to_admin_login(self):
+        response = self.client.get("/dashboard/")
+        assert response.status_code == 302
+        assert response.url.startswith("/admin/login/?next=")
+
+    def test_dashboard_rejects_authenticated_non_staff_users(self):
+        user = get_user_model().objects.create_user(
+            username="viewer",
+            password="test-password",
+            is_staff=False,
+        )
+        self.client.force_login(user)
+
+        response = self.client.get("/dashboard/")
+        assert response.status_code == 302
+        assert response.url.startswith("/admin/login/?next=")
+
+    def test_dashboard_allows_authenticated_staff_users(self):
+        user = get_user_model().objects.create_user(
+            username="operator",
+            password="test-password",
+            is_staff=True,
+        )
+        self.client.force_login(user)
+
+        response = self.client.get("/dashboard/")
+        assert response.status_code == 200
 
 
 class TestMetricsEndpoint(TestCase):

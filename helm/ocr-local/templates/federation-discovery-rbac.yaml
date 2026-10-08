@@ -1,6 +1,6 @@
 {{- if and .Values.federation.enabled .Values.federation.discovery.enabled }}
 # =============================================================================
-# Federation Discovery RBAC (item C7)
+# Federation Discovery RBAC (Plan C Phase 1, item C7)
 #
 # Minimal namespace-scoped RBAC for the DNS-SD discovery CronJob. The job
 # only needs `get`, `update`, and `patch` on the federation cluster-registry

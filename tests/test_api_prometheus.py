@@ -42,8 +42,13 @@ def client(tmp_path):
     with (
         patch("api.config.SOURCE_FOLDER", str(source)),
         patch("api.config.OUTPUT_FOLDER", str(output)),
+        patch("api.config.ENABLE_MULTITENANCY", False),
+        patch("api.main.ENABLE_MULTITENANCY", False),
+        patch("api.auth.ENABLE_MULTITENANCY", False),
         patch("api.config.ALLOW_UNAUTHENTICATED", True),
+        patch("api.config.ANONYMOUS_ROLE", "operator"),
         patch("api.auth.ALLOW_UNAUTHENTICATED", True),
+        patch("api.auth.ANONYMOUS_ROLE", "operator"),
         patch("api.job_manager.config") as mock_config,
         patch("api.job_manager.JobManager._run_pipeline"),
     ):
@@ -76,6 +81,9 @@ def authed_client(tmp_path):
     with (
         patch("api.config.SOURCE_FOLDER", str(source)),
         patch("api.config.OUTPUT_FOLDER", str(output)),
+        patch("api.config.ENABLE_MULTITENANCY", False),
+        patch("api.main.ENABLE_MULTITENANCY", False),
+        patch("api.auth.ENABLE_MULTITENANCY", False),
         patch("api.config.OCR_API_KEY", api_key),
         patch("api.config.ALLOW_UNAUTHENTICATED", False),
         patch("api.auth.OCR_API_KEY", api_key),

@@ -1,4 +1,4 @@
-"""Validate all 45 languages in the EDCOCR language registry.
+"""Validate all 45 languages in the OCR_LOCAL language registry.
 
 Performs three categories of checks:
 
@@ -40,6 +40,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from ocr_local.config.language_config import (
     LANGUAGE_REGISTRY,
     LanguageEntry,
+    get_paddle_model_family,
 )
 
 logger = logging.getLogger(__name__)
@@ -207,7 +208,7 @@ def check_font(entry: LanguageEntry) -> FontCheckResult:
 
 
 def check_model(entry: LanguageEntry) -> ModelCheckResult:
-    """Check PaddleOCR model availability for a single language.
+    """Check the qualified Paddle or Tesseract recognition model for a language.
 
     Scans ``PADDLEOCR_MODEL_DIR`` for a recognition model directory
     whose name contains the language's PaddleOCR code. Verifies model
@@ -228,6 +229,10 @@ def check_model(entry: LanguageEntry) -> ModelCheckResult:
         name=entry.name,
     )
 
+    model_family = get_paddle_model_family(entry.paddle_code)
+    if model_family is None:
+        return _check_tesseract_model(entry, result)
+
     model_base = Path(PADDLEOCR_MODEL_DIR)
     if not model_base.is_dir():
         result.status = "missing"
@@ -235,7 +240,7 @@ def check_model(entry: LanguageEntry) -> ModelCheckResult:
         return result
 
     # Search for a directory containing the language code
-    found_dir = _find_model_dir(model_base, entry.paddle_code)
+    found_dir = _find_model_dir(model_base, model_family)
     if found_dir is None:
         result.status = "missing"
         result.dir_path = str(model_base)
@@ -245,17 +250,16 @@ def check_model(entry: LanguageEntry) -> ModelCheckResult:
     result.dir_path = str(found_dir)
 
     # Check file sizes
-    model_files = list(found_dir.glob("*"))
+    model_files = [path for path in found_dir.rglob("*") if path.is_file()]
     result.file_count = len(model_files)
 
     total_size = 0
     has_zero = False
     for mf in model_files:
-        if mf.is_file():
-            sz = mf.stat().st_size
-            total_size += sz
-            if sz == 0:
-                has_zero = True
+        sz = mf.stat().st_size
+        total_size += sz
+        if sz == 0:
+            has_zero = True
 
     result.total_size_bytes = total_size
     result.has_zero_size_files = has_zero
@@ -265,6 +269,41 @@ def check_model(entry: LanguageEntry) -> ModelCheckResult:
     else:
         result.status = "ok"
 
+    return result
+
+
+def _check_tesseract_model(
+    entry: LanguageEntry,
+    result: ModelCheckResult,
+) -> ModelCheckResult:
+    """Validate the trained-data file used for a non-Paddle script."""
+    candidates = []
+    configured = os.environ.get("TESSDATA_PREFIX")
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend(
+        Path(path)
+        for path in (
+            "/usr/share/tesseract-ocr/4.00/tessdata",
+            "/usr/share/tesseract-ocr/5/tessdata",
+            "/usr/share/tessdata",
+            "/usr/local/share/tessdata",
+        )
+    )
+    for directory in candidates:
+        traineddata = directory / f"{entry.tesseract_code}.traineddata"
+        if not traineddata.is_file():
+            continue
+        size = traineddata.stat().st_size
+        result.dir_exists = True
+        result.dir_path = str(traineddata)
+        result.file_count = 1
+        result.total_size_bytes = size
+        result.has_zero_size_files = size == 0
+        result.status = "ok" if size >= MODEL_MIN_SIZE_BYTES else "corrupt"
+        return result
+    result.status = "missing"
+    result.dir_path = str(candidates[0]) if candidates else ""
     return result
 
 
@@ -289,13 +328,15 @@ def _find_model_dir(model_base: Path, paddle_code: str) -> Path | None:
     rec_dir = model_base / "rec"
     if rec_dir.is_dir():
         for child in rec_dir.iterdir():
-            if child.is_dir() and paddle_code in child.name:
+            if child.is_dir() and (
+                child.name == paddle_code or child.name.startswith(f"{paddle_code}_")
+            ):
                 return child
 
     # Fallback: walk entire tree
     for dirpath, dirnames, _filenames in os.walk(str(model_base)):
         for dirname in dirnames:
-            if paddle_code in dirname:
+            if dirname == paddle_code or dirname.startswith(f"{paddle_code}_"):
                 return Path(dirpath) / dirname
 
     return None
@@ -383,11 +424,13 @@ def check_mapping_collisions() -> list[dict]:
     for entry in LANGUAGE_REGISTRY.values():
         for ft_code in entry.fasttext_codes:
             if ft_code in seen and seen[ft_code] != entry.paddle_code:
-                collisions.append({
-                    "fasttext_code": ft_code,
-                    "paddle_code_a": seen[ft_code],
-                    "paddle_code_b": entry.paddle_code,
-                })
+                collisions.append(
+                    {
+                        "fasttext_code": ft_code,
+                        "paddle_code_a": seen[ft_code],
+                        "paddle_code_b": entry.paddle_code,
+                    }
+                )
             else:
                 seen[ft_code] = entry.paddle_code
     return collisions
@@ -527,7 +570,7 @@ def run_validation(checks: list[str]) -> ValidationReport:
         # Font file missing on disk is a warning, not a hard failure
         # (fonts may not be installed in dev environments)
         pass
-    if "models" in checks and report.models_corrupt > 0:
+    if "models" in checks and (report.models_missing > 0 or report.models_corrupt > 0):
         passed = False
     if "mappings" in checks:
         if report.mappings_broken > 0:
@@ -536,9 +579,8 @@ def run_validation(checks: list[str]) -> ValidationReport:
             passed = False
 
     report.all_passed = passed
-    validated = report.total_languages
     report.summary_line = (
-        f"{validated}/{len(LANGUAGE_REGISTRY)} languages fully validated, "
+        f"{report.total_languages}/{len(LANGUAGE_REGISTRY)} languages checked, "
         f"{warnings} warnings"
     )
 
@@ -575,10 +617,7 @@ def format_report(report: ValidationReport) -> str:
         lines.append("-" * 78)
         lines.append("FONT CHECKS")
         lines.append("-" * 78)
-        lines.append(
-            f"  OK: {report.fonts_ok}  "
-            f"Missing: {report.fonts_missing}"
-        )
+        lines.append(f"  OK: {report.fonts_ok}  "  f"Missing: {report.fonts_missing}")
         lines.append("")
         lines.append(f"  {'Code':<14} {'Name':<20} {'Font':<35} {'Status'}")
         lines.append(f"  {'-'*14} {'-'*20} {'-'*35} {'-'*6}")
@@ -602,12 +641,9 @@ def format_report(report: ValidationReport) -> str:
         )
         lines.append("")
         lines.append(
-            f"  {'Code':<14} {'Name':<20} {'Files':<6} "
-            f"{'Size':<12} {'Status'}"
+            f"  {'Code':<14} {'Name':<20} {'Files':<6} "  f"{'Size':<12} {'Status'}"
         )
-        lines.append(
-            f"  {'-'*14} {'-'*20} {'-'*6} {'-'*12} {'-'*7}"
-        )
+        lines.append(f"  {'-'*14} {'-'*20} {'-'*6} {'-'*12} {'-'*7}")
         for mr in report.model_results:
             size_kb = mr["total_size_bytes"] / 1024 if mr["total_size_bytes"] else 0
             size_str = f"{size_kb:.0f} KB" if size_kb else "-"
@@ -634,10 +670,7 @@ def format_report(report: ValidationReport) -> str:
             f"  {'Code':<14} {'Name':<20} "
             f"{'FastText':<14} {'Tess':<10} {'EasyOCR':<10} {'Status'}"
         )
-        lines.append(
-            f"  {'-'*14} {'-'*20} "
-            f"{'-'*14} {'-'*10} {'-'*10} {'-'*10}"
-        )
+        lines.append(f"  {'-'*14} {'-'*20} "  f"{'-'*14} {'-'*10} {'-'*10} {'-'*10}")
         for mr in report.mapping_results:
             ft_codes = ",".join(mr["fasttext_codes"])
             lines.append(
@@ -689,7 +722,7 @@ def _parse_args(argv=None):
     """
     parser = argparse.ArgumentParser(
         description=(
-            "Validate all 45 languages in the EDCOCR language registry "
+            "Validate all 45 languages in the OCR_LOCAL language registry "
             "(fonts, models, mappings)"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -717,7 +750,8 @@ Examples:
         help="Write JSON report to this path",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable verbose logging",
     )

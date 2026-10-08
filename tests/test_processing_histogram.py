@@ -19,7 +19,7 @@ import types
 import pytest
 
 # ---------------------------------------------------------------------------
-# Add coordinator to sys.path for model imports.  See .
+# Add coordinator to sys.path for model imports.  See docs/release-candidate.md.
 # ---------------------------------------------------------------------------
 _coordinator_dir = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "coordinator"

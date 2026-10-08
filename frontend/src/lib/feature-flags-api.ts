@@ -8,7 +8,8 @@
  * rejection custody event BEFORE raising 403).
  *
  * Backed by `lib/api-client.ts:get/post`. We intentionally route POST through
- * the shared client so 401/403 still clear the cached API key.
+ * the shared client so only a rejected-credential 401 clears the cached API
+ * key; a 403 remains an authorization or policy denial.
  */
 
 import { ApiError, get, post } from "./api-client";
@@ -86,7 +87,7 @@ export async function getFlagHistory(
  *
  * The backend is the only authority on whether a flip is allowed -- the UI
  * MUST NEVER pretend the request succeeded just because the form was filled
- * out.
+ * out (docs/release-candidate.md gotchas #86, #88).
  */
 export async function submitChangeRequest(
   key: string,

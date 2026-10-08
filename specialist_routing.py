@@ -1,4 +1,4 @@
-"""Specialist routing from document classification output.
+"""Specialist routing from document classification output (experimental).
 
 Maps classification labels to specialized extraction configurations, enabling
 document-type-specific field extraction with custom regex patterns.  When
@@ -10,13 +10,18 @@ The module is opt-in and augments (never replaces) the generic extraction
 pipeline.  When no specialist matches -- or confidence is below threshold --
 the generic extraction runs unchanged.
 
-Configuration:
-- ``ENABLE_SPECIALIST_ROUTING``: master toggle (default False, set via
-  ``--enable-specialist-routing`` or env var)
+**Claim status (wire-or-hide):** HIDE from live flag claims.
+``ENABLE_SPECIALIST_ROUTING`` in the pipeline enables **document routing**
+via ``routing.py`` (``.routing.json``), **not** this module's
+``SpecialistRouter`` (``.specialist.json``). Do not claim
+``.specialist.json`` production output from that flag alone.
+See ``docs/analysis/dead-code-20260729/WIRE-OR-HIDE-TRIAGE.md``.
+
+Configuration (when this module is explicitly wired in a future PR):
 - ``SPECIALIST_CONFIG_PATH``: optional path to a JSON file with custom
   specialist definitions that augment the built-in specialists
 
-Output is written alongside extraction output to
+Output would be written alongside extraction output to
 ``EXPORT/EXTRACTION/<subfolder>/<name>.specialist.json``.
 """
 
@@ -30,7 +35,8 @@ from typing import Optional
 
 from ocr_distributed.ocr_utils import (
     build_sidecar_base_name,
-    sanitize_path_segment,
+    resolve_safe_output_subfolder,
+    write_json_atomic,
 )
 
 logger = logging.getLogger(__name__)
@@ -109,8 +115,7 @@ _TOTAL_AMOUNT = re.compile(
     re.IGNORECASE,
 )
 _TAX_AMOUNT = re.compile(
-    r"(?:tax|vat|gst|hst|sales\s+tax)[\s:]*"
-    r"(\$?\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?)",
+    r"(?:tax|vat|gst|hst|sales\s+tax)[\s:]*"  r"(\$?\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?)",
     re.IGNORECASE,
 )
 _LINE_ITEM = re.compile(
@@ -120,8 +125,7 @@ _LINE_ITEM = re.compile(
 
 # Contract patterns
 _PARTIES = re.compile(
-    r"(?:between|party|parties|hereinafter)[\s:]*"
-    r"([A-Z][A-Za-z0-9 &.,'-]{2,80})",
+    r"(?:between|party|parties|hereinafter)[\s:]*"  r"([A-Z][A-Za-z0-9 &.,'-]{2,80})",
     re.IGNORECASE,
 )
 _EFFECTIVE_DATE = re.compile(
@@ -142,8 +146,7 @@ _GOVERNING_LAW = re.compile(
 
 # Medical record patterns
 _PATIENT_NAME = re.compile(
-    r"(?:patient(?:\s+name)?|name\s+of\s+patient)[\s:]*"
-    r"([A-Z][A-Za-z '-]{2,50})",
+    r"(?:patient(?:\s+name)?|name\s+of\s+patient)[\s:]*"  r"([A-Z][A-Za-z '-]{2,50})",
     re.IGNORECASE,
 )
 _DOB = re.compile(
@@ -152,8 +155,7 @@ _DOB = re.compile(
     re.IGNORECASE,
 )
 _MRN = re.compile(
-    r"(?:mrn|medical\s+record\s+(?:number|no\.?|#)|patient\s+id)[\s#:]*"
-    r"(\d{4,12})",
+    r"(?:mrn|medical\s+record\s+(?:number|no\.?|#)|patient\s+id)[\s#:]*"  r"(\d{4,12})",
     re.IGNORECASE,
 )
 _DIAGNOSIS = re.compile(
@@ -165,8 +167,7 @@ _MEDICATION = re.compile(
     re.IGNORECASE,
 )
 _PROVIDER = re.compile(
-    r"(?:provider|physician|doctor|attending|dr\.?)[\s:]*"
-    r"([A-Z][A-Za-z '-]{2,50})",
+    r"(?:provider|physician|doctor|attending|dr\.?)[\s:]*"  r"([A-Z][A-Za-z '-]{2,50})",
     re.IGNORECASE,
 )
 
@@ -189,8 +190,7 @@ _FILING_DATE = re.compile(
     re.IGNORECASE,
 )
 _JUDGE = re.compile(
-    r"(?:judge|hon\.?|honorable|justice|magistrate)[\s:]*"
-    r"([A-Z][A-Za-z '-]{2,50})",
+    r"(?:judge|hon\.?|honorable|justice|magistrate)[\s:]*"  r"([A-Z][A-Za-z '-]{2,50})",
     re.IGNORECASE,
 )
 
@@ -477,15 +477,17 @@ class SpecialistRouter:
                 if not text:
                     continue
 
-                fields.append(SpecialistField(
-                    field_name=field_name,
-                    text=text,
-                    confidence=1.0,
-                    page_num=page_num,
-                    start=match.start(),
-                    end=match.end(),
-                    extraction_method="specialist_regex",
-                ))
+                fields.append(
+                    SpecialistField(
+                        field_name=field_name,
+                        text=text,
+                        confidence=1.0,
+                        page_num=page_num,
+                        start=match.start(),
+                        end=match.end(),
+                        extraction_method="specialist_regex",
+                    )
+                )
 
         return fields
 
@@ -582,27 +584,7 @@ def write_specialist_json(
     """
     try:
         extraction_dir = os.path.join(output_folder, "EXPORT", "EXTRACTION")
-        if subfolder and subfolder != ".":
-            safe_parts = [
-                sanitize_path_segment(p)
-                for p in subfolder.replace("\\", "/").split("/")
-                if p
-            ]
-            target_dir = (
-                os.path.join(extraction_dir, *safe_parts)
-                if safe_parts
-                else extraction_dir
-            )
-        else:
-            target_dir = extraction_dir
-
-        # Path traversal protection
-        resolved = os.path.realpath(target_dir)
-        if not resolved.startswith(os.path.realpath(extraction_dir)):
-            logger.error(
-                "Path traversal blocked in specialist output: %s", subfolder
-            )
-            return None
+        target_dir = resolve_safe_output_subfolder(extraction_dir, subfolder)
 
         os.makedirs(target_dir, exist_ok=True)
 
@@ -618,9 +600,9 @@ def write_specialist_json(
                 "specialist_source": result.specialist_source,
                 "classification_confidence": result.confidence,
                 "pipeline_version": pipeline_version,
-                "timestamp": datetime.datetime.now(
-                    datetime.timezone.utc
-                ).isoformat(timespec="milliseconds"),
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(
+                    timespec="milliseconds"
+                ),
             },
             "specialist_summary": {
                 "doc_type": result.doc_type,
@@ -630,8 +612,7 @@ def write_specialist_json(
             "fields": result.fields,
         }
 
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2, ensure_ascii=False, default=str)
+        write_json_atomic(json_path, report, allowed_root=extraction_dir)
 
         return json_path
     except Exception as exc:

@@ -1,3 +1,5 @@
+> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](../release-candidate.md) and the root installation guide.
+
 # Language Support Validation
 
 Runtime validation framework for verifying the complete language stack across all 45 supported OCR languages.

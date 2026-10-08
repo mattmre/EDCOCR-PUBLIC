@@ -44,7 +44,7 @@ if not _CV2_AVAILABLE:
 # Configuration
 # ---------------------------------------------------------------------------
 
-# Canonical env-parsing helper (DRY consolidation)
+# Canonical env-parsing helper (maintenance review: DRY consolidation)
 from ocr_distributed.ocr_utils import get_env_int as _get_env_int
 
 OMR_MIN_MARK_SIZE = _get_env_int("OMR_MIN_MARK_SIZE", 15)

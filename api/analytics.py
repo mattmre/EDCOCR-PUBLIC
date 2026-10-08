@@ -23,6 +23,7 @@ class TimeGranularity(Enum):
 @dataclass
 class JobRecord:
     """A completed job record for analytics."""
+
     job_id: str
     timestamp: float  # completion time
     pages: int = 0
@@ -33,11 +34,13 @@ class JobRecord:
     language: str = ""
     doc_type: str = ""  # classification
     worker_id: str = ""
+    tenant_id: str = ""  # multi-tenant stamp; empty = unscoped / single-tenant
 
 
 @dataclass
 class PeriodStats:
     """Aggregated stats for a time period."""
+
     period_start: float = 0.0
     period_end: float = 0.0
     total_jobs: int = 0
@@ -79,6 +82,7 @@ class PeriodStats:
 @dataclass
 class TrendAnalysis:
     """Trend analysis comparing two periods."""
+
     current: PeriodStats = field(default_factory=PeriodStats)
     previous: PeriodStats = field(default_factory=PeriodStats)
     throughput_change_pct: float = 0.0
@@ -107,11 +111,25 @@ class AnalyticsStore:
         self._records: list = []  # List of JobRecord, sorted by timestamp
         self._max_records = max_records
 
-    def record_job(self, job_id: str, pages: int = 0, duration_seconds: float = 0.0,
-                   file_size_bytes: int = 0, success: bool = True,
-                   engine: str = "", language: str = "", doc_type: str = "",
-                   worker_id: str = "", timestamp: float = None):
-        """Record a completed job."""
+    def record_job(
+        self,
+        job_id: str,
+        pages: int = 0,
+        duration_seconds: float = 0.0,
+        file_size_bytes: int = 0,
+        success: bool = True,
+        engine: str = "",
+        language: str = "",
+        doc_type: str = "",
+        worker_id: str = "",
+        timestamp: float = None,
+        tenant_id: str = "",
+    ):
+        """Record a completed job.
+
+        *tenant_id* stamps the record for multi-tenant isolation. Empty
+        string keeps single-tenant / unscoped semantics (default).
+        """
         rec = JobRecord(
             job_id=job_id,
             timestamp=timestamp if timestamp is not None else time.time(),
@@ -123,16 +141,43 @@ class AnalyticsStore:
             language=language,
             doc_type=doc_type,
             worker_id=worker_id,
+            tenant_id=tenant_id or "",
         )
         with self._lock:
             self._records.append(rec)
             if len(self._records) > self._max_records:
-                self._records = self._records[-self._max_records:]
+                self._records = self._records[-self._max_records :]
 
-    def get_period_stats(self, start: float, end: float) -> PeriodStats:
-        """Compute aggregated stats for a time period."""
+    def _filter_records(
+        self,
+        start: float,
+        end: float,
+        tenant_id: str = "",
+        require_worker: bool = False,
+    ) -> list:
+        """Return records in [start, end) optionally filtered by tenant."""
         with self._lock:
-            records = [r for r in self._records if start <= r.timestamp < end]
+            records = []
+            for r in self._records:
+                if not (start <= r.timestamp < end):
+                    continue
+                if tenant_id and r.tenant_id != tenant_id:
+                    continue
+                if require_worker and not r.worker_id:
+                    continue
+                records.append(r)
+            return records
+
+    def get_period_stats(
+        self, start: float, end: float, tenant_id: str = ""
+    ) -> PeriodStats:
+        """Compute aggregated stats for a time period.
+
+        When *tenant_id* is non-empty, only records stamped with that
+        tenant are included. Empty *tenant_id* returns global aggregates
+        (single-tenant / platform-admin global view).
+        """
+        records = self._filter_records(start, end, tenant_id=tenant_id)
 
         stats = PeriodStats(period_start=start, period_end=end)
         if not records:
@@ -157,7 +202,9 @@ class AnalyticsStore:
         if elapsed_minutes > 0:
             stats.pages_per_minute = stats.total_pages / elapsed_minutes
 
-        stats.success_rate = stats.successful_jobs / stats.total_jobs if stats.total_jobs > 0 else 0.0
+        stats.success_rate = (
+            stats.successful_jobs / stats.total_jobs if stats.total_jobs > 0 else 0.0
+        )
 
         # Breakdowns
         engine_counts = defaultdict(int)
@@ -176,8 +223,13 @@ class AnalyticsStore:
 
         return stats
 
-    def get_time_series(self, start: float, end: float,
-                        granularity: TimeGranularity = TimeGranularity.HOURLY) -> list:
+    def get_time_series(
+        self,
+        start: float,
+        end: float,
+        granularity: TimeGranularity = TimeGranularity.HOURLY,
+        tenant_id: str = "",
+    ) -> list:
         """Get time-series stats bucketed by granularity."""
         bucket_size = {
             TimeGranularity.HOURLY: 3600,
@@ -189,20 +241,24 @@ class AnalyticsStore:
         current = start
         while current < end:
             bucket_end = min(current + bucket_size, end)
-            stats = self.get_period_stats(current, bucket_end)
+            stats = self.get_period_stats(current, bucket_end, tenant_id=tenant_id)
             result.append(stats)
             current = bucket_end
 
         return result
 
-    def get_trend(self, period_seconds: float = 86400) -> TrendAnalysis:
+    def get_trend(
+        self, period_seconds: float = 86400, tenant_id: str = ""
+    ) -> TrendAnalysis:
         """Compare current period to previous period of same length."""
         now = time.time()
         current_start = now - period_seconds
         previous_start = current_start - period_seconds
 
-        current = self.get_period_stats(current_start, now)
-        previous = self.get_period_stats(previous_start, current_start)
+        current = self.get_period_stats(current_start, now, tenant_id=tenant_id)
+        previous = self.get_period_stats(
+            previous_start, current_start, tenant_id=tenant_id
+        )
 
         trend = TrendAnalysis(current=current, previous=previous)
 
@@ -210,47 +266,66 @@ class AnalyticsStore:
         if previous.pages_per_minute > 0:
             trend.throughput_change_pct = (
                 (current.pages_per_minute - previous.pages_per_minute)
-                / previous.pages_per_minute * 100
+                / previous.pages_per_minute
+                * 100
             )
 
         if previous.avg_duration_seconds > 0:
             trend.latency_change_pct = (
                 (current.avg_duration_seconds - previous.avg_duration_seconds)
-                / previous.avg_duration_seconds * 100
+                / previous.avg_duration_seconds
+                * 100
             )
 
         if previous.success_rate > 0:
             trend.success_rate_change_pct = (
                 (current.success_rate - previous.success_rate)
-                / previous.success_rate * 100
+                / previous.success_rate
+                * 100
             )
 
         if previous.total_jobs > 0:
             trend.volume_change_pct = (
-                (current.total_jobs - previous.total_jobs)
-                / previous.total_jobs * 100
+                (current.total_jobs - previous.total_jobs) / previous.total_jobs * 100
             )
 
         return trend
 
-    def get_top_engines(self, start: float, end: float, limit: int = 10) -> list:
+    def get_top_engines(
+        self, start: float, end: float, limit: int = 10, tenant_id: str = ""
+    ) -> list:
         """Get engines ranked by usage count."""
-        stats = self.get_period_stats(start, end)
-        sorted_engines = sorted(stats.engine_breakdown.items(), key=lambda x: x[1], reverse=True)
+        stats = self.get_period_stats(start, end, tenant_id=tenant_id)
+        sorted_engines = sorted(
+            stats.engine_breakdown.items(), key=lambda x: x[1], reverse=True
+        )
         return sorted_engines[:limit]
 
-    def get_top_languages(self, start: float, end: float, limit: int = 10) -> list:
+    def get_top_languages(
+        self, start: float, end: float, limit: int = 10, tenant_id: str = ""
+    ) -> list:
         """Get languages ranked by usage count."""
-        stats = self.get_period_stats(start, end)
-        sorted_langs = sorted(stats.language_breakdown.items(), key=lambda x: x[1], reverse=True)
+        stats = self.get_period_stats(start, end, tenant_id=tenant_id)
+        sorted_langs = sorted(
+            stats.language_breakdown.items(), key=lambda x: x[1], reverse=True
+        )
         return sorted_langs[:limit]
 
-    def get_worker_stats(self, start: float, end: float) -> dict:
+    def get_worker_stats(self, start: float, end: float, tenant_id: str = "") -> dict:
         """Get per-worker statistics."""
-        with self._lock:
-            records = [r for r in self._records if start <= r.timestamp < end and r.worker_id]
+        records = self._filter_records(
+            start, end, tenant_id=tenant_id, require_worker=True
+        )
 
-        worker_stats = defaultdict(lambda: {"jobs": 0, "pages": 0, "successes": 0, "failures": 0, "total_duration": 0.0})
+        worker_stats = defaultdict(
+            lambda: {
+                "jobs": 0,
+                "pages": 0,
+                "successes": 0,
+                "failures": 0,
+                "total_duration": 0.0,
+            }
+        )
         for r in records:
             ws = worker_stats[r.worker_id]
             ws["jobs"] += 1
@@ -269,8 +344,12 @@ class AnalyticsStore:
                 "total_pages": ws["pages"],
                 "successes": ws["successes"],
                 "failures": ws["failures"],
-                "avg_duration": round(ws["total_duration"] / ws["jobs"], 2) if ws["jobs"] > 0 else 0,
-                "success_rate": round(ws["successes"] / ws["jobs"], 4) if ws["jobs"] > 0 else 0,
+                "avg_duration": round(ws["total_duration"] / ws["jobs"], 2)
+                if ws["jobs"] > 0
+                else 0,
+                "success_rate": round(ws["successes"] / ws["jobs"], 4)
+                if ws["jobs"] > 0
+                else 0,
             }
 
         return result
@@ -279,6 +358,17 @@ class AnalyticsStore:
     def record_count(self) -> int:
         with self._lock:
             return len(self._records)
+
+    def purge_tenant(self, tenant_id: str) -> int:
+        """Remove in-memory history owned by ``tenant_id``."""
+        if not isinstance(tenant_id, str) or not tenant_id:
+            return 0
+        with self._lock:
+            before = len(self._records)
+            self._records = [
+                record for record in self._records if record.tenant_id != tenant_id
+            ]
+            return before - len(self._records)
 
     def reset(self):
         """Clear all records."""

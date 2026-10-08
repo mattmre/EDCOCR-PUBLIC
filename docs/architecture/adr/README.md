@@ -1,3 +1,5 @@
+> Design/reference material. Optional deployment and feature claims require the acceptance checks in [candidate scope](../../release-candidate.md).
+
 # Architecture Decision Records
 
 This directory is reserved for future ADRs filed after v4.1.0. Existing ADRs

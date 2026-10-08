@@ -290,7 +290,7 @@ class TestMainCli:
 
     def test_dry_run_returns_zero(self, nfs_tree, capsys):
         """Dry run with valid args should return 0."""
-        with patch("migrate_nfs_to_s3.S3Backend") as MockS3, \
+        with patch("migrate_nfs_to_s3.S3Backend") as MockS3,\
              patch("migrate_nfs_to_s3.check_connectivity", return_value=(True, [])):
             mock_s3 = MagicMock()
             mock_s3.exists.return_value = False
@@ -322,7 +322,7 @@ class TestMainCli:
     def test_output_writes_json_report(self, nfs_tree, tmp_path):
         """--output should write JSON report file."""
         report_path = str(tmp_path / "report.json")
-        with patch("migrate_nfs_to_s3.S3Backend") as MockS3, \
+        with patch("migrate_nfs_to_s3.S3Backend") as MockS3,\
              patch("migrate_nfs_to_s3.check_connectivity", return_value=(True, [])):
             mock_s3 = MagicMock()
             mock_s3.exists.return_value = False
@@ -354,7 +354,7 @@ class TestDryRunClarity:
 
     def test_dry_run_projected_labels(self, nfs_tree, capsys):
         """Dry-run print output should contain '(projected)' labels."""
-        with patch("migrate_nfs_to_s3.S3Backend") as MockS3, \
+        with patch("migrate_nfs_to_s3.S3Backend") as MockS3,\
              patch("migrate_nfs_to_s3.check_connectivity", return_value=(True, [])):
             mock_s3 = MagicMock()
             mock_s3.exists.return_value = False
@@ -656,7 +656,7 @@ class TestDatabaseUpdate:
         mock_psycopg2 = MagicMock()
         mock_psycopg2.connect.side_effect = Exception("Connection refused")
 
-        with patch.object(_mod, "psycopg2", mock_psycopg2), \
+        with patch.object(_mod, "psycopg2", mock_psycopg2),\
              patch.dict(os.environ, {"DATABASE_URL": "postgresql://bad"}):
             result = _update_job_db("job-001")
             assert result is False
@@ -676,7 +676,7 @@ class TestDatabaseUpdate:
             "POSTGRES_DB": "mydb",
         }
 
-        with patch.object(_mod, "psycopg2", mock_psycopg2), \
+        with patch.object(_mod, "psycopg2", mock_psycopg2),\
              patch.dict(os.environ, env):
             result = _update_job_db("job-001")
         assert result is True

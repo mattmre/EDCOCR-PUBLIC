@@ -31,6 +31,8 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -51,7 +53,7 @@ PROVENANCE_FILE_NAME = "provenance.json"
 # Required keys in the provenance dict that gate engine registration
 # when ``enforce=True``.  These names match the
 # ``TRANSLATION_APPLIED`` custody-event payload in
-# ``docs/planning/2026-04-24-translation-swarm/02-plan-B-translation-pipeline.md``
+# ``docs/release-candidate.md``
 # section 7 (per E-B-008 / RED-07).
 REQUIRED_SLSA_FIELDS: tuple[str, ...] = (
     "slsa_provenance_uri",
@@ -68,6 +70,8 @@ REQUIRED_BASE_FIELDS: tuple[str, ...] = (
 )
 
 _SHA256_HEX_LEN = 64
+_MAX_PROVENANCE_BYTES = 256 * 1024
+_MAX_PROVENANCE_FIELD_LENGTH = 4096
 
 
 class ProvenanceMissingError(RuntimeError):
@@ -123,6 +127,10 @@ def _coerce_str_field(field: str, value: Any) -> str:
         raise ProvenanceMissingError(
             f"provenance field {field!r} must be a non-empty string"
         )
+    if len(value) > _MAX_PROVENANCE_FIELD_LENGTH:
+        raise ProvenanceMissingError(
+            f"provenance field {field!r} exceeds the safety limit"
+        )
     return value
 
 
@@ -135,14 +143,27 @@ def load_provenance_from_dir(model_dir: str | Path) -> dict[str, Any]:
     """
 
     path = Path(model_dir) / PROVENANCE_FILE_NAME
-    if not path.exists():
+    try:
+        path_stat = path.lstat()
+    except FileNotFoundError:
         raise FileNotFoundError(
             f"provenance.json missing at {path}; run "
             "scripts/generate_model_provenance.py for the model bundle"
         )
+    if stat.S_ISLNK(path_stat.st_mode) or not stat.S_ISREG(path_stat.st_mode):
+        raise ProvenanceCorruptError(
+            f"provenance.json at {path} must be a regular non-symlink file"
+        )
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as handle:
+            raw = handle.read(_MAX_PROVENANCE_BYTES + 1)
+        if len(raw) > _MAX_PROVENANCE_BYTES:
+            raise ProvenanceCorruptError(
+                f"provenance.json at {path} exceeds the safety limit"
+            )
+        data = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise ProvenanceCorruptError(
             f"provenance.json at {path} is not valid JSON: {exc}"
         ) from exc

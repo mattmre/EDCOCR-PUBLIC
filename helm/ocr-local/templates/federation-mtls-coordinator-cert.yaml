@@ -1,6 +1,6 @@
 {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
 {{- /*
-  Federation mTLS — coordinator server certificate (item C8).
+  Federation mTLS — coordinator server certificate (Plan C Phase 1, item C8).
 
   When `caRef` is set, the cert is signed by an externally-managed Issuer
   named `<caRef>` (operator must provision it). Otherwise the chart-managed

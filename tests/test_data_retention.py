@@ -21,6 +21,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
 import yaml
 
 # Determine project root (the repo root, not the tests/ directory)
@@ -38,15 +39,12 @@ def _django_available():
     ``django_otp`` that are needed for ``INSTALLED_APPS`` to populate.
     Without these, ``django.setup()`` raises ``ModuleNotFoundError``.
 
-    Also verifies that ``DATABASE_URL`` is set, since coordinator settings
-    raises ``ImproperlyConfigured`` without it.
+    The tests use the repository's SQLite ``coordinator.settings_test``
+    module, so they do not require production credentials or a live database.
     """
     for mod in ("django", "django_otp", "django_celery_results", "django_celery_beat"):
         if importlib.util.find_spec(mod) is None:
             return False
-    # Coordinator settings.py requires DATABASE_URL at import time
-    if not os.environ.get("DATABASE_URL"):
-        return False
     return True
 
 
@@ -56,21 +54,21 @@ def _configure_django_if_needed():
     Only called when Django is importable and settings are not yet
     configured.
     """
-    os.environ.setdefault("DATABASE_URL", "postgres://test:test@localhost/test")
-    os.environ.setdefault("CELERY_BROKER_URL", "amqp://guest:guest@localhost//")
-    os.environ.setdefault("DJANGO_DEBUG", "True")
-    os.environ.setdefault("DJANGO_SECRET_KEY", "test-secret-key-for-unit-tests")
+    os.environ["DJANGO_SETTINGS_MODULE"] = "coordinator.settings_test"
+    os.environ["DJANGO_DEBUG"] = "True"
+    os.environ["DJANGO_SECRET_KEY"] = "test-secret-key-for-unit-tests"
+    os.environ.setdefault("CELERY_BROKER_URL", "memory://")
 
     import django
-    from django.conf import settings as django_settings
+    from django.apps import apps
 
-    if not django_settings.configured:
-        # Add coordinator to sys.path so 'coordinator.coordinator.settings'
-        # resolves correctly.
-        coordinator_dir = str(_REPO_ROOT / "coordinator")
-        if coordinator_dir not in sys.path:
-            sys.path.insert(0, coordinator_dir)
-        os.environ["DJANGO_SETTINGS_MODULE"] = "coordinator.settings"
+    # Add coordinator to sys.path so 'coordinator.settings_test' resolves.
+    # pytest-django may configure settings before it populates the app registry,
+    # so settings.configured alone is not a sufficient readiness check.
+    coordinator_dir = str(_REPO_ROOT / "coordinator")
+    if coordinator_dir not in sys.path:
+        sys.path.insert(0, coordinator_dir)
+    if not apps.ready:
         django.setup()
 
 
@@ -83,7 +81,9 @@ class TestHelmConfigmap(unittest.TestCase):
     """Verify Helm configmap exposes all retention env vars."""
 
     def setUp(self):
-        self.configmap_path = _REPO_ROOT / "helm" / "ocr-local" / "templates" / "configmap.yaml"
+        self.configmap_path = (
+            _REPO_ROOT / "helm" / "ocr-local" / "templates" / "configmap.yaml"
+        )
 
     def test_configmap_has_job_retention_days(self):
         content = self.configmap_path.read_text(encoding="utf-8")
@@ -157,7 +157,7 @@ class TestDocumentRetentionDaysRemoved(unittest.TestCase):
 
 
 class TestCeleryBeatSchedule(unittest.TestCase):
-    """Verify settings.py CELERY_BEAT_SCHEDULE has all 6 expected entries."""
+    """Verify settings.py CELERY_BEAT_SCHEDULE has all expected entries."""
 
     def setUp(self):
         self.settings_path = _REPO_ROOT / "coordinator" / "coordinator" / "settings.py"
@@ -181,10 +181,17 @@ class TestCeleryBeatSchedule(unittest.TestCase):
     def test_has_rotate_audit_logs(self):
         assert "rotate-audit-logs" in self.content
 
-    def test_six_schedule_entries(self):
-        # Count occurrences of 'task': pattern to verify exactly 6 entries
-        matches = re.findall(r"'task':", self.content)
-        assert len(matches) == 6, f"Expected 6 Beat entries, found {len(matches)}"
+    def test_schedule_entries_include_custody_repair(self):
+        # Count occurrences of 'task': pattern.  Custody publication repair is
+        # an intentional lifecycle task. Presigned capability expiry cleanup
+        # is a separate entry so bearer material is bounded independently of
+        # the artifact-retention jobs. The DB-to-broker outbox relay is also a
+        # dedicated lifecycle entry and must remain on the schedule. Durable
+        # staged OCR recovery is another required lifecycle task.
+        matches = re.findall(r"['\"]task['\"]\s*:", self.content)
+        assert len(matches) == 11, f"Expected 11 Beat entries, found {len(matches)}"
+        assert '"recover-page-stages"' in self.content
+        assert '"task": "jobs.tasks.recover_page_stages"' in self.content
 
 
 class TestPurgeTempFilesLitigationHold(unittest.TestCase):
@@ -210,6 +217,7 @@ class TestPurgeTempFilesLitigationHold(unittest.TestCase):
 
 
 @unittest.skipUnless(_django_available(), "Django not installed")
+@pytest.mark.django_db(transaction=True)
 class TestCleanupCompletedJobsCustodyEvent(unittest.TestCase):
     """Verify cleanup_completed_jobs emits a CustodyEvent and respects holds."""
 
@@ -226,7 +234,7 @@ class TestCleanupCompletedJobsCustodyEvent(unittest.TestCase):
     def test_litigation_hold_skips_cleanup(self):
         """When LITIGATION_HOLD=true, cleanup returns early."""
         with mock.patch.dict(os.environ, {"LITIGATION_HOLD": "true"}):
-            result = self.cleanup_completed_jobs()
+            result = self.cleanup_completed_jobs.run()
         assert result["deleted"] == 0
         assert result["litigation_hold"] is True
 
@@ -242,31 +250,64 @@ class TestCleanupCompletedJobsCustodyEvent(unittest.TestCase):
             with mock.patch.dict(os.environ, {"LITIGATION_HOLD": val}):
                 assert self._is_litigation_hold_active() is False
 
-    @mock.patch("jobs.tasks.CustodyEvent")
+    @mock.patch("jobs.tasks.ExtractedEntity")
+    @mock.patch("jobs.tasks.ExtractedFormValue")
+    @mock.patch("jobs.tasks._record_control_plane_custody_event")
     @mock.patch("jobs.tasks.Job")
-    def test_creates_custody_event_before_deletion(self, mock_job_cls, mock_ce_cls):
+    def test_creates_custody_event_before_deletion(
+        self,
+        mock_job_cls,
+        mock_record_custody,
+        mock_form_value_cls,
+        mock_entity_cls,
+    ):
         """cleanup_completed_jobs should create a CustodyEvent before deleting."""
         # Setup: Job.objects.filter returns queryset with items
         mock_qs = mock.MagicMock()
-        mock_qs.count.return_value = 5
-        mock_qs.delete.return_value = (5, {})
-        mock_qs.__iter__ = mock.Mock(return_value=iter([]))
+        mock_qs.count.return_value = 1
+        mock_qs.delete.return_value = (1, {"jobs.Job": 1})
+        job = mock.MagicMock(
+            job_id="job-1",
+            tenant_id="",
+            nfs_job_path=None,
+            storage_backend_used="nfs",
+        )
+        mock_qs.__iter__ = mock.Mock(return_value=iter([job]))
+        mock_qs.select_for_update.return_value = mock_qs
+        mock_qs.filter.return_value = mock_qs
+        mock_qs.order_by.return_value = mock_qs
+        mock_qs.first.return_value = job
+        # The cleanup task materializes the locked identity set before
+        # touching storage; model that persisted candidate list explicitly.
+        mock_qs.values_list.return_value = [
+            "job-1",
+        ]
         mock_job_cls.objects.filter.return_value = mock_qs
+        mock_job_cls.objects.select_for_update.return_value = mock_qs
         mock_job_cls.Status.COMPLETED = "completed"
         mock_job_cls.Status.FAILED = "failed"
         mock_job_cls.Status.CANCELLED = "cancelled"
-        mock_job_cls.objects.first.return_value = mock.MagicMock()
+        mock_form_value_cls.objects.filter.return_value.count.return_value = 0
+        mock_entity_cls.objects.filter.return_value.count.return_value = 0
 
-        with mock.patch.dict(os.environ, {"LITIGATION_HOLD": "false", "JOB_RETENTION_DAYS": "30"}):
-            with mock.patch("jobs.tasks._get_backend_for_job"):
-                result = self.cleanup_completed_jobs()
+        with mock.patch.dict(
+            os.environ, {"LITIGATION_HOLD": "false", "JOB_RETENTION_DAYS": "30"}
+        ):
+            with (
+                mock.patch("jobs.tasks._get_backend_for_job") as mock_backend,
+                mock.patch("jobs.tasks.TaskDispatchOutbox"),
+                mock.patch("jobs.tasks.PresignedTaskCapability"),
+                mock.patch("jobs.tasks.PageOCRStage") as mock_stage,
+            ):
+                mock_backend.return_value.backend_name = "nfs"
+                mock_stage.objects.filter.return_value.filter.return_value.exists.return_value = False
+                result = self.cleanup_completed_jobs.run()
 
-        assert result["deleted"] == 5
-        # Verify CustodyEvent.objects.create was called
-        mock_ce_cls.objects.create.assert_called_once()
-        call_kwargs = mock_ce_cls.objects.create.call_args[1]
-        assert call_kwargs["event_type"] == "data_deleted"
-        assert call_kwargs["data"]["action"] == "cleanup_completed_jobs"
+        assert result["deleted"] == 1
+        event_types = [
+            call.kwargs["event_type"] for call in mock_record_custody.call_args_list
+        ]
+        assert event_types == ["data_deletion_started", "data_deleted"]
 
 
 @unittest.skipUnless(_django_available(), "Django not installed")
@@ -282,48 +323,96 @@ class TestCleanupPiiEntities(unittest.TestCase):
 
     def test_litigation_hold_skips(self):
         with mock.patch.dict(os.environ, {"LITIGATION_HOLD": "true"}):
-            result = self.cleanup_pii_entities()
+            result = self.cleanup_pii_entities.run()
         assert result["deleted"] == 0
         assert result["litigation_hold"] is True
 
-    @mock.patch("jobs.tasks.CustodyEvent")
+    @mock.patch("jobs.tasks.ExtractedEntity")
+    @mock.patch("jobs.tasks.DocumentChunk")
+    @mock.patch("jobs.tasks.ExtractedFormValue")
     @mock.patch("jobs.tasks.Job")
     @mock.patch("jobs.tasks.PiiEntity")
-    def test_deletes_old_pii_entities(self, mock_pii_cls, mock_job_cls, mock_ce_cls):
-        """cleanup_pii_entities should delete old PII for completed jobs."""
+    def test_deletes_old_pii_entities(
+        self,
+        mock_pii_cls,
+        mock_job_cls,
+        mock_form_cls,
+        mock_chunk_cls,
+        mock_extracted_cls,
+    ):
+        """Beat retention delegates every derivative job to the shared saga."""
         mock_qs = mock.MagicMock()
         mock_qs.count.return_value = 10
-        mock_qs.delete.return_value = (10, {})
+        mock_qs.values_list.return_value = ["job-1"]
         mock_pii_cls.objects.filter.return_value = mock_qs
         mock_job_cls.Status.COMPLETED = "completed"
         mock_job_cls.Status.FAILED = "failed"
         mock_job_cls.Status.CANCELLED = "cancelled"
-        mock_job_cls.objects.first.return_value = mock.MagicMock()
+        job = mock.MagicMock(job_id="job-1")
+        job_qs = mock.MagicMock()
+        job_qs.order_by.return_value = job_qs
+        job_qs.__iter__ = mock.Mock(return_value=iter([job]))
+        mock_job_cls.objects.filter.return_value = job_qs
+        for model in (mock_extracted_cls, mock_form_cls, mock_chunk_cls):
+            model.objects.filter.return_value.values_list.return_value = []
 
-        with mock.patch.dict(os.environ, {"LITIGATION_HOLD": "false", "PII_ENTITY_RETENTION_DAYS": "90"}):
-            result = self.cleanup_pii_entities()
+        shared_result = {
+            "ok": True,
+            "failures": [],
+            "deleted": {
+                "pii_entities": 10,
+                "extracted_entities": 0,
+                "form_values": 0,
+                "pii_chunks": 0,
+            },
+            "sidecars_deleted": 2,
+            "redis_deleted": 1,
+        }
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"LITIGATION_HOLD": "false", "PII_ENTITY_RETENTION_DAYS": "90"},
+            ),
+            mock.patch(
+                "jobs.management.commands.purge_pii.erase_pii_for_job",
+                return_value=shared_result,
+            ) as erase,
+        ):
+            result = self.cleanup_pii_entities.run()
 
         assert result["deleted"] == 10
         assert result["retention_days"] == 90
-        # Verify CustodyEvent recorded
-        mock_ce_cls.objects.create.assert_called_once()
-        call_kwargs = mock_ce_cls.objects.create.call_args[1]
-        assert call_kwargs["event_type"] == "pii_deleted"
+        erase.assert_called_once()
+        assert erase.call_args.kwargs["source"] == "celery-beat"
 
+    @mock.patch("jobs.tasks.DocumentChunk")
+    @mock.patch("jobs.tasks.ExtractedFormValue")
+    @mock.patch("jobs.tasks.ExtractedEntity")
     @mock.patch("jobs.tasks.CustodyEvent")
     @mock.patch("jobs.tasks.Job")
     @mock.patch("jobs.tasks.PiiEntity")
-    def test_no_entities_returns_early(self, mock_pii_cls, mock_job_cls, mock_ce_cls):
+    def test_no_entities_returns_early(
+        self,
+        mock_pii_cls,
+        mock_job_cls,
+        mock_ce_cls,
+        mock_extracted_cls,
+        mock_form_cls,
+        mock_chunk_cls,
+    ):
         """When no old PII entities exist, return early without deletion."""
         mock_qs = mock.MagicMock()
         mock_qs.count.return_value = 0
         mock_pii_cls.objects.filter.return_value = mock_qs
+        mock_extracted_cls.objects.filter.return_value.count.return_value = 0
+        mock_form_cls.objects.filter.return_value.count.return_value = 0
+        mock_chunk_cls.objects.filter.return_value.count.return_value = 0
         mock_job_cls.Status.COMPLETED = "completed"
         mock_job_cls.Status.FAILED = "failed"
         mock_job_cls.Status.CANCELLED = "cancelled"
 
         with mock.patch.dict(os.environ, {"LITIGATION_HOLD": "false"}):
-            result = self.cleanup_pii_entities()
+            result = self.cleanup_pii_entities.run()
 
         assert result["deleted"] == 0
         mock_ce_cls.objects.create.assert_not_called()
@@ -342,7 +431,7 @@ class TestCleanupOutputFiles(unittest.TestCase):
 
     def test_litigation_hold_skips(self):
         with mock.patch.dict(os.environ, {"LITIGATION_HOLD": "yes"}):
-            result = self.cleanup_output_files()
+            result = self.cleanup_output_files.run()
         assert result["status"] == "skipped"
         assert result["litigation_hold"] is True
 
@@ -350,10 +439,14 @@ class TestCleanupOutputFiles(unittest.TestCase):
     def test_calls_management_command(self, mock_call_command):
         """cleanup_output_files should call cleanup_output management command."""
         # We need to mock at the point where call_command is imported inside the function
-        with mock.patch.dict(os.environ, {"LITIGATION_HOLD": "false", "OUTPUT_RETENTION_DAYS": "60"}):
+        with mock.patch.dict(
+            os.environ, {"LITIGATION_HOLD": "false", "OUTPUT_RETENTION_DAYS": "60"}
+        ):
             with mock.patch("django.core.management.call_command") as mock_cmd:
-                result = self.cleanup_output_files()
-        mock_cmd.assert_called_once_with("cleanup_output", "--confirm", "--retention-days=60")
+                result = self.cleanup_output_files.run()
+        mock_cmd.assert_called_once_with(
+            "cleanup_output", "--confirm", "--retention-days=60"
+        )
         assert result["status"] == "ok"
         assert result["retention_days"] == 60
 
@@ -371,15 +464,19 @@ class TestRotateAuditLogsTask(unittest.TestCase):
 
     def test_litigation_hold_skips(self):
         with mock.patch.dict(os.environ, {"LITIGATION_HOLD": "1"}):
-            result = self.rotate_audit_logs_task()
+            result = self.rotate_audit_logs_task.run()
         assert result["status"] == "skipped"
         assert result["litigation_hold"] is True
 
     def test_calls_management_command(self):
-        with mock.patch.dict(os.environ, {"LITIGATION_HOLD": "false", "AUDIT_LOG_RETENTION_DAYS": "3650"}):
+        with mock.patch.dict(
+            os.environ, {"LITIGATION_HOLD": "false", "AUDIT_LOG_RETENTION_DAYS": "3650"}
+        ):
             with mock.patch("django.core.management.call_command") as mock_cmd:
-                result = self.rotate_audit_logs_task()
-        mock_cmd.assert_called_once_with("rotate_audit_logs", "--confirm", "--retention-days=3650")
+                result = self.rotate_audit_logs_task.run()
+        mock_cmd.assert_called_once_with(
+            "rotate_audit_logs", "--confirm", "--retention-days=3650"
+        )
         assert result["status"] == "ok"
         assert result["retention_days"] == 3650
 
@@ -394,6 +491,7 @@ class TestTasksHaveLitigationHoldHelper(unittest.TestCase):
 
     def test_helper_exists_in_tasks_module(self):
         from jobs import tasks
+
         assert hasattr(tasks, "is_litigation_hold_active")
         assert callable(tasks.is_litigation_hold_active)
 

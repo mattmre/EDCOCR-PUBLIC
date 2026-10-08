@@ -75,8 +75,7 @@ class TestHelmCIWorkflow(unittest.TestCase):
         """OCI registry push must only run on tagged releases."""
         job = self.ci["jobs"]["helm-package"]
         registry_steps = [
-            s for s in job["steps"]
-            if "registry" in s.get("name", "").lower()
+            s for s in job["steps"] if "registry" in s.get("name", "").lower()
         ]
         self.assertTrue(
             len(registry_steps) > 0,
@@ -90,8 +89,7 @@ class TestHelmCIWorkflow(unittest.TestCase):
         """Registry push must skip gracefully when HELM_REGISTRY_URL is not set."""
         job = self.ci["jobs"]["helm-package"]
         registry_steps = [
-            s for s in job["steps"]
-            if "registry" in s.get("name", "").lower()
+            s for s in job["steps"] if "registry" in s.get("name", "").lower()
         ]
         self.assertTrue(
             len(registry_steps) > 0,
@@ -107,9 +105,7 @@ class TestHelmDeployWorkflow(unittest.TestCase):
     """Tests for the helm-deploy.yml manual deployment workflow."""
 
     def setUp(self):
-        deploy_path = os.path.join(
-            REPO_ROOT, ".github", "workflows", "helm-deploy.yml"
-        )
+        deploy_path = os.path.join(REPO_ROOT, ".github", "workflows", "helm-deploy.yml")
         with open(deploy_path) as f:
             self.deploy = yaml.safe_load(f)
 
@@ -200,15 +196,11 @@ class TestValuesOverrides(unittest.TestCase):
 
     def test_production_has_backup_enabled(self):
         """Production must enable PostgreSQL backups."""
-        self.assertTrue(
-            self.production["postgresql"]["backup"]["enabled"]
-        )
+        self.assertTrue(self.production["postgresql"]["backup"]["enabled"])
 
-    def test_production_has_sentinel_enabled(self):
-        """Production must enable Redis Sentinel."""
-        self.assertTrue(
-            self.production["redis"]["sentinel"]["enabled"]
-        )
+    def test_production_keeps_unwired_sentinel_disabled(self):
+        """Production must not enable the chart's unwired Redis Sentinel scaffold."""
+        self.assertFalse(self.production["redis"]["sentinel"]["enabled"])
 
     def test_production_has_prometheus_enabled(self):
         """Production must enable Prometheus monitoring."""

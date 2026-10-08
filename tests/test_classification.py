@@ -792,13 +792,7 @@ class TestWriteJson:
         assert os.path.isdir(expected_dir)
 
     def test_path_traversal_protection(self, tmp_path):
-        """Subfolder with '..' should be neutralized by sanitizer.
-
-        The _sanitize_path_segment function strips dots from path segments,
-        so '..' becomes empty and is filtered out. The result is a safe path
-        inside the CLASSIFICATION directory (not None, since the traversal
-        is prevented by sanitization rather than outright rejection).
-        """
+        """Subfolder traversal tokens are rejected."""
         doc = DocumentClassification(
             document_id="traversal", source_file="evil.pdf"
         )
@@ -807,13 +801,8 @@ class TestWriteJson:
         result = write_classification_json(
             doc, str(tmp_path), "../../etc", "0.5.0"
         )
-        # Sanitizer strips '..' segments; result is safe inside classification dir
-        assert result is not None
-        assert os.path.exists(result)
-        classification_root = os.path.realpath(
-            os.path.join(str(tmp_path), "EXPORT", "CLASSIFICATION")
-        )
-        assert os.path.realpath(result).startswith(classification_root)
+        assert result is None
+        assert not (tmp_path / "etc").exists()
 
     def test_empty_subfolder(self):
         """Empty subfolder should write to the CLASSIFICATION root."""
@@ -877,7 +866,7 @@ class TestEdgeCases:
         assert result.predicted_type == "letter"
 
     def test_write_json_with_special_filename(self, tmp_path):
-        """Filename with spaces should be handled correctly."""
+        """Filename with spaces is normalized into the canonical sidecar stem."""
         doc = DocumentClassification(
             document_id="special_name", source_file="my document file.pdf"
         )
@@ -889,7 +878,7 @@ class TestEdgeCases:
         result = write_classification_json(doc, str(tmp_path), "", "0.5.0")
         assert result is not None
         assert os.path.exists(result)
-        assert "my document file" in os.path.basename(result)
+        assert os.path.basename(result).startswith("my_document_file~p1h")
 
     def test_concurrent_safe_construction(self):
         """Multiple PageClassification instances should be independent."""

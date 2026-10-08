@@ -28,7 +28,7 @@ const flagFixture: FeatureFlag = {
   requires_bake_hours: 48,
 };
 
-describe("feature-flags-api", => {
+describe("feature-flags-api", () => {
   beforeEach(() => {
     setApiKey("test-key");
   });
@@ -37,13 +37,13 @@ describe("feature-flags-api", => {
     vi.restoreAllMocks();
   });
 
-  it("listFlags normalizes a bare-array response", async => {
+  it("listFlags normalizes a bare-array response", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(200, [flagFixture]));
     const out = await listFlags();
     expect(out).toEqual([flagFixture]);
   });
 
-  it("listFlags normalizes a {flags:[]} envelope", async => {
+  it("listFlags normalizes a {flags:[]} envelope", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json(200, { flags: [flagFixture] })
     );
@@ -51,7 +51,7 @@ describe("feature-flags-api", => {
     expect(out).toEqual([flagFixture]);
   });
 
-  it("getFlag returns null on 404", async => {
+  it("getFlag returns null on 404", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json(404, { detail: "not found" })
     );
@@ -59,12 +59,12 @@ describe("feature-flags-api", => {
     expect(out).toBeNull();
   });
 
-  it("getFlag rethrows non-404 errors", async => {
+  it("getFlag rethrows non-404 errors", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json(500, { detail: "boom" }));
     await expect(getFlag("X")).rejects.toBeInstanceOf(ApiError);
   });
 
-  it("getFlagHistory normalizes envelope and array shapes", async => {
+  it("getFlagHistory normalizes envelope and array shapes", async () => {
     const entry = {
       request_id: "req_1",
       flag_key: "ENABLE_TRANSLATION",
@@ -87,7 +87,7 @@ describe("feature-flags-api", => {
     expect(bare).toEqual([entry]);
   });
 
-  it("submitChangeRequest posts to the change-request endpoint with the flag-key in the path", async => {
+  it("submitChangeRequest posts to the change-request endpoint with the flag-key in the path", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json(202, {
         request_id: "req_2",
@@ -122,7 +122,7 @@ describe("feature-flags-api", => {
     });
   });
 
-  it("submitChangeRequest surfaces ApiError on 403", async => {
+  it("submitChangeRequest surfaces ApiError on 403", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       json(403, { detail: "strong auth", error_code: "strong_auth_required" })
     );

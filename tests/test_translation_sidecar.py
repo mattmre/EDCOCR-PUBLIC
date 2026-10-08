@@ -133,6 +133,13 @@ def test_write_json_subfolder(tmp_path):
     assert "EXPORT/TRANSLATION/batch_a/sub/" in norm
 
 
+@pytest.mark.parametrize("writer", [write_translation_json, write_translation_md])
+def test_write_sidecar_rejects_traversal(tmp_path, writer):
+    with pytest.raises(ValueError, match="traversal"):
+        writer(make_doc(), str(tmp_path), subfolder="safe/../escape")
+    assert not (tmp_path / "escape").exists()
+
+
 def test_write_json_round_trip(tmp_path):
     doc = make_doc(document_id="abc", target_language="es")
     path = write_translation_json(doc, str(tmp_path))

@@ -202,7 +202,9 @@ class TestValidationIntegration:
         assert path is not None
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        assert data["quality"]["classification"] == "degraded"
+        # An image-only page requires explicit review even when half the
+        # document has text; mean confidence cannot certify completeness.
+        assert data["quality"]["classification"] == "review_required"
         assert data["quality"]["pages_image_only"] == 2
         assert data["quality"]["text_extraction_rate"] == 0.5
 
@@ -308,7 +310,7 @@ class TestNERWithSpacyIntegration:
         # Page 2 has legal text with case numbers, Bates stamps, exhibits
         text = sample_page_texts[2]
 
-        with patch("ner._SPACY_AVAILABLE", True), \
+        with patch("ner._SPACY_AVAILABLE", True),\
              patch("ner._load_nlp", return_value=mock_nlp):
             spacy_entities = extract_entities(text, 2)
 

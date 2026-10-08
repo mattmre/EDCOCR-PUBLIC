@@ -4,7 +4,7 @@ import ReviewQueuePage from "@/app/review/page";
 import { setApiKey } from "@/lib/auth";
 import type { ReviewItem, ReviewQueueResponse } from "@/lib/types";
 
-vi.mock("next/link", => ({
+vi.mock("next/link", () => ({
   __esModule: true,
   default: ({
     href,
@@ -27,10 +27,10 @@ const replaceMock = vi.fn();
 const pushMock = vi.fn();
 const searchParamsHolder = { current: new URLSearchParams() };
 
-vi.mock("next/navigation", => ({
+vi.mock("next/navigation", () => ({
   __esModule: true,
-  useRouter: => ({ replace: replaceMock, push: pushMock }),
-  useSearchParams: => searchParamsHolder.current,
+  useRouter: () => ({ replace: replaceMock, push: pushMock }),
+  useSearchParams: () => searchParamsHolder.current,
 }));
 
 function reviewFixture(partial: Partial<ReviewItem> = {}): ReviewItem {
@@ -56,7 +56,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-describe("ReviewQueuePage", => {
+describe("ReviewQueuePage", () => {
   beforeEach(() => {
     setApiKey("test-key");
     replaceMock.mockClear();
@@ -68,7 +68,7 @@ describe("ReviewQueuePage", => {
     vi.restoreAllMocks();
   });
 
-  it("renders the rows returned from the API", async => {
+  it("renders the rows returned from the API", async () => {
     const payload: ReviewQueueResponse = {
       items: [
         reviewFixture(),
@@ -94,7 +94,7 @@ describe("ReviewQueuePage", => {
     );
   });
 
-  it("shows the empty state when API returns no items", async => {
+  it("shows the empty state when API returns no items", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ items: [], total: 0 } satisfies ReviewQueueResponse)
     );
@@ -104,7 +104,7 @@ describe("ReviewQueuePage", => {
     });
   });
 
-  it("forwards a single status filter as a server query param", async => {
+  it("forwards a single status filter as a server query param", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(
@@ -125,7 +125,7 @@ describe("ReviewQueuePage", => {
     });
   });
 
-  it("syncs filter state to the URL via router.replace", async => {
+  it("syncs filter state to the URL via router.replace", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ items: [], total: 0 } satisfies ReviewQueueResponse)
     );
@@ -137,7 +137,7 @@ describe("ReviewQueuePage", => {
     expect(firstCall).toMatch(/status=pending/);
   });
 
-  it("paginates by sending offset on next-page click", async => {
+  it("paginates by sending offset on next-page click", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({
         items: Array.from({ length: 25 }, (_, i) =>

@@ -5,10 +5,11 @@ const {
   submitBatchUpload,
 } = require("../../helpers/request");
 
-test.describe("OCR batch request contracts", => {
+test.describe("OCR batch request contracts", () => {
   test.skip(
     !hasEnv("PLAYWRIGHT_API_BASE_URL"),
-    "Set PLAYWRIGHT_API_BASE_URL to run request-level batch tests.");
+    "Set PLAYWRIGHT_API_BASE_URL to run request-level batch tests.",
+  );
 
   test("@smoke batch submit appears in list and status", async ({ request, baseURL }) => {
     const submitResponse = await submitBatchUpload(request, baseURL);
@@ -19,10 +20,12 @@ test.describe("OCR batch request contracts", => {
     const listPayload = await listResponse.json();
     expect(Array.isArray(listPayload.batches)).toBeTruthy();
     expect(
-      listPayload.batches.some((batch) => batch.batch_id === submitted.batch_id)).toBeTruthy();
+      listPayload.batches.some((batch) => batch.batch_id === submitted.batch_id),
+    ).toBeTruthy();
 
     const statusResponse = await request.get(
-      `${baseURL}/api/v1/jobs/batch/${submitted.batch_id}`);
+      `${baseURL}/api/v1/jobs/batch/${submitted.batch_id}`,
+    );
     expect(statusResponse.ok()).toBeTruthy();
     const statusPayload = await statusResponse.json();
     expect(statusPayload.batch_id).toBe(submitted.batch_id);
@@ -35,7 +38,8 @@ test.describe("OCR batch request contracts", => {
     const submitted = await expectBatchSubmitResponse(submitResponse);
 
     const cancelResponse = await request.delete(
-      `${baseURL}/api/v1/jobs/batch/${submitted.batch_id}`);
+      `${baseURL}/api/v1/jobs/batch/${submitted.batch_id}`,
+    );
     expect(cancelResponse.status()).toBe(200);
     const payload = await cancelResponse.json();
     expect(payload.batch_id).toBe(submitted.batch_id);
@@ -49,7 +53,8 @@ test.describe("OCR batch request contracts", => {
     await request.delete(`${baseURL}/api/v1/jobs/batch/${submitted.batch_id}`);
 
     const retryResponse = await request.post(
-      `${baseURL}/api/v1/jobs/batch/${submitted.batch_id}/retry`);
+      `${baseURL}/api/v1/jobs/batch/${submitted.batch_id}/retry`,
+    );
     expect([200, 409]).toContain(retryResponse.status());
 
     if (retryResponse.status() === 409) {

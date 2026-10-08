@@ -1,4 +1,15 @@
-{{- if or .Values.gpuWorker.autoscaling.enabled .Values.cpuWorker.autoscaling.enabled (and .Values.cpuOcrWorker.enabled .Values.cpuOcrWorker.autoscaling.enabled) (and .Values.layoutCpuWorker.enabled .Values.layoutCpuWorker.autoscaling.enabled) (and .Values.nlpGpuWorker.enabled .Values.nlpGpuWorker.autoscaling.enabled) (and .Values.layoutlmWorker.enabled .Values.layoutlmWorker.autoscaling.enabled) }}
+{{- if or .Values.gpuWorker.autoscaling.enabled .Values.cpuWorker.autoscaling.enabled (and .Values.ocrStagedPage.enabled (or .Values.ocrStagedPage.render.autoscaling.enabled .Values.ocrStagedPage.finalize.autoscaling.enabled)) (and .Values.cpuOcrWorker.enabled .Values.cpuOcrWorker.autoscaling.enabled) (and .Values.tesseractWorker.enabled .Values.tesseractWorker.autoscaling.enabled) (and .Values.layoutCpuWorker.enabled .Values.layoutCpuWorker.autoscaling.enabled) (and .Values.nlpGpuWorker.enabled .Values.nlpGpuWorker.autoscaling.enabled) (and .Values.layoutlmWorker.enabled .Values.layoutlmWorker.autoscaling.enabled) }}
+{{- $managementScheme := ternary "https" "http" .Values.tls.enabled }}
+{{- $managementPort := ternary "15671" "15672" .Values.tls.enabled }}
+{{- $clusterDomain := trimSuffix "." (.Values.clusterDomain | default "cluster.local") }}
+{{- $managementDefault := printf "%s://%s-rabbitmq.%s.svc.%s:%s/" $managementScheme .Release.Name .Release.Namespace $clusterDomain $managementPort }}
+{{- $managementHost := default $managementDefault .Values.keda.rabbitmqManagementHost }}
+{{- $managementUsesInternalCA := and .Values.tls.enabled (not .Values.keda.rabbitmqManagementHost) }}
+{{- $managementUsesConfiguredCA := .Values.keda.rabbitmqManagementCaSecretName }}
+{{- $managementTLS := and (hasPrefix "https://" $managementHost) (or $managementUsesInternalCA $managementUsesConfiguredCA) }}
+{{- if and .Values.productionMode (or .Values.rabbitmq.enabled (not .Values.secrets.celeryBrokerUrl) (not .Values.keda.rabbitmqManagementHost) (not (hasPrefix "https://" $managementHost)) (not .Values.secrets.rabbitmqManagementUser) (not .Values.secrets.rabbitmqManagementPassword) (eq (.Values.secrets.rabbitmqManagementUser | default "") (.Values.secrets.rabbitmqUser | default "ocr")) (eq (.Values.secrets.rabbitmqManagementPassword | default "") (.Values.secrets.rabbitmqPassword | default ""))) }}
+{{- fail "productionMode KEDA requires operator-managed RabbitMQ, explicit broker URL, trusted HTTPS management endpoint, and distinct pre-provisioned monitoring credentials" }}
+{{- end }}
 apiVersion: keda.sh/v1alpha1
 kind: TriggerAuthentication
 metadata:
@@ -9,5 +20,19 @@ spec:
   secretTargetRef:
     - parameter: host
       name: {{ .Release.Name }}-secret
-      key: CELERY_BROKER_URL
+      key: RABBITMQ_MANAGEMENT_HOST
+    - parameter: username
+      name: {{ .Release.Name }}-secret
+      key: RABBITMQ_MANAGEMENT_USER
+    - parameter: password
+      name: {{ .Release.Name }}-secret
+      key: RABBITMQ_MANAGEMENT_PASSWORD
+    {{- if $managementTLS }}
+    - parameter: tls
+      name: {{ .Release.Name }}-secret
+      key: RABBITMQ_MANAGEMENT_TLS
+    - parameter: ca
+      name: {{ .Values.keda.rabbitmqManagementCaSecretName | default (printf "%s-ca-secret" (include "ocr-local.fullname" .)) }}
+      key: {{ .Values.keda.rabbitmqManagementCaSecretKey | default "ca.crt" }}
+    {{- end }}
 {{- end }}

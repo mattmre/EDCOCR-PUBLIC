@@ -1,4 +1,5 @@
 """Custody event helpers for translation pipeline."""
+
 from __future__ import annotations
 
 from enum import StrEnum
@@ -22,6 +23,8 @@ class ReasonCode(StrEnum):
     MODEL_INTEGRITY_FAILED = "MODEL_INTEGRITY_FAILED"
     MODEL_EVICTED = "MODEL_EVICTED"
     MODEL_LOAD_BLOCKED_NC_LICENSE = "MODEL_LOAD_BLOCKED_NC_LICENSE"
+    # Soft-warning companion when NC engine is admitted under default-on policy.
+    MODEL_LOAD_NC_LICENSE_ACKNOWLEDGED = "MODEL_LOAD_NC_LICENSE_ACKNOWLEDGED"
     MODEL_PINNED = "MODEL_PINNED"
     MODEL_UNPINNED = "MODEL_UNPINNED"
     # Tenant-aware routing (Plan B Wave M2 PR B14 -- router_v2).
@@ -267,6 +270,36 @@ def emit_tenant_engine_selected(
             "model_id": model_id,
             "source_lang": source_lang,
             "target_lang": target_lang,
+            **extra,
+        },
+    )
+
+
+def emit_nc_license_acknowledged(
+    chain: "CustodyChain",
+    *,
+    tenant_id: str,
+    engine_id: str,
+    license: str,
+    model_id: str = "",
+    **extra,
+) -> None:
+    """Emit NC-license soft-warning acknowledgment (Wave M2 Slice 1.2).
+
+    Fired when an NC-licensed engine is **admitted** under default-on
+    ``allow_nc_licensed`` / ``allow_nllb_commercial`` policy so custody
+    captures both block and admit outcomes. Uses TRANSLATION_MODEL_CACHE
+    event type (same carrier as other model-load reason codes).
+    """
+    chain.log_event(
+        "TRANSLATION_MODEL_CACHE",
+        {
+            "reason_code": str(ReasonCode.MODEL_LOAD_NC_LICENSE_ACKNOWLEDGED),
+            "tenant_id": tenant_id,
+            "engine_id": engine_id,
+            "model_id": model_id,
+            "license": license,
+            "posture": "soft_warning_acknowledged",
             **extra,
         },
     )

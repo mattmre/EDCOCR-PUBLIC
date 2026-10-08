@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Pagination } from "@/components/Pagination";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -11,10 +11,8 @@ import {
   jobsFilterToQuery,
 } from "@/components/JobsFilterBar";
 import { ApiError, get } from "@/lib/api-client";
+import { useSettings } from "@/lib/hooks";
 import type { Job, JobListResponse, JobsFilterState } from "@/lib/types";
-
-const DEFAULT_PAGE_SIZE = 25;
-const REFRESH_INTERVAL_MS = 10_000;
 
 interface State {
   jobs: Job[];
@@ -55,12 +53,18 @@ export interface JobsTableProps {
 }
 
 export function JobsTable({
-  pageSize = DEFAULT_PAGE_SIZE,
+  pageSize: pageSizeOverride,
   refresh = true,
   initialFilters = EMPTY_FILTER_STATE,
 }: JobsTableProps) {
+  const { settings } = useSettings();
+  const pageSize = pageSizeOverride ?? settings.display.pageSize;
+  const refreshIntervalMs = settings.display.autoRefreshSeconds * 1000;
+  const advanced = settings.display.showAdvancedColumns;
+  const columnCount = advanced ? 10 : 8;
   const [filters, setFilters] = useState<JobsFilterState>(initialFilters);
   const [page, setPage] = useState<number>(1);
+  const [retrySequence, setRetrySequence] = useState(0);
 
   const [state, setState] = useState<State>({
     jobs: [],
@@ -69,59 +73,51 @@ export function JobsTable({
     error: null,
   });
 
-  const filtersChangingRef = useRef<boolean>(false);
   const offset = (page - 1) * pageSize;
 
-  // When filters change, reset to first page.
   useEffect(() => {
-    setPage(1);
-  }, [filters]);
-
-  // Initial fetch + polling.
-  useEffect(() => {
-    void load(true);
-    if (!refresh) return;
-    const id = setInterval(() => {
-      if (filtersChangingRef.current) return;
-      void load(false);
-    }, REFRESH_INTERVAL_MS);
-    return => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refresh, filters, page, pageSize]);
-
-  async function load(showLoading: boolean) {
-    if (showLoading) setState((s) => ({ ...s, loading: true, error: null }));
-    const params = jobsFilterToQuery(filters);
-    params.set("limit", String(pageSize));
-    params.set("offset", String(offset));
-    try {
-      const response = await get<JobListResponse>(
-        `/api/v1/jobs?${params.toString()}`
-      );
-      setState({
-        jobs: response.jobs ?? [],
-        total: response.total ?? 0,
-        loading: false,
-        error: null,
-      });
-    } catch (err) {
-      const message =
-        err instanceof ApiError
+    let active = true;
+    let inFlight = false;
+    setState({ jobs: [], total: 0, loading: true, error: null });
+    async function load() {
+      if (!active || inFlight) return;
+      inFlight = true;
+      const params = jobsFilterToQuery(filters);
+      params.set("limit", String(pageSize));
+      params.set("offset", String(offset));
+      try {
+        const response = await get<JobListResponse>(`/api/v1/jobs?${params.toString()}`);
+        if (!active) return;
+        const lastPage = Math.max(1, Math.ceil((response.total ?? 0) / pageSize));
+        if (page > lastPage) {
+          // Polling can shrink the result set. Correct the request's page,
+          // not just Pagination's displayed label, then load the new offset.
+          setState({ jobs: [], total: response.total ?? 0, loading: true, error: null });
+          setPage(lastPage);
+          return;
+        }
+        setState({ jobs: response.jobs ?? [], total: response.total ?? 0, loading: false, error: null });
+      } catch (err) {
+        if (!active) return;
+        const message = err instanceof ApiError
           ? `${err.status} ${err.message}`
-          : err instanceof Error
-            ? err.message
-            : "unknown error";
-      setState({ jobs: [], total: 0, loading: false, error: message });
+          : err instanceof Error ? err.message : "unknown error";
+        setState({ jobs: [], total: 0, loading: false, error: message });
+      } finally {
+        inFlight = false;
+      }
     }
-  }
+    void load();
+    if (!refresh) return () => { active = false; };
+    const id = setInterval(() => {
+      void load();
+    }, refreshIntervalMs);
+    return () => { active = false; clearInterval(id); };
+  }, [refresh, filters, page, pageSize, offset, retrySequence, refreshIntervalMs]);
 
   function handleFiltersChange(next: JobsFilterState) {
-    filtersChangingRef.current = true;
     setFilters(next);
-    // Release the polling-pause flag on the next tick so a manual fetch can run.
-    setTimeout(() => {
-      filtersChangingRef.current = false;
-    }, 0);
+    setPage(1);
   }
 
   return (
@@ -138,7 +134,7 @@ export function JobsTable({
             variant="outline"
             size="sm"
             className="ml-3"
-            onClick={() => void load(true)}
+            onClick={() => setRetrySequence((value) => value + 1)}
           >
             Retry
           </Button>
@@ -146,7 +142,7 @@ export function JobsTable({
       ) : null}
 
       <div className="overflow-x-auto rounded-md border border-border">
-        <table className="min-w-full divide-y divide-border" data-testid="jobs-table">
+        <table className={`min-w-full divide-y divide-border ${settings.display.compactMode ? "[&_td]:py-1 [&_th]:py-1" : ""}`} data-testid="jobs-table">
           <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
             <tr>
               <th scope="col" className="px-3 py-2 text-left font-medium">
@@ -173,13 +169,15 @@ export function JobsTable({
               <th scope="col" className="px-3 py-2 text-left font-medium">
                 Progress
               </th>
+              {advanced && <th scope="col" className="px-3 py-2 text-left font-medium">Priority</th>}
+              {advanced && <th scope="col" className="px-3 py-2 text-left font-medium">Webhook</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-border bg-background text-sm">
             {state.loading && state.jobs.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={columnCount}
                   className="px-3 py-6 text-center text-muted-foreground"
                   data-testid="jobs-loading"
                 >
@@ -189,7 +187,7 @@ export function JobsTable({
             ) : state.jobs.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={columnCount}
                   className="px-3 py-6 text-center text-muted-foreground"
                   data-testid="jobs-empty"
                 >
@@ -232,6 +230,8 @@ export function JobsTable({
                     <td className="px-3 py-2 text-muted-foreground">
                       {progress ? `${progress.percent_complete.toFixed(0)}%` : "—"}
                     </td>
+                    {advanced && <td className="px-3 py-2">{job.priority ?? "—"}</td>}
+                    {advanced && <td className="px-3 py-2">{job.webhook_status ?? "—"}</td>}
                   </tr>
                 );
               })

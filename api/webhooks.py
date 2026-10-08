@@ -19,12 +19,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Optional
 
-from ocr_distributed.ssrf import (
-    safe_opener as _safe_opener,
-)
-from ocr_distributed.ssrf import (
-    validate_webhook_url,
-)
+from ocr_distributed.ssrf import pinned_url_for_request as _pinned_url_for_request
+from ocr_distributed.ssrf import safe_opener as _safe_opener
+from ocr_distributed.ssrf import validate_webhook_url
 from ocr_local.config.version import __version__
 
 logger = logging.getLogger(__name__)
@@ -36,6 +33,7 @@ logger = logging.getLogger(__name__)
 # Thread pool for webhook delivery (bounded concurrency)
 _webhook_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="webhook")
 _webhook_pool_lock = threading.Lock()
+_webhook_admission = threading.BoundedSemaphore(value=8)
 
 
 def _get_webhook_pool() -> ThreadPoolExecutor:
@@ -43,8 +41,54 @@ def _get_webhook_pool() -> ThreadPoolExecutor:
     global _webhook_pool
     with _webhook_pool_lock:
         if getattr(_webhook_pool, "_shutdown", False):
-            _webhook_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="webhook")
+            _webhook_pool = ThreadPoolExecutor(
+                max_workers=4, thread_name_prefix="webhook"
+            )
         return _webhook_pool
+
+
+def _run_admitted(callback, *args, **kwargs):
+    try:
+        return callback(*args, **kwargs)
+    finally:
+        _webhook_admission.release()
+
+
+def _submit_bounded(callback, identity: str, *args, **kwargs) -> None:
+    """Bound queued webhook memory; overload applies producer backpressure."""
+    from api.background_work import register_writer
+
+    finish = register_writer()
+    if not _webhook_admission.acquire(blocking=False):
+        logger.warning("Webhook backlog full; delivering %s synchronously", identity)
+        try:
+            callback(*args, **kwargs)
+        finally:
+            finish()
+        return
+    try:
+        future = _get_webhook_pool().submit(_run_admitted, callback, *args, **kwargs)
+        future.add_done_callback(lambda _future: finish())
+    except RuntimeError:
+        _webhook_admission.release()
+        logger.warning(
+            "Webhook pool unavailable; delivering %s synchronously", identity
+        )
+        try:
+            callback(*args, **kwargs)
+        finally:
+            finish()
+    except BaseException:
+        _webhook_admission.release()
+        finish()
+        raise
+
+
+def shutdown_webhook_pool(*, wait: bool = True) -> None:
+    """Stop admission and drain the bounded delivery pool at API shutdown."""
+    with _webhook_pool_lock:
+        pool = _webhook_pool
+    pool.shutdown(wait=wait, cancel_futures=False)
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +116,9 @@ def compute_signature(payload_json: str, secret: str, timestamp: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _load_pii_entities(job_id: str) -> list[dict]:
+def _load_pii_entities(
+    coordinator_job_id: str, tenant_id: str | None = None
+) -> list[dict]:
     """Load PII entities from the coordinator database if available.
 
     Attempts to import the Django PiiEntity model and query for entities
@@ -91,15 +137,32 @@ def _load_pii_entities(job_id: str) -> list[dict]:
         and bounding_box fields.
     """
     try:
-        from jobs.models import PiiEntity  # Django coordinator model
+        from api.coordinator_bridge import ensure_coordinator_django
 
-        entities = PiiEntity.objects.filter(job_id=job_id).select_related("page")
+        ensure_coordinator_django()
+        from jobs.models import PiiEntity  # Django coordinator model
+        from jobs.rls import (  # type: ignore[import-not-found]
+            control_plane_rls_context,
+            tenant_rls_context,
+        )
+
+        context = (
+            tenant_rls_context(tenant_id) if tenant_id else control_plane_rls_context()
+        )
+        with context:
+            entities = list(
+                PiiEntity.objects.filter(job_id=coordinator_job_id).select_related(
+                    "page"
+                )
+            )
         return [
             {
                 "entity_type": e.entity_type,
                 "confidence_score": round(e.confidence, 4),
                 "page_index": e.page.page_num if e.page else 0,
-                "bounding_box": e.bounding_box if isinstance(e.bounding_box, list) else [],
+                "bounding_box": e.bounding_box
+                if isinstance(e.bounding_box, list)
+                else [],
             }
             for e in entities
         ]
@@ -149,7 +212,12 @@ def build_webhook_payload(
 
     # Enrich with PII entity bounding boxes when enabled and job is completed
     if enrich_entities and event == "job.completed":
-        entities = _load_pii_entities(job.job_id)
+        coordinator_job_id = str(getattr(job, "coordinator_job_id", None) or "")
+        entities = (
+            _load_pii_entities(coordinator_job_id, getattr(job, "tenant_id", None))
+            if coordinator_job_id
+            else []
+        )
         if entities:
             payload["entities"] = entities
 
@@ -198,7 +266,8 @@ def deliver_webhook(
         except ValueError as exc:
             logger.warning(
                 "Webhook for job %s failed re-validation before delivery: %s",
-                job_id, exc,
+                job_id,
+                exc,
             )
             job.webhook_status = "failed"
             job.webhook_last_error = f"URL validation failed: {exc}"
@@ -257,23 +326,30 @@ def deliver_webhook(
 
         for attempt in range(max_attempts):
             # Refresh HMAC timestamp and signature on every attempt so that
-            # receivers enforcing timestamp freshness accept retries.
+            # receivers enforcing timestamp freshness accept retries (maintenance review).
             timestamp = int(time.time())
             if secret:
                 headers["X-Webhook-Signature"] = compute_signature(
-                    payload_json, secret, timestamp,
+                    payload_json,
+                    secret,
+                    timestamp,
                 )
                 headers["X-Webhook-Timestamp"] = str(timestamp)
 
             try:
-                req = urllib.request.Request(
+                with _pinned_url_for_request(
                     job.webhook_url,
-                    data=payload_json.encode("utf-8"),
-                    headers=headers,
-                    method="POST",
-                )
-                with _safe_opener.open(req, timeout=webhook_timeout) as resp:
-                    status_code = resp.getcode()
+                    allow_http=WEBHOOK_ALLOW_HTTP,
+                    allow_private=WEBHOOK_ALLOW_PRIVATE,
+                ) as delivery_url:
+                    req = urllib.request.Request(
+                        delivery_url,
+                        data=payload_json.encode("utf-8"),
+                        headers=headers,
+                        method="POST",
+                    )
+                    with _safe_opener.open(req, timeout=webhook_timeout) as resp:
+                        status_code = resp.getcode()
 
                 if 200 <= status_code < 300:
                     # Success
@@ -297,6 +373,15 @@ def deliver_webhook(
                         attempt + 1,
                         max_attempts,
                     )
+            except ValueError as exc:
+                last_error = f"URL validation failed: {exc}"
+                logger.warning(
+                    "Webhook delivery for job %s refused before attempt %d: %s",
+                    job_id,
+                    attempt + 1,
+                    last_error,
+                )
+                break
             except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
                 last_error = str(exc)[:500]
                 logger.warning(
@@ -340,11 +425,14 @@ def deliver_webhook(
                 payload=payload,
                 last_error=last_error or "Unknown error",
                 attempts=max_attempts,
+                tenant_id=getattr(job, "tenant_id", None),
             )
         except Exception as dlq_exc:
-            # Log DLQ write failures explicitly (never silently drop)
+            # maintenance review: Log DLQ write failures explicitly (never silently drop)
             logger.error(
-                "Webhook DLQ write failed for job %s: %s", job_id, dlq_exc,
+                "Webhook DLQ write failed for job %s: %s",
+                job_id,
+                dlq_exc,
                 exc_info=True,
             )
 
@@ -387,29 +475,15 @@ def start_webhook_delivery(
     webhook_secret_default : str
         Fallback HMAC secret when no per-job secret is set.
     """
-    try:
-        _get_webhook_pool().submit(
-            deliver_webhook,
-            job_id,
-            session_factory,
-            webhook_timeout=webhook_timeout,
-            webhook_max_retries=webhook_max_retries,
-            webhook_secret_default=webhook_secret_default,
-        )
-    except RuntimeError:
-        # Executor can be unavailable during interpreter shutdown;
-        # deliver inline instead of dropping the notification.
-        logger.warning(
-            "Webhook thread pool unavailable; delivering job %s synchronously.",
-            job_id,
-        )
-        deliver_webhook(
-            job_id,
-            session_factory,
-            webhook_timeout=webhook_timeout,
-            webhook_max_retries=webhook_max_retries,
-            webhook_secret_default=webhook_secret_default,
-        )
+    _submit_bounded(
+        deliver_webhook,
+        f"job {job_id}",
+        job_id,
+        session_factory,
+        webhook_timeout=webhook_timeout,
+        webhook_max_retries=webhook_max_retries,
+        webhook_secret_default=webhook_secret_default,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +534,35 @@ def build_batch_webhook_payload(
     }
 
 
+def _batch_webhook_jobs(session, batch) -> list:
+    """Load only children covered by the batch's durable tenant pin."""
+    from api.database import Job
+
+    tenant_id = getattr(batch, "tenant_id", None)
+    durable_tenant_id = tenant_id.strip() if isinstance(tenant_id, str) else ""
+    try:
+        settings = batch.settings
+    except Exception:
+        settings = {}
+    legacy_tenant_id = settings.get("tenant_id") if isinstance(settings, dict) else None
+    if durable_tenant_id and isinstance(legacy_tenant_id, str):
+        if legacy_tenant_id.strip() and legacy_tenant_id.strip() != durable_tenant_id:
+            logger.error(
+                "Batch %s has conflicting durable/settings tenant ids; "
+                "using durable tenant binding",
+                getattr(batch, "batch_id", "<unknown>"),
+            )
+    if not durable_tenant_id:
+        tenant_id = legacy_tenant_id
+    if isinstance(tenant_id, str):
+        tenant_id = tenant_id.strip() or None
+
+    query = session.query(Job).filter(Job.batch_id == batch.batch_id)
+    if tenant_id:
+        query = query.filter(Job.tenant_id == tenant_id)
+    return query.all()
+
+
 def deliver_batch_webhook(
     batch_id: str,
     session_factory,
@@ -474,7 +577,7 @@ def deliver_batch_webhook(
     """
     session = session_factory()
     try:
-        from api.database import Batch, Job
+        from api.database import Batch
 
         batch = session.get(Batch, batch_id)
         if not batch or not batch.webhook_url:
@@ -492,7 +595,8 @@ def deliver_batch_webhook(
         except ValueError as exc:
             logger.warning(
                 "Batch webhook for %s failed URL validation: %s",
-                batch_id, exc,
+                batch_id,
+                exc,
             )
             batch.webhook_status = "failed"
             batch.webhook_last_error = f"URL validation failed: {exc}"
@@ -510,16 +614,13 @@ def deliver_batch_webhook(
         if not event:
             logger.warning(
                 "Batch webhook skipped for %s: unexpected status %s",
-                batch_id, batch.status,
+                batch_id,
+                batch.status,
             )
             return
 
         # Build payload
-        jobs = (
-            session.query(Job)
-            .filter(Job.batch_id == batch_id)
-            .all()
-        )
+        jobs = _batch_webhook_jobs(session, batch)
         payload = build_batch_webhook_payload(batch, jobs, event)
         payload_json = json.dumps(payload, separators=(",", ":"))
 
@@ -548,23 +649,30 @@ def deliver_batch_webhook(
 
         for attempt in range(max_attempts):
             # Refresh HMAC timestamp and signature on every attempt so that
-            # receivers enforcing timestamp freshness accept retries.
+            # receivers enforcing timestamp freshness accept retries (maintenance review).
             timestamp = int(time.time())
             if secret:
                 headers["X-Webhook-Signature"] = compute_signature(
-                    payload_json, secret, timestamp,
+                    payload_json,
+                    secret,
+                    timestamp,
                 )
                 headers["X-Webhook-Timestamp"] = str(timestamp)
 
             try:
-                req = urllib.request.Request(
+                with _pinned_url_for_request(
                     batch.webhook_url,
-                    data=payload_json.encode("utf-8"),
-                    headers=headers,
-                    method="POST",
-                )
-                with _safe_opener.open(req, timeout=webhook_timeout) as resp:
-                    status_code = resp.getcode()
+                    allow_http=WEBHOOK_ALLOW_HTTP,
+                    allow_private=WEBHOOK_ALLOW_PRIVATE,
+                ) as delivery_url:
+                    req = urllib.request.Request(
+                        delivery_url,
+                        data=payload_json.encode("utf-8"),
+                        headers=headers,
+                        method="POST",
+                    )
+                    with _safe_opener.open(req, timeout=webhook_timeout) as resp:
+                        status_code = resp.getcode()
 
                 if 200 <= status_code < 300:
                     batch.webhook_status = "delivered"
@@ -573,16 +681,30 @@ def deliver_batch_webhook(
                     session.commit()
                     logger.info(
                         "Batch webhook delivered for %s (attempt %d, status %d)",
-                        batch_id, attempt + 1, status_code,
+                        batch_id,
+                        attempt + 1,
+                        status_code,
                     )
                     return
                 else:
                     last_error = f"HTTP {status_code}"
+            except ValueError as exc:
+                last_error = f"URL validation failed: {exc}"
+                logger.warning(
+                    "Batch webhook delivery for %s refused before attempt %d: %s",
+                    batch_id,
+                    attempt + 1,
+                    last_error,
+                )
+                break
             except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
                 last_error = str(exc)[:500]
                 logger.warning(
                     "Batch webhook error for %s (attempt %d/%d): %s",
-                    batch_id, attempt + 1, max_attempts, last_error,
+                    batch_id,
+                    attempt + 1,
+                    max_attempts,
+                    last_error,
                 )
 
             batch.webhook_attempts = attempt + 1
@@ -599,12 +721,38 @@ def deliver_batch_webhook(
         session.commit()
         logger.error(
             "Batch webhook failed for %s after %d attempts: %s",
-            batch_id, max_attempts, last_error,
+            batch_id,
+            max_attempts,
+            last_error,
         )
 
         # Add to dead-letter queue for later inspection/retry
         try:
             from api.webhook_dlq import add_to_dlq
+
+            # The durable owner column is authoritative.  The settings JSON
+            # fallback exists only for legacy rows that predate that column.
+            batch_tenant_id = getattr(batch, "tenant_id", None)
+            if isinstance(batch_tenant_id, str):
+                batch_tenant_id = batch_tenant_id.strip() or None
+            try:
+                batch_settings = batch.settings or {}
+                if isinstance(batch_settings, dict):
+                    tid = batch_settings.get("tenant_id")
+                    legacy_tenant_id = tid.strip() if isinstance(tid, str) else ""
+                    if batch_tenant_id and legacy_tenant_id:
+                        if batch_tenant_id != legacy_tenant_id:
+                            logger.error(
+                                "Batch %s has conflicting tenant bindings; "
+                                "DLQ stamp uses durable tenant",
+                                batch_id,
+                            )
+                    elif not batch_tenant_id and legacy_tenant_id:
+                        batch_tenant_id = legacy_tenant_id
+            except Exception:
+                # Keep a durable tenant stamp even if legacy settings are
+                # malformed or unavailable.
+                pass
 
             add_to_dlq(
                 job_id=batch_id,
@@ -613,18 +761,19 @@ def deliver_batch_webhook(
                 payload=payload,
                 last_error=last_error or "Unknown error",
                 attempts=max_attempts,
+                tenant_id=batch_tenant_id,
             )
         except Exception as dlq_exc:
-            # Log DLQ write failures explicitly (never silently drop)
+            # maintenance review: Log DLQ write failures explicitly (never silently drop)
             logger.error(
-                "Webhook DLQ write failed for job %s: %s", batch_id, dlq_exc,
+                "Webhook DLQ write failed for job %s: %s",
+                batch_id,
+                dlq_exc,
                 exc_info=True,
             )
 
     except Exception:
-        logger.exception(
-            "Unexpected error in batch webhook delivery for %s", batch_id
-        )
+        logger.exception("Unexpected error in batch webhook delivery for %s", batch_id)
         try:
             from api.database import Batch as _Batch
 
@@ -634,9 +783,7 @@ def deliver_batch_webhook(
                 batch.webhook_last_error = "Internal delivery error"
                 session.commit()
         except Exception:
-            logger.exception(
-                "Failed to update batch webhook status for %s", batch_id
-            )
+            logger.exception("Failed to update batch webhook status for %s", batch_id)
     finally:
         session.close()
 
@@ -650,24 +797,12 @@ def start_batch_webhook_delivery(
     webhook_secret_default: str = "",
 ) -> None:
     """Launch batch webhook delivery in the webhook thread pool."""
-    try:
-        _get_webhook_pool().submit(
-            deliver_batch_webhook,
-            batch_id,
-            session_factory,
-            webhook_timeout=webhook_timeout,
-            webhook_max_retries=webhook_max_retries,
-            webhook_secret_default=webhook_secret_default,
-        )
-    except RuntimeError:
-        logger.warning(
-            "Webhook thread pool unavailable; delivering batch %s synchronously.",
-            batch_id,
-        )
-        deliver_batch_webhook(
-            batch_id,
-            session_factory,
-            webhook_timeout=webhook_timeout,
-            webhook_max_retries=webhook_max_retries,
-            webhook_secret_default=webhook_secret_default,
-        )
+    _submit_bounded(
+        deliver_batch_webhook,
+        f"batch {batch_id}",
+        batch_id,
+        session_factory,
+        webhook_timeout=webhook_timeout,
+        webhook_max_retries=webhook_max_retries,
+        webhook_secret_default=webhook_secret_default,
+    )

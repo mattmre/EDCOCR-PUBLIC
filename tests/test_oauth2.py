@@ -122,16 +122,16 @@ def _reset_oauth2_module():
 @pytest.fixture()
 def mock_oauth2_env():
     """Patch OAuth2 config env vars for testing."""
-    with patch("api.oauth2_config.OAUTH2_ENABLED", True), \
-         patch("api.oauth2_config.OAUTH2_ISSUER", "https://test-issuer.example.com"), \
-         patch("api.oauth2_config.OAUTH2_AUDIENCE", "test-audience"), \
-         patch("api.oauth2_config.OAUTH2_JWKS_URI", "https://test-issuer.example.com/.well-known/jwks.json"), \
-         patch("api.oauth2_config.OAUTH2_ALGORITHMS", ["RS256"]), \
-         patch("api.oauth2_config.OAUTH2_ROLE_CLAIM", "roles"), \
-         patch("api.oauth2_config.OAUTH2_ADMIN_ROLE", "admin"), \
-         patch("api.oauth2_config.OAUTH2_OPERATOR_ROLE", "operator"), \
-         patch("api.oauth2_config.OAUTH2_VIEWER_ROLE", "viewer"), \
-         patch("api.oauth2_config.OAUTH2_DEFAULT_ROLE", "viewer"), \
+    with patch("api.oauth2_config.OAUTH2_ENABLED", True),\
+         patch("api.oauth2_config.OAUTH2_ISSUER", "https://test-issuer.example.com"),\
+         patch("api.oauth2_config.OAUTH2_AUDIENCE", "test-audience"),\
+         patch("api.oauth2_config.OAUTH2_JWKS_URI", "https://test-issuer.example.com/.well-known/jwks.json"),\
+         patch("api.oauth2_config.OAUTH2_ALGORITHMS", ["RS256"]),\
+         patch("api.oauth2_config.OAUTH2_ROLE_CLAIM", "roles"),\
+         patch("api.oauth2_config.OAUTH2_ADMIN_ROLE", "admin"),\
+         patch("api.oauth2_config.OAUTH2_OPERATOR_ROLE", "operator"),\
+         patch("api.oauth2_config.OAUTH2_VIEWER_ROLE", "viewer"),\
+         patch("api.oauth2_config.OAUTH2_DEFAULT_ROLE", "viewer"),\
          patch("api.oauth2_config.APIKEY_ROLE", "admin"):
         yield
 
@@ -406,7 +406,7 @@ class TestOIDCDiscovery:
 
         reset_jwks_cache()
 
-        with patch("api.oauth2_config.OAUTH2_ISSUER", "https://auth.example.com/realm"), \
+        with patch("api.oauth2_config.OAUTH2_ISSUER", "https://auth.example.com/realm"),\
              patch("api.oauth2_config.OAUTH2_JWKS_URI", ""):
             cache = _get_jwks_cache()
             assert cache.jwks_uri == "https://auth.example.com/realm/.well-known/jwks.json"
@@ -417,7 +417,7 @@ class TestOIDCDiscovery:
 
         reset_jwks_cache()
 
-        with patch("api.oauth2_config.OAUTH2_ISSUER", "https://auth.example.com"), \
+        with patch("api.oauth2_config.OAUTH2_ISSUER", "https://auth.example.com"),\
              patch("api.oauth2_config.OAUTH2_JWKS_URI", "https://custom.example.com/keys"):
             cache = _get_jwks_cache()
             assert cache.jwks_uri == "https://custom.example.com/keys"
@@ -428,7 +428,7 @@ class TestOIDCDiscovery:
 
         reset_jwks_cache()
 
-        with patch("api.oauth2_config.OAUTH2_ISSUER", ""), \
+        with patch("api.oauth2_config.OAUTH2_ISSUER", ""),\
              patch("api.oauth2_config.OAUTH2_JWKS_URI", ""):
             with pytest.raises(RuntimeError, match="OAUTH2_JWKS_URI or OAUTH2_ISSUER"):
                 _get_jwks_cache()
@@ -439,7 +439,7 @@ class TestOIDCDiscovery:
 
         reset_jwks_cache()
 
-        with patch("api.oauth2_config.OAUTH2_ISSUER", "https://auth.example.com/"), \
+        with patch("api.oauth2_config.OAUTH2_ISSUER", "https://auth.example.com/"),\
              patch("api.oauth2_config.OAUTH2_JWKS_URI", ""):
             cache = _get_jwks_cache()
             assert cache.jwks_uri == "https://auth.example.com/.well-known/jwks.json"
@@ -450,7 +450,7 @@ class TestOIDCDiscovery:
 
         reset_jwks_cache()
 
-        with patch("api.oauth2_config.OAUTH2_ISSUER", "https://auth.example.com"), \
+        with patch("api.oauth2_config.OAUTH2_ISSUER", "https://auth.example.com"),\
              patch("api.oauth2_config.OAUTH2_JWKS_URI", "https://auth.example.com/jwks"):
             cache1 = _get_jwks_cache()
             cache2 = _get_jwks_cache()
@@ -611,7 +611,7 @@ class TestOAuth2Disabled:
         mock_request = MagicMock()
         mock_request.headers = {"Authorization": "Bearer invalid.jwt.token"}
 
-        with patch("api.oauth2_config.OAUTH2_ENABLED", True), \
+        with patch("api.oauth2_config.OAUTH2_ENABLED", True),\
              patch("api.oauth2.validate_jwt", side_effect=ValueError("bad token")):
             result = _try_bearer_auth(mock_request)
 
@@ -631,8 +631,8 @@ class TestOAuth2Disabled:
             "roles": ["operator"],
         }
 
-        with patch("api.oauth2_config.OAUTH2_ENABLED", True), \
-             patch("api.oauth2.validate_jwt", return_value=fake_claims), \
+        with patch("api.oauth2_config.OAUTH2_ENABLED", True),\
+             patch("api.oauth2.validate_jwt", return_value=fake_claims),\
              patch("api.oauth2.extract_role", return_value="operator"):
             result = _try_bearer_auth(mock_request)
 
@@ -702,7 +702,7 @@ class TestJWKSCacheManagement:
         reset_jwks_cache()
 
         # Next call to _get_jwks_cache should create a new instance
-        with patch("api.oauth2_config.OAUTH2_ISSUER", "https://new-issuer.example.com"), \
+        with patch("api.oauth2_config.OAUTH2_ISSUER", "https://new-issuer.example.com"),\
              patch("api.oauth2_config.OAUTH2_JWKS_URI", ""):
             from api.oauth2 import _get_jwks_cache
             new_cache = _get_jwks_cache()

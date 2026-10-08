@@ -140,7 +140,7 @@ def re_extract_page_at_dpi(
     try:
         images = _convert_from_path(
             pdf_path, first_page=page_num, last_page=page_num, dpi=dpi,
-            timeout=POPPLER_TIMEOUT,
+            timeout=POPPLER_TIMEOUT, use_cropbox=True,
         )
         if images:
             return images[0].convert("RGB")

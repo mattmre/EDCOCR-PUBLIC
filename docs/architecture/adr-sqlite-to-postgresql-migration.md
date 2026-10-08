@@ -1,3 +1,5 @@
+> Design/reference material. Optional deployment and feature claims require the acceptance checks in [candidate scope](../release-candidate.md).
+
 # ADR: SQLite WAL Mode and PostgreSQL Migration Path
 
 **Status**: Accepted (WAL mode applied); PostgreSQL migration deferred to Q2 2026

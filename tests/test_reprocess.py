@@ -516,7 +516,7 @@ class TestCLI:
         ]
 
         mock_engine = MagicMock()
-        with patch.object(sys, "argv", test_args), \
+        with patch.object(sys, "argv", test_args),\
              patch.object(mod, "OCREngine", return_value=mock_engine):
             exit_code = mod.main()
 
@@ -560,8 +560,8 @@ class TestCLI:
         mock_engine = MagicMock()
         mock_engine.run_ocr.return_value = ("Extracted text", "paddle")
 
-        with patch.object(sys, "argv", test_args), \
-             patch.object(mod, "OCREngine", return_value=mock_engine), \
+        with patch.object(sys, "argv", test_args),\
+             patch.object(mod, "OCREngine", return_value=mock_engine),\
              patch.object(mod, "render_page", return_value=mock_image):
             exit_code = mod.main()
 

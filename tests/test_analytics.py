@@ -79,6 +79,7 @@ class TestJobRecord:
         assert r.language == ""
         assert r.doc_type == ""
         assert r.worker_id == ""
+        assert r.tenant_id == ""
 
     def test_creation_with_all_fields(self):
         r = JobRecord(
@@ -92,6 +93,7 @@ class TestJobRecord:
             language="en",
             doc_type="invoice",
             worker_id="w-1",
+            tenant_id="tenant_aaaaaaaaaaaa",
         )
         assert r.job_id == "j-2"
         assert r.pages == 5
@@ -102,6 +104,7 @@ class TestJobRecord:
         assert r.language == "en"
         assert r.doc_type == "invoice"
         assert r.worker_id == "w-1"
+        assert r.tenant_id == "tenant_aaaaaaaaaaaa"
 
 
 # ---------------------------------------------------------------------------
@@ -681,6 +684,136 @@ class TestReset:
         assert store.record_count == 0
         stats = store.get_period_stats(0.0, 100.0)
         assert stats.total_jobs == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: tenant isolation (maintenance review)
+# ---------------------------------------------------------------------------
+
+
+class TestTenantIsolation:
+    """Analytics aggregates must respect tenant_id when set."""
+
+    TENANT_A = "tenant_aaaaaaaaaaaa"
+    TENANT_B = "tenant_bbbbbbbbbbbb"
+
+    def _seed_mixed(self) -> AnalyticsStore:
+        store = AnalyticsStore()
+        store.record_job(
+            "a-1",
+            timestamp=10.0,
+            pages=3,
+            engine="paddle",
+            language="en",
+            worker_id="w-a",
+            tenant_id=self.TENANT_A,
+        )
+        store.record_job(
+            "a-2",
+            timestamp=20.0,
+            pages=5,
+            engine="paddle",
+            language="en",
+            worker_id="w-a",
+            tenant_id=self.TENANT_A,
+        )
+        store.record_job(
+            "b-1",
+            timestamp=15.0,
+            pages=100,
+            engine="tesseract",
+            language="fr",
+            worker_id="w-b",
+            tenant_id=self.TENANT_B,
+        )
+        store.record_job(
+            "legacy",
+            timestamp=25.0,
+            pages=7,
+            engine="paddle",
+            language="de",
+            worker_id="w-legacy",
+            # no tenant_id → empty stamp
+        )
+        return store
+
+    def test_record_job_stamps_tenant(self):
+        store = AnalyticsStore()
+        store.record_job("j-1", tenant_id=self.TENANT_A)
+        with store._lock:
+            assert store._records[0].tenant_id == self.TENANT_A
+
+    def test_period_stats_filters_by_tenant(self):
+        store = self._seed_mixed()
+        stats_a = store.get_period_stats(0.0, 100.0, tenant_id=self.TENANT_A)
+        assert stats_a.total_jobs == 2
+        assert stats_a.total_pages == 8
+        assert stats_a.engine_breakdown == {"paddle": 2}
+
+        stats_b = store.get_period_stats(0.0, 100.0, tenant_id=self.TENANT_B)
+        assert stats_b.total_jobs == 1
+        assert stats_b.total_pages == 100
+        assert stats_b.engine_breakdown == {"tesseract": 1}
+
+    def test_empty_tenant_returns_global(self):
+        store = self._seed_mixed()
+        stats = store.get_period_stats(0.0, 100.0, tenant_id="")
+        assert stats.total_jobs == 4
+        assert stats.total_pages == 3 + 5 + 100 + 7
+
+    def test_unknown_tenant_returns_zeros(self):
+        store = self._seed_mixed()
+        stats = store.get_period_stats(
+            0.0, 100.0, tenant_id="tenant_cccccccccccc"
+        )
+        assert stats.total_jobs == 0
+        assert stats.total_pages == 0
+
+    def test_top_engines_filtered(self):
+        store = self._seed_mixed()
+        engines = store.get_top_engines(0.0, 100.0, tenant_id=self.TENANT_A)
+        assert engines == [("paddle", 2)]
+
+    def test_top_languages_filtered(self):
+        store = self._seed_mixed()
+        langs = store.get_top_languages(0.0, 100.0, tenant_id=self.TENANT_B)
+        assert langs == [("fr", 1)]
+
+    def test_worker_stats_filtered(self):
+        store = self._seed_mixed()
+        workers = store.get_worker_stats(0.0, 100.0, tenant_id=self.TENANT_A)
+        assert set(workers.keys()) == {"w-a"}
+        assert workers["w-a"]["total_jobs"] == 2
+        assert "w-b" not in workers
+
+    def test_time_series_filtered(self):
+        store = self._seed_mixed()
+        series = store.get_time_series(
+            0.0, 3600.0, TimeGranularity.HOURLY, tenant_id=self.TENANT_A
+        )
+        assert len(series) == 1
+        assert series[0].total_jobs == 2
+
+    def test_trend_filtered(self):
+        store = AnalyticsStore()
+        now = time.time()
+        # current period for tenant A
+        store.record_job(
+            "curr-a",
+            timestamp=now - 10,
+            pages=5,
+            tenant_id=self.TENANT_A,
+        )
+        # current period for tenant B (must not leak)
+        store.record_job(
+            "curr-b",
+            timestamp=now - 10,
+            pages=999,
+            tenant_id=self.TENANT_B,
+        )
+        trend = store.get_trend(period_seconds=60, tenant_id=self.TENANT_A)
+        assert trend.current.total_jobs == 1
+        assert trend.current.total_pages == 5
 
 
 # ---------------------------------------------------------------------------

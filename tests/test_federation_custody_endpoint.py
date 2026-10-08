@@ -47,6 +47,7 @@ def _build_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> object:
     monkeypatch.setenv("OCR_FEDERATION_CUSTODY_ENABLED", "true")
     monkeypatch.setenv("OCR_FEDERATION_CUSTODY_HMAC_KEY", HMAC_KEY)
     monkeypatch.setenv("OCR_FEDERATION_CUSTODY_AUTH_TOKEN", BEARER)
+    monkeypatch.setenv("OCR_FEDERATION_CUSTODY_TENANT_ALLOWLIST", "tenant-a")
     monkeypatch.setenv(
         "OCR_FEDERATION_CUSTODY_DB_PATH",
         str(tmp_path / "fed_custody.db"),
@@ -64,6 +65,7 @@ def _build_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> object:
 def _signed_payload(
     *,
     job_id: str = "job-1",
+    tenant_id: str = "tenant-a",
     source_cluster: str = "cluster-a",
     target_cluster: str = "cluster-b",
     event_type: str = "JOB_HANDED_OFF",
@@ -76,6 +78,7 @@ def _signed_payload(
 
     body = {
         "job_id": job_id,
+        "tenant_id": tenant_id,
         "source_cluster": source_cluster,
         "target_cluster": target_cluster,
         "parent_event_hash": parent_event_hash,
@@ -91,6 +94,21 @@ def _signed_payload(
 # Tests
 # ---------------------------------------------------------------------------
 class TestAuth:
+    def test_tenant_outside_allowlist_returns_403(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        app = _build_app(monkeypatch, tmp_path)
+        client = TestClient(app)
+        body = _signed_payload(tenant_id="tenant-b")
+        resp = client.post(
+            "/api/v1/federation/custody/ingest",
+            json=body,
+            headers={"Authorization": f"Bearer {BEARER}"},
+        )
+        assert resp.status_code == 403
+
     def test_missing_authorization_returns_401(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -243,8 +261,7 @@ class TestPersistence:
         conn = sqlite3.connect(str(db_path))
         try:
             cur = conn.execute(
-                "SELECT COUNT(*) FROM cross_cluster_custody_events "
-                "WHERE job_id = ?",
+                "SELECT COUNT(*) FROM cross_cluster_custody_events "  "WHERE job_id = ?",
                 ("dup-job",),
             )
             count = cur.fetchone()[0]

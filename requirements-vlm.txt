@@ -1,0 +1,6 @@
+# Optional VLM gateway dependencies
+#
+# The current VLM lane is an HTTP client for an external inference server.
+# It does not install local model runtimes such as torch or transformers.
+
+httpx>=0.27

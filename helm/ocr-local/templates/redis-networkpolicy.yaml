@@ -1,0 +1,41 @@
+{{- if and .Values.networkPolicy.enabled .Values.redis.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-redis-netpol
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/instance
+        operator: In
+        values: [{{ .Release.Name | quote }}]
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [redis, redis-replica, redis-sentinel]
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "ocr-local.selectorLabels" . | nindent 14 }}
+      ports:
+        - {protocol: TCP, port: 6379}
+        - {protocol: TCP, port: 26379}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "ocr-local.selectorLabels" . | nindent 14 }}
+      ports:
+        - {protocol: TCP, port: 6379}
+        - {protocol: TCP, port: 26379}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+{{- end }}

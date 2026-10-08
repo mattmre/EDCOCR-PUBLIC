@@ -151,7 +151,7 @@ class TestFileStabilityChecker:
         checker = FileStabilityChecker(required_checks=3, interval=0.01)
         assert not checker.check(str(f))  # 1st
         assert not checker.check(str(f))  # 2nd
-        assert checker.check(str(f))      # 3rd -- stable
+        assert checker.check(str(f))  # 3rd -- stable
 
     def test_size_change_resets_count(self, tmp_path):
         """Changing file size resets the stability counter."""
@@ -166,7 +166,7 @@ class TestFileStabilityChecker:
         f.write_bytes(b"x" * 200)
         assert not checker.check(str(f))  # Reset to 1 (size=200)
         assert not checker.check(str(f))  # 2nd
-        assert checker.check(str(f))      # 3rd -- stable
+        assert checker.check(str(f))  # 3rd -- stable
 
     def test_nonexistent_file_returns_false(self, tmp_path):
         checker = FileStabilityChecker(required_checks=1)
@@ -389,62 +389,78 @@ class TestWatcherConfig:
 
     def test_invalid_submission_mode(self, tmp_watch_dir):
         with pytest.raises(Exception):
-            load_config_from_dict({
-                "watch_paths": [{"path": str(tmp_watch_dir)}],
-                "submission_mode": "invalid",
-            })
+            load_config_from_dict(
+                {
+                    "watch_paths": [{"path": str(tmp_watch_dir)}],
+                    "submission_mode": "invalid",
+                }
+            )
 
     def test_stability_checks_minimum(self, tmp_watch_dir):
         with pytest.raises(Exception):
-            load_config_from_dict({
-                "watch_paths": [{"path": str(tmp_watch_dir)}],
-                "stability_checks": 0,
-            })
+            load_config_from_dict(
+                {
+                    "watch_paths": [{"path": str(tmp_watch_dir)}],
+                    "stability_checks": 0,
+                }
+            )
 
     def test_stability_interval_positive(self, tmp_watch_dir):
         with pytest.raises(Exception):
-            load_config_from_dict({
-                "watch_paths": [{"path": str(tmp_watch_dir)}],
-                "stability_interval_seconds": -1.0,
-            })
+            load_config_from_dict(
+                {
+                    "watch_paths": [{"path": str(tmp_watch_dir)}],
+                    "stability_interval_seconds": -1.0,
+                }
+            )
 
     def test_invalid_log_level(self, tmp_watch_dir):
         with pytest.raises(Exception):
-            load_config_from_dict({
-                "watch_paths": [{"path": str(tmp_watch_dir)}],
-                "log_level": "VERBOSE",
-            })
+            load_config_from_dict(
+                {
+                    "watch_paths": [{"path": str(tmp_watch_dir)}],
+                    "log_level": "VERBOSE",
+                }
+            )
 
     def test_max_concurrent_minimum(self, tmp_watch_dir):
         with pytest.raises(Exception):
-            load_config_from_dict({
-                "watch_paths": [{"path": str(tmp_watch_dir)}],
-                "max_concurrent_submissions": 0,
-            })
+            load_config_from_dict(
+                {
+                    "watch_paths": [{"path": str(tmp_watch_dir)}],
+                    "max_concurrent_submissions": 0,
+                }
+            )
 
     def test_watch_path_retry_interval_positive(self, tmp_watch_dir):
         with pytest.raises(Exception):
-            load_config_from_dict({
-                "watch_paths": [{"path": str(tmp_watch_dir)}],
-                "watch_path_retry_interval_seconds": 0,
-            })
+            load_config_from_dict(
+                {
+                    "watch_paths": [{"path": str(tmp_watch_dir)}],
+                    "watch_path_retry_interval_seconds": 0,
+                }
+            )
 
     def test_api_mode_config(self, tmp_watch_dir):
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-            "submission_mode": "api",
-            "api_url": "http://example.com:8000",
-            "api_key": "secret",
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+                "submission_mode": "api",
+                "api_url": "http://example.com:8000",
+                "api_key": "secret",
+            }
+        )
         assert cfg.submission_mode == "api"
         assert cfg.api_key == "secret"
 
     def test_distributed_mode_config(self, tmp_watch_dir):
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-            "submission_mode": "distributed",
-            "coordinator_url": "http://coord:8001",
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+                "submission_mode": "distributed",
+                "coordinator_url": "http://coord:8001",
+            }
+        )
         assert cfg.submission_mode == "distributed"
 
     def test_remote_only_config(self):
@@ -484,7 +500,9 @@ class TestYamlLoading:
 
     def test_invalid_yaml_syntax(self, tmp_path):
         bad = tmp_path / "bad.yaml"
-        bad.write_text("watch_paths: [invalid yaml content\n  broken:", encoding="utf-8")
+        bad.write_text(
+            "watch_paths: [invalid yaml content\n  broken:", encoding="utf-8"
+        )
         with pytest.raises(ValueError, match="Invalid YAML"):
             load_config(str(bad))
 
@@ -536,9 +554,11 @@ class TestFileWatcherHandler:
             patterns=patterns or ["*.pdf", "*.tif"],
             ignore_patterns=ignore_patterns or [],
         )
-        watcher_config = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-        })
+        watcher_config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+            }
+        )
         processed_store = ProcessedFileStore()
         semaphore = threading.Semaphore(4)
         stability_executor = mock.MagicMock()
@@ -683,13 +703,15 @@ class TestSubmissionBackends:
         f = tmp_watch_dir / "test.pdf"
         f.write_bytes(b"PDF content")
 
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-            "submission_mode": "pipeline",
-            "source_folder": str(source),
-            "output_folder": str(output),
-            "pipeline_script": "ocr_gpu_async.py",
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+                "submission_mode": "pipeline",
+                "source_folder": str(source),
+                "output_folder": str(output),
+                "pipeline_script": "ocr_gpu_async.py",
+            }
+        )
         watch_cfg = config.watch_paths[0]
 
         with mock.patch("file_watcher.subprocess.Popen") as mock_popen:
@@ -713,16 +735,20 @@ class TestSubmissionBackends:
         f = tmp_watch_dir / "test.pdf"
         f.write_bytes(b"PDF content")
 
-        config = load_config_from_dict({
-            "watch_paths": [{
-                "path": str(tmp_watch_dir),
-                "enable_docintel": True,
-                "docintel_mode": "tables_only",
-            }],
-            "submission_mode": "pipeline",
-            "source_folder": str(source),
-            "output_folder": str(output),
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [
+                    {
+                        "path": str(tmp_watch_dir),
+                        "enable_docintel": True,
+                        "docintel_mode": "tables_only",
+                    }
+                ],
+                "submission_mode": "pipeline",
+                "source_folder": str(source),
+                "output_folder": str(output),
+            }
+        )
         watch_cfg = config.watch_paths[0]
 
         with mock.patch("file_watcher.subprocess.Popen") as mock_popen:
@@ -739,10 +765,12 @@ class TestSubmissionBackends:
             assert "tables_only" in call_args
 
     def test_pipeline_exception_returns_false(self, tmp_watch_dir):
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-            "source_folder": "/nonexistent/path/source",
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+                "source_folder": "/nonexistent/path/source",
+            }
+        )
         watch_cfg = config.watch_paths[0]
 
         with mock.patch("file_watcher.subprocess.Popen", side_effect=OSError("fail")):
@@ -753,19 +781,23 @@ class TestSubmissionBackends:
         f = tmp_watch_dir / "test.pdf"
         f.write_bytes(b"PDF content")
 
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-            "submission_mode": "api",
-            "api_url": "http://localhost:8000",
-            "api_key": "test-key",
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+                "submission_mode": "api",
+                "api_url": "http://localhost:8000",
+                "api_key": "test-key",
+            }
+        )
         watch_cfg = config.watch_paths[0]
 
         mock_resp = mock.MagicMock(status=201)
         mock_conn = mock.MagicMock()
         mock_conn.getresponse.return_value = mock_resp
 
-        with mock.patch("file_watcher.http.client.HTTPConnection", return_value=mock_conn) as mock_http:
+        with mock.patch(
+            "file_watcher.http.client.HTTPConnection", return_value=mock_conn
+        ) as mock_http:
             result = _submit_api(str(f), config, watch_cfg)
             assert result is True
             mock_http.assert_called_once_with("localhost", 8000, timeout=60)
@@ -779,15 +811,19 @@ class TestSubmissionBackends:
         f = tmp_watch_dir / "test.pdf"
         f.write_bytes(b"PDF")
 
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-            "submission_mode": "api",
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+                "submission_mode": "api",
+            }
+        )
         watch_cfg = config.watch_paths[0]
 
         mock_conn = mock.MagicMock()
         mock_conn.getresponse.side_effect = Exception("connection refused")
-        with mock.patch("file_watcher.http.client.HTTPConnection", return_value=mock_conn):
+        with mock.patch(
+            "file_watcher.http.client.HTTPConnection", return_value=mock_conn
+        ):
             result = _submit_api(str(f), config, watch_cfg)
             assert result is False
 
@@ -795,19 +831,23 @@ class TestSubmissionBackends:
         f = tmp_watch_dir / "test.pdf"
         f.write_bytes(b"PDF content")
 
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-            "submission_mode": "distributed",
-            "coordinator_url": "http://coord:8001",
-            "coordinator_api_key": "coord-key",
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+                "submission_mode": "distributed",
+                "coordinator_url": "http://coord:8001",
+                "coordinator_api_key": "coord-key",
+            }
+        )
         watch_cfg = config.watch_paths[0]
 
         mock_resp = mock.MagicMock(status=200)
         mock_conn = mock.MagicMock()
         mock_conn.getresponse.return_value = mock_resp
 
-        with mock.patch("file_watcher.http.client.HTTPConnection", return_value=mock_conn):
+        with mock.patch(
+            "file_watcher.http.client.HTTPConnection", return_value=mock_conn
+        ):
             result = _submit_distributed(str(f), config, watch_cfg)
             assert result is True
 
@@ -815,15 +855,19 @@ class TestSubmissionBackends:
         f = tmp_watch_dir / "test.pdf"
         f.write_bytes(b"PDF")
 
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-            "submission_mode": "distributed",
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+                "submission_mode": "distributed",
+            }
+        )
         watch_cfg = config.watch_paths[0]
 
         mock_conn = mock.MagicMock()
         mock_conn.getresponse.side_effect = Exception("timeout")
-        with mock.patch("file_watcher.http.client.HTTPConnection", return_value=mock_conn):
+        with mock.patch(
+            "file_watcher.http.client.HTTPConnection", return_value=mock_conn
+        ):
             result = _submit_distributed(str(f), config, watch_cfg)
             assert result is False
 
@@ -837,18 +881,22 @@ class TestSubmissionBackends:
         f = tmp_watch_dir / "test.pdf"
         f.write_bytes(b"PDF content")
 
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-            "submission_mode": "api",
-            "api_url": "http://localhost:8000",
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+                "submission_mode": "api",
+                "api_url": "http://localhost:8000",
+            }
+        )
         watch_cfg = config.watch_paths[0]
 
         mock_resp = mock.MagicMock(status=201)
         mock_conn = mock.MagicMock()
         mock_conn.getresponse.return_value = mock_resp
 
-        with mock.patch("file_watcher.http.client.HTTPConnection", return_value=mock_conn):
+        with mock.patch(
+            "file_watcher.http.client.HTTPConnection", return_value=mock_conn
+        ):
             result = _submit_api(str(f), config, watch_cfg)
 
         assert result is True
@@ -888,17 +936,25 @@ class TestFileWatcher:
         db_path = tmp_path / "state" / "processed.sqlite3"
         file_path = str(watch_dir / "doc.pdf")
 
-        watcher = FileWatcher(load_config_from_dict({
-            "watch_paths": [{"path": str(watch_dir)}],
-            "processed_db": str(db_path),
-        }))
+        watcher = FileWatcher(
+            load_config_from_dict(
+                {
+                    "watch_paths": [{"path": str(watch_dir)}],
+                    "processed_db": str(db_path),
+                }
+            )
+        )
         watcher._processed_store.add(file_path)
         watcher.stop()
 
-        reopened = FileWatcher(load_config_from_dict({
-            "watch_paths": [{"path": str(watch_dir)}],
-            "processed_db": str(db_path),
-        }))
+        reopened = FileWatcher(
+            load_config_from_dict(
+                {
+                    "watch_paths": [{"path": str(watch_dir)}],
+                    "processed_db": str(db_path),
+                }
+            )
+        )
         try:
             assert _normalize_tracked_path(file_path) in reopened.processed_files
         finally:
@@ -911,20 +967,28 @@ class TestFileWatcher:
         first_file = str(watch_dir / "doc-a.pdf")
         second_file = str(watch_dir / "doc-b.pdf")
 
-        watcher = FileWatcher(load_config_from_dict({
-            "watch_paths": [{"path": str(watch_dir)}],
-            "processed_db": str(db_path),
-        }))
+        watcher = FileWatcher(
+            load_config_from_dict(
+                {
+                    "watch_paths": [{"path": str(watch_dir)}],
+                    "processed_db": str(db_path),
+                }
+            )
+        )
         watcher._processed_store.add(first_file)
         watcher.stop()
         watcher.start()
         watcher._processed_store.add(second_file)
         watcher.stop()
 
-        reopened = FileWatcher(load_config_from_dict({
-            "watch_paths": [{"path": str(watch_dir)}],
-            "processed_db": str(db_path),
-        }))
+        reopened = FileWatcher(
+            load_config_from_dict(
+                {
+                    "watch_paths": [{"path": str(watch_dir)}],
+                    "processed_db": str(db_path),
+                }
+            )
+        )
         try:
             assert _normalize_tracked_path(first_file) in reopened.processed_files
             assert _normalize_tracked_path(second_file) in reopened.processed_files
@@ -941,12 +1005,14 @@ class TestFileWatcher:
         d1.mkdir()
         d2.mkdir()
 
-        config = load_config_from_dict({
-            "watch_paths": [
-                {"path": str(d1)},
-                {"path": str(d2)},
-            ],
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [
+                    {"path": str(d1)},
+                    {"path": str(d2)},
+                ],
+            }
+        )
         watcher = FileWatcher(config)
         watcher.start()
         assert len(watcher._observers) == 2
@@ -995,17 +1061,23 @@ class TestFileWatcher:
                 watcher.stop()
 
     def test_polling_observer_selected_per_watch_path(self, tmp_watch_dir):
-        config = load_config_from_dict({
-            "watch_paths": [{
-                "path": str(tmp_watch_dir),
-                "observer_mode": "polling",
-            }],
-            "watch_path_retry_interval_seconds": 60.0,
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [
+                    {
+                        "path": str(tmp_watch_dir),
+                        "observer_mode": "polling",
+                    }
+                ],
+                "watch_path_retry_interval_seconds": 60.0,
+            }
+        )
         watcher = FileWatcher(config)
         fake_observer = FakeObserver()
 
-        with mock.patch("file_watcher.PollingObserver", return_value=fake_observer) as mock_polling:
+        with mock.patch(
+            "file_watcher.PollingObserver", return_value=fake_observer
+        ) as mock_polling:
             with mock.patch("file_watcher.Observer") as mock_native:
                 watcher.start()
                 try:
@@ -1017,21 +1089,27 @@ class TestFileWatcher:
                     watcher.stop()
 
     def test_auto_unc_path_uses_polling_mode(self, tmp_watch_dir):
-        config = load_config_from_dict({
-            "watch_paths": [{
-                "path": r"\\server\share",
-                "observer_mode": "auto",
-            }],
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [
+                    {
+                        "path": r"\\server\share",
+                        "observer_mode": "auto",
+                    }
+                ],
+            }
+        )
         watcher = FileWatcher(config)
         assert watcher._resolve_observer_mode(config.watch_paths[0]) == "polling"
 
     def test_missing_watch_path_recovers_when_directory_returns(self, tmp_path):
         watch_dir = tmp_path / "watch"
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(watch_dir)}],
-            "watch_path_retry_interval_seconds": 60.0,
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(watch_dir)}],
+                "watch_path_retry_interval_seconds": 60.0,
+            }
+        )
         watcher = FileWatcher(config)
         fake_observer = FakeObserver()
 
@@ -1052,21 +1130,27 @@ class TestFileWatcher:
     def test_path_loss_stops_observer_and_recovery_rescans(self, tmp_path):
         watch_dir = tmp_path / "watch"
         watch_dir.mkdir()
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(watch_dir)}],
-            "watch_path_retry_interval_seconds": 60.0,
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(watch_dir)}],
+                "watch_path_retry_interval_seconds": 60.0,
+            }
+        )
         watcher = FileWatcher(config)
         first_observer = FakeObserver()
         second_observer = FakeObserver()
 
-        with mock.patch("file_watcher.Observer", side_effect=[first_observer, second_observer]):
+        with mock.patch(
+            "file_watcher.Observer", side_effect=[first_observer, second_observer]
+        ):
             watcher.start()
             try:
                 state = watcher._watch_states[0]
                 assert len(watcher._observers) == 1
 
-                with mock.patch.object(state.handler, "scan_existing_files") as mock_scan:
+                with mock.patch.object(
+                    state.handler, "scan_existing_files"
+                ) as mock_scan:
                     watch_dir.rmdir()
                     watcher._reconcile_watch_paths()
                     assert len(watcher._observers) == 0
@@ -1083,10 +1167,12 @@ class TestFileWatcher:
     def test_dead_observer_is_replaced_without_leaking_registry_entry(self, tmp_path):
         watch_dir = tmp_path / "watch"
         watch_dir.mkdir()
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(watch_dir)}],
-            "watch_path_retry_interval_seconds": 60.0,
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(watch_dir)}],
+                "watch_path_retry_interval_seconds": 60.0,
+            }
+        )
         watcher = FileWatcher(config)
         first_observer = FakeObserver()
         second_observer = FakeObserver()
@@ -1113,58 +1199,78 @@ class TestFileWatcher:
 
     def test_auto_mode_uses_native_for_local_path(self, tmp_watch_dir):
         """Auto observer mode resolves to native for ordinary local paths."""
-        config = load_config_from_dict({
-            "watch_paths": [{
-                "path": str(tmp_watch_dir),
-                "observer_mode": "auto",
-            }],
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [
+                    {
+                        "path": str(tmp_watch_dir),
+                        "observer_mode": "auto",
+                    }
+                ],
+            }
+        )
         watcher = FileWatcher(config)
         assert watcher._resolve_observer_mode(config.watch_paths[0]) == "native"
 
     def test_auto_mode_uses_polling_for_nfs_path(self):
         """Auto observer mode resolves to polling for /nfs/ paths."""
-        config = load_config_from_dict({
-            "watch_paths": [{
-                "path": "/nfs/shared/incoming",
-                "observer_mode": "auto",
-            }],
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [
+                    {
+                        "path": "/nfs/shared/incoming",
+                        "observer_mode": "auto",
+                    }
+                ],
+            }
+        )
         watcher = FileWatcher(config)
         assert watcher._resolve_observer_mode(config.watch_paths[0]) == "polling"
 
     def test_auto_mode_uses_polling_for_mnt_path(self):
         """Auto observer mode resolves to polling for /mnt/ paths."""
-        config = load_config_from_dict({
-            "watch_paths": [{
-                "path": "/mnt/nas/documents",
-                "observer_mode": "auto",
-            }],
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [
+                    {
+                        "path": "/mnt/nas/documents",
+                        "observer_mode": "auto",
+                    }
+                ],
+            }
+        )
         watcher = FileWatcher(config)
         assert watcher._resolve_observer_mode(config.watch_paths[0]) == "polling"
 
     def test_auto_mode_uses_polling_for_cifs_path(self):
         """Auto observer mode resolves to polling for /cifs/ paths."""
-        config = load_config_from_dict({
-            "watch_paths": [{
-                "path": "/cifs/share/ocr",
-                "observer_mode": "auto",
-            }],
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [
+                    {
+                        "path": "/cifs/share/ocr",
+                        "observer_mode": "auto",
+                    }
+                ],
+            }
+        )
         watcher = FileWatcher(config)
         assert watcher._resolve_observer_mode(config.watch_paths[0]) == "polling"
 
     def test_polling_interval_used_for_polling_observer(self, tmp_watch_dir):
         """Polling observer uses the per-path polling_interval setting."""
-        config = load_config_from_dict({
-            "watch_paths": [{
-                "path": str(tmp_watch_dir),
-                "observer_mode": "polling",
-                "polling_interval": 3.5,
-            }],
-            "watch_path_retry_interval_seconds": 60.0,
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [
+                    {
+                        "path": str(tmp_watch_dir),
+                        "observer_mode": "polling",
+                        "polling_interval": 3.5,
+                    }
+                ],
+                "watch_path_retry_interval_seconds": 60.0,
+            }
+        )
         watcher = FileWatcher(config)
         fake_observer = FakeObserver()
 
@@ -1180,11 +1286,13 @@ class TestFileWatcher:
     def test_path_recovery_disabled_stops_retrying(self, tmp_path):
         """When path_recovery_enabled is False, no recovery is attempted."""
         watch_dir = tmp_path / "watch"
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(watch_dir)}],
-            "path_recovery_enabled": False,
-            "watch_path_retry_interval_seconds": 60.0,
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(watch_dir)}],
+                "path_recovery_enabled": False,
+                "watch_path_retry_interval_seconds": 60.0,
+            }
+        )
         watcher = FileWatcher(config)
         fake_observer = FakeObserver()
 
@@ -1211,11 +1319,13 @@ class TestFileWatcher:
         we verify retry count exceeds max_retries rather than exact values.
         """
         watch_dir = tmp_path / "watch"
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(watch_dir)}],
-            "path_recovery_max_retries": 2,
-            "watch_path_retry_interval_seconds": 60.0,
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(watch_dir)}],
+                "path_recovery_max_retries": 2,
+                "watch_path_retry_interval_seconds": 60.0,
+            }
+        )
         watcher = FileWatcher(config)
 
         with mock.patch("file_watcher.Observer", return_value=FakeObserver()):
@@ -1243,10 +1353,12 @@ class TestFileWatcher:
     def test_path_recovery_unlimited_retries_by_default(self, tmp_path):
         """Default max_retries=0 means unlimited recovery attempts."""
         watch_dir = tmp_path / "watch"
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(watch_dir)}],
-            "watch_path_retry_interval_seconds": 60.0,
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(watch_dir)}],
+                "watch_path_retry_interval_seconds": 60.0,
+            }
+        )
         assert config.path_recovery_max_retries == 0
         watcher = FileWatcher(config)
 
@@ -1269,16 +1381,23 @@ class TestFileWatcher:
         """Recovery retry counter resets when the path comes back."""
         watch_dir = tmp_path / "watch"
         watch_dir.mkdir()
-        config = load_config_from_dict({
-            "watch_paths": [{"path": str(watch_dir)}],
-            "watch_path_retry_interval_seconds": 60.0,
-        })
+        config = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(watch_dir)}],
+                "watch_path_retry_interval_seconds": 60.0,
+            }
+        )
         watcher = FileWatcher(config)
         observers = [FakeObserver(), FakeObserver()]
 
         with mock.patch("file_watcher.Observer", side_effect=observers):
             watcher.start()
             try:
+                # This test drives reconciliation synchronously; stop the
+                # background reconciler so it cannot race the exact counter.
+                SHUTDOWN_EVENT.set()
+                watcher._monitor_thread.join(timeout=1)
+                SHUTDOWN_EVENT.clear()
                 state = watcher._watch_states[0]
                 assert state.recovery_retries == 0
 
@@ -1367,57 +1486,73 @@ class TestObserverSelectionConfig:
             WatchPathConfig(path="/tmp/watch", polling_interval=-1.0)
 
     def test_path_recovery_enabled_default(self):
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": "/tmp/watch"}],
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": "/tmp/watch"}],
+            }
+        )
         assert cfg.path_recovery_enabled is True
 
     def test_path_recovery_enabled_false(self):
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": "/tmp/watch"}],
-            "path_recovery_enabled": False,
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": "/tmp/watch"}],
+                "path_recovery_enabled": False,
+            }
+        )
         assert cfg.path_recovery_enabled is False
 
     def test_path_recovery_interval_default(self):
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": "/tmp/watch"}],
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": "/tmp/watch"}],
+            }
+        )
         assert cfg.path_recovery_interval == 30.0
 
     def test_path_recovery_interval_custom(self):
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": "/tmp/watch"}],
-            "path_recovery_interval": 10.0,
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": "/tmp/watch"}],
+                "path_recovery_interval": 10.0,
+            }
+        )
         assert cfg.path_recovery_interval == 10.0
 
     def test_path_recovery_interval_zero_rejected(self):
         with pytest.raises(Exception):
-            load_config_from_dict({
-                "watch_paths": [{"path": "/tmp/watch"}],
-                "path_recovery_interval": 0,
-            })
+            load_config_from_dict(
+                {
+                    "watch_paths": [{"path": "/tmp/watch"}],
+                    "path_recovery_interval": 0,
+                }
+            )
 
     def test_path_recovery_max_retries_default(self):
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": "/tmp/watch"}],
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": "/tmp/watch"}],
+            }
+        )
         assert cfg.path_recovery_max_retries == 0
 
     def test_path_recovery_max_retries_custom(self):
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": "/tmp/watch"}],
-            "path_recovery_max_retries": 5,
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": "/tmp/watch"}],
+                "path_recovery_max_retries": 5,
+            }
+        )
         assert cfg.path_recovery_max_retries == 5
 
     def test_path_recovery_max_retries_negative_rejected(self):
         with pytest.raises(Exception):
-            load_config_from_dict({
-                "watch_paths": [{"path": "/tmp/watch"}],
-                "path_recovery_max_retries": -1,
-            })
+            load_config_from_dict(
+                {
+                    "watch_paths": [{"path": "/tmp/watch"}],
+                    "path_recovery_max_retries": -1,
+                }
+            )
 
     def test_observer_mode_auto_is_default(self):
         cfg = WatchPathConfig(path="/tmp/watch")
@@ -1534,9 +1669,11 @@ class TestEdgeCases:
     def test_nonexistent_watch_path_warns(self, tmp_path):
         """Config with nonexistent watch path should warn, not fail."""
         # The model_validator warns via logger, doesn't raise
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_path / "does_not_exist")}],
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_path / "does_not_exist")}],
+            }
+        )
         assert len(cfg.watch_paths) == 1
 
 
@@ -1552,12 +1689,14 @@ class TestWatcherResilience:
 
     def _make_watcher(self, tmp_watch_dir):
         """Build a FileWatcher with a single watch path pointing at *tmp_watch_dir*."""
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-            "submission_mode": "pipeline",
-            "path_recovery_interval": 1.0,
-            "watch_path_retry_interval_seconds": 1.0,
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+                "submission_mode": "pipeline",
+                "path_recovery_interval": 1.0,
+                "watch_path_retry_interval_seconds": 1.0,
+            }
+        )
         return FileWatcher(cfg)
 
     # ---- 1. OSError guard in _reconcile_watch_path ----
@@ -1573,7 +1712,9 @@ class TestWatcherResilience:
             assert not state.path_missing
 
             # Make Path.exists raise OSError (simulates unreachable UNC)
-            with mock.patch("file_watcher.Path.exists", side_effect=OSError("network error")):
+            with mock.patch(
+                "file_watcher.Path.exists", side_effect=OSError("network error")
+            ):
                 watcher._reconcile_watch_path(state)
 
             assert state.path_missing is True
@@ -1600,9 +1741,12 @@ class TestWatcherResilience:
                     raise RuntimeError("simulated reconcile failure")
                 original()
 
-            with mock.patch.object(watcher, "_reconcile_watch_paths", side_effect=boom_then_ok):
+            with mock.patch.object(
+                watcher, "_reconcile_watch_paths", side_effect=boom_then_ok
+            ):
                 # Let the monitor thread cycle a few times
                 import time
+
                 time.sleep(3.5)
 
             # Thread must still be alive
@@ -1616,14 +1760,17 @@ class TestWatcherResilience:
 
     def test_on_error_handler_logs(self, tmp_watch_dir):
         """FileWatcherHandler.on_error logs the watchdog error event."""
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-            "submission_mode": "pipeline",
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+                "submission_mode": "pipeline",
+            }
+        )
         stability = FileStabilityChecker()
         store = ProcessedFileStore()
         sem = threading.Semaphore(4)
         from concurrent.futures import ThreadPoolExecutor
+
         executor = ThreadPoolExecutor(max_workers=1)
         try:
             handler = FileWatcherHandler(
@@ -1652,7 +1799,8 @@ class TestWatcherResilience:
     def test_observer_fallback_after_deaths(self, tmp_watch_dir):
         """After _OBSERVER_DEATH_FALLBACK_THRESHOLD observer deaths, mode switches to polling."""
         watcher = self._make_watcher(tmp_watch_dir)
-        watcher.start()
+        with mock.patch("file_watcher.Observer", return_value=FakeObserver()):
+            watcher.start()
         try:
             state = watcher._watch_states[0]
             # Verify initial observer is native (local tmp dir is not a network path)
@@ -1662,7 +1810,7 @@ class TestWatcherResilience:
             for i in range(_OBSERVER_DEATH_FALLBACK_THRESHOLD):
                 # Mark observer as dead
                 old_observer = state.observer
-                if hasattr(old_observer, '_alive'):
+                if hasattr(old_observer, "_alive"):
                     old_observer._alive = False
                 else:
                     # Use mock to make is_alive return False
@@ -1670,8 +1818,10 @@ class TestWatcherResilience:
                     state.observer.is_alive.return_value = False
 
                 # Reconcile should detect dead observer and recreate
-                with mock.patch("file_watcher.Observer") as mock_obs_cls, \
-                     mock.patch("file_watcher.PollingObserver") as mock_poll_cls:
+                with (
+                    mock.patch("file_watcher.Observer") as mock_obs_cls,
+                    mock.patch("file_watcher.PollingObserver") as mock_poll_cls,
+                ):
                     fake_obs = FakeObserver()
                     mock_obs_cls.return_value = fake_obs
                     mock_poll_cls.return_value = fake_obs
@@ -1679,6 +1829,29 @@ class TestWatcherResilience:
 
             assert state.observer_deaths >= _OBSERVER_DEATH_FALLBACK_THRESHOLD
             assert state.active_mode == "polling"
+        finally:
+            watcher.stop()
+
+    def test_native_observer_capacity_falls_back_to_polling(self, tmp_watch_dir):
+        """An exhausted inotify allocation must not prevent watcher startup."""
+        watcher = self._make_watcher(tmp_watch_dir)
+        native = FakeObserver()
+        native.start = mock.MagicMock(
+            side_effect=OSError(28, "inotify watch limit reached"),
+        )
+        polling = FakeObserver()
+
+        with (
+            mock.patch("file_watcher.Observer", return_value=native),
+            mock.patch("file_watcher.PollingObserver", return_value=polling),
+        ):
+            watcher.start()
+
+        try:
+            state = watcher._watch_states[0]
+            assert state.active_mode == "polling"
+            assert state.observer is polling
+            assert polling.is_alive()
         finally:
             watcher.stop()
 
@@ -1690,12 +1863,14 @@ class TestWatcherResilience:
 
         from file_watcher import WatchPathRuntime
 
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": str(tmp_watch_dir)}],
-            "submission_mode": "pipeline",
-            "path_recovery_interval": 1.0,
-            "watch_path_retry_interval_seconds": 1.0,
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(tmp_watch_dir)}],
+                "submission_mode": "pipeline",
+                "path_recovery_interval": 1.0,
+                "watch_path_retry_interval_seconds": 1.0,
+            }
+        )
         watcher = FileWatcher(cfg)
         base_interval = cfg.path_recovery_interval
 
@@ -1732,10 +1907,12 @@ class TestWatcherResilience:
 
         # Path always unavailable; drive _monitor_watch_paths directly
         is_set_responses = [False, False, False, False, True]
-        with mock.patch("file_watcher.Path.exists", return_value=False), \
-             mock.patch("file_watcher.Path.is_dir", return_value=False), \
-             mock.patch.object(SHUTDOWN_EVENT, "wait", side_effect=capture_interval), \
-             mock.patch.object(SHUTDOWN_EVENT, "is_set", side_effect=is_set_responses):
+        with (
+            mock.patch("file_watcher.Path.exists", return_value=False),
+            mock.patch("file_watcher.Path.is_dir", return_value=False),
+            mock.patch.object(SHUTDOWN_EVENT, "wait", side_effect=capture_interval),
+            mock.patch.object(SHUTDOWN_EVENT, "is_set", side_effect=is_set_responses),
+        ):
             watcher._monitor_watch_paths()
 
         try:
@@ -1771,10 +1948,12 @@ class TestWatcherResilience:
     def test_status_reflects_missing_path(self, tmp_path):
         """status() reports active=False when path is missing."""
         missing_dir = tmp_path / "nonexistent"
-        cfg = load_config_from_dict({
-            "watch_paths": [{"path": str(missing_dir)}],
-            "submission_mode": "pipeline",
-        })
+        cfg = load_config_from_dict(
+            {
+                "watch_paths": [{"path": str(missing_dir)}],
+                "submission_mode": "pipeline",
+            }
+        )
         watcher = FileWatcher(cfg)
         watcher.start()
         try:

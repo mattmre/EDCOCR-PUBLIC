@@ -1,5 +1,5 @@
 /**
- * Custom error classes for the EDCOCR SDK.
+ * Custom error classes for the OCR_LOCAL SDK.
  *
  * All SDK errors extend {@link OCRLocalError} so consumers can catch
  * the entire hierarchy with a single `catch` clause if desired.
@@ -8,7 +8,7 @@
  */
 
 /**
- * Base error for all EDCOCR SDK errors.
+ * Base error for all OCR_LOCAL SDK errors.
  *
  * Carries the HTTP status code and raw response body when the error
  * originates from an API response.
@@ -60,7 +60,8 @@ export class RateLimitError extends OCRLocalError {
     message: string,
     statusCode: number = 429,
     responseBody: string = '',
-    retryAfterSeconds: number | null = null) {
+    retryAfterSeconds: number | null = null,
+  ) {
     super(message, statusCode, responseBody);
     this.name = 'RateLimitError';
     this.retryAfterSeconds = retryAfterSeconds;

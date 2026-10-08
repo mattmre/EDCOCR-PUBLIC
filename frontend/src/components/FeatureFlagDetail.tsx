@@ -33,7 +33,7 @@ interface BakeBannerProps {
 /**
  * Returns the bake-window status when the flag last changed inside the
  * documented soak window. The detail page surfaces this banner so operators
- * know not to re-flip the flag mid-bake.
+ * know not to re-flip the flag mid-bake (docs/release-candidate.md).
  */
 function bakeStatus(
   bakeHours: number,
@@ -67,7 +67,7 @@ export interface FeatureFlagDetailProps {
   history: FeatureFlagHistoryEntry[] | null;
   historyLoading?: boolean;
   historyError?: Error | null;
-  onChangeRequested?: => void;
+  onChangeRequested?: () => void;
 }
 
 export function FeatureFlagDetail({

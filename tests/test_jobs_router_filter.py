@@ -28,8 +28,16 @@ def _setup(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
-def client():
+def client(monkeypatch):
     from fastapi.testclient import TestClient
+
+    # api.database is imported by the shared DB fixture before this fixture
+    # sets its environment.  Pin the auth module's import-time constants here
+    # so this test remains deterministic when run after auth-heavy modules.
+    import api.auth as api_auth
+
+    monkeypatch.setattr(api_auth, "OCR_API_KEY", "")
+    monkeypatch.setattr(api_auth, "ALLOW_UNAUTHENTICATED", True)
 
     from api.main import create_app
 
@@ -50,7 +58,7 @@ def seeded_jobs(client):
         Job(
             job_id="job_aaaaaaaa0001",
             source_file="alpha_invoice.pdf",
-status="completed",
+            status="completed",
             tenant_id=None,
             created_at=base,
             processing_time=12.0,
@@ -58,7 +66,7 @@ status="completed",
         Job(
             job_id="job_aaaaaaaa0002",
             source_file="bravo_contract.pdf",
-status="failed",
+            status="failed",
             tenant_id=None,
             created_at=base + timedelta(minutes=1),
             processing_time=3.0,
@@ -66,7 +74,7 @@ status="failed",
         Job(
             job_id="job_aaaaaaaa0003",
             source_file="charlie_50%-discount.pdf",
-status="processing",
+            status="processing",
             tenant_id=None,
             created_at=base + timedelta(minutes=2),
             processing_time=None,
@@ -74,7 +82,7 @@ status="processing",
         Job(
             job_id="job_aaaaaaaa0004",
             source_file="delta_report.pdf",
-status="completed",
+            status="completed",
             tenant_id="tenant_a",
             created_at=base + timedelta(minutes=3),
             processing_time=42.0,
@@ -82,7 +90,7 @@ status="completed",
         Job(
             job_id="job_aaaaaaaa0005",
             source_file="echo_brief.pdf",
-status="completed",
+            status="completed",
             tenant_id="tenant_b",
             created_at=base + timedelta(minutes=4),
             processing_time=7.5,
@@ -151,6 +159,47 @@ class TestSubstringSearch:
 
 
 class TestDateRange:
+    @pytest.mark.parametrize("after,before", [
+        ("2026-04-27T12:01:00", "2026-04-27T12:03:00Z"),
+        ("2026-04-27T12:01:00Z", "2026-04-27T12:03:00"),
+        ("2026-04-27T08:01:00-04:00", "2026-04-27T14:03:00+02:00"),
+        ("2026-04-27T12:01:00", "2026-04-27T12:03:00"),
+    ])
+    def test_utc_date_bounds_filter_persisted_rows(self, client, seeded_jobs, after, before):
+        response = client.get("/api/v1/jobs", params={
+            "submitted_after": after, "submitted_before": before,
+            "sort": "submitted_at_asc", "limit": 1, "offset": 1,
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert (data["total"], data["limit"], data["offset"]) == (3, 1, 1)
+        assert [job["job_id"] for job in data["jobs"]] == ["job_aaaaaaaa0003"]
+
+    @pytest.mark.parametrize("after,before", [
+        ("2026-04-27T12:04:00", "2026-04-27T12:03:00Z"),
+        ("2026-04-27T08:04:00-04:00", "2026-04-27T12:03:00"),
+        ("0001-01-01T00:00:00+01:00", "2026-04-27T12:03:00"),
+    ])
+    def test_invalid_utc_date_range_is_422(self, client, seeded_jobs, after, before):
+        response = client.get("/api/v1/jobs", params={
+            "submitted_after": after, "submitted_before": before,
+        })
+        assert response.status_code == 422
+        assert response.json()["detail"]["error"] == "invalid_date_range"
+
+    def test_manager_normalizes_offset_for_internal_callers(self, client, seeded_jobs):
+        from api.job_manager import get_manager
+
+        jobs, total = get_manager().list_jobs(
+            submitted_after=datetime.fromisoformat("2026-04-27T08:01:00-04:00"),
+            submitted_before=datetime.fromisoformat("2026-04-27T14:03:00+02:00"),
+            sort="submitted_at_asc",
+        )
+        assert total == 3
+        assert [job.job_id for job in jobs] == [
+            "job_aaaaaaaa0002", "job_aaaaaaaa0003", "job_aaaaaaaa0004",
+        ]
+
     def test_submitted_after_filters(self, client, seeded_jobs):
         cutoff = "2026-04-27T12:02:30"
         resp = client.get(f"/api/v1/jobs?submitted_after={cutoff}")
@@ -232,3 +281,28 @@ class TestTenantIsolation:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 5
+
+    def test_tenant_key_foreign_tenant_filter_is_403(
+        self, client, seeded_jobs, monkeypatch
+    ):
+        # r3-BE01: tenant-scoped caller passing a foreign ?tenant_id= gets an
+        # explicit 403 (dashboard parity), never a silent 200 rewrite.
+        import api.authz as api_authz
+
+        monkeypatch.setattr(
+            api_authz, "require_tenant_scope_or_platform", lambda request: "tenant_a"
+        )
+        resp = client.get("/api/v1/jobs?tenant_id=tenant_b")
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["error"] == "tenant_mismatch"
+
+    def test_tenant_key_own_tenant_filter_passes(
+        self, client, seeded_jobs, monkeypatch
+    ):
+        import api.authz as api_authz
+
+        monkeypatch.setattr(
+            api_authz, "require_tenant_scope_or_platform", lambda request: "tenant_a"
+        )
+        resp = client.get("/api/v1/jobs?tenant_id=tenant_a")
+        assert resp.status_code == 200

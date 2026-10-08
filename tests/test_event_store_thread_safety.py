@@ -1,4 +1,4 @@
-"""Thread-safety tests for SQLite-backed stores.
+"""Thread-safety tests for SQLite-backed stores (maintenance review).
 
 Verifies that concurrent writes from multiple threads do not corrupt
 data in EventStore, EntityIndex, and ReviewQueue.

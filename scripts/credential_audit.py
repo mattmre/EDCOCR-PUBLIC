@@ -405,7 +405,7 @@ def _find_project_root() -> Path:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Credential audit scanner for EDCOCR",
+        description="Credential audit scanner for OCR_LOCAL",
     )
     parser.add_argument(
         "--project-root",

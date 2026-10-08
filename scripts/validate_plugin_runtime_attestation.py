@@ -9,20 +9,21 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--attestation", default=os.environ.get("PLUGIN_RUNTIME_ATTESTATION", ""))
+    parser.add_argument(
+        "--attestation", default=os.environ.get("PLUGIN_RUNTIME_ATTESTATION", "")
+    )
     parser.add_argument(
         "--allow-local-dev",
         action="store_true",
         help=(
             "validate a local/dev attestation shape without granting production "
-            "release credit"
+            "BHS credit"
         ),
     )
     return parser.parse_args(argv)
@@ -45,7 +46,7 @@ def validate_attestation(path: Path, *, allow_local_dev: bool = False) -> list[s
         if environment not in {"local-dev", "production"}:
             problems.append("environment must be local-dev or production")
     elif environment != "production":
-        problems.append("environment must be production for production release credit")
+        problems.append("environment must be production for production BHS credit")
     for key in ("runner_id", "runner_version", "workload_identity", "timestamp"):
         if not isinstance(data.get(key), str) or not data[key].strip():
             problems.append(f"{key} is required")
@@ -56,7 +57,9 @@ def validate_attestation(path: Path, *, allow_local_dev: bool = False) -> list[s
         problems.append("image_digest must contain a 64-character lowercase hex digest")
     signature = data.get("attestation_signature_sha256")
     if not isinstance(signature, str) or not SHA256_RE.fullmatch(signature):
-        problems.append("attestation_signature_sha256 must be a 64-character lowercase hex SHA-256")
+        problems.append(
+            "attestation_signature_sha256 must be a 64-character lowercase hex SHA-256"
+        )
     for key in (
         "out_of_process",
         "network_disabled",
@@ -71,7 +74,10 @@ def validate_attestation(path: Path, *, allow_local_dev: bool = False) -> list[s
     ):
         if data.get(key) is not True:
             problems.append(f"{key} must be true")
-    if not isinstance(data.get("seccomp_profile"), str) or not data["seccomp_profile"].strip():
+    if (
+        not isinstance(data.get("seccomp_profile"), str)
+        or not data["seccomp_profile"].strip()
+    ):
         problems.append("seccomp_profile is required")
     return problems
 

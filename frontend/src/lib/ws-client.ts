@@ -1,40 +1,92 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getApiKey } from "./auth";
+import { resolveApiBaseUrl, resolveConfiguredApiBaseUrl } from "./api-client";
+import { getApiKey, isHttpOnlySessionEnabled } from "./auth";
 import type { JobWSMessage, WSStatus } from "./types";
+
+const WEBSOCKET_BASE_PROTOCOLS = new Set(["http:", "https:", "ws:", "wss:"]);
+
+function currentPageOrigin(): string | undefined {
+  return typeof window !== "undefined" && window.location?.origin
+    ? window.location.origin
+    : undefined;
+}
+
+function selectWebSocketBaseUrl(baseUrl?: string): string {
+  if (baseUrl !== undefined) {
+    return baseUrl.trim();
+  }
+
+  return resolveConfiguredApiBaseUrl() ?? currentPageOrigin() ?? resolveApiBaseUrl();
+}
+
+function parseWebSocketBaseUrl(baseUrl: string, pageOrigin?: string): URL {
+  let parsed: URL;
+  try {
+    if (!baseUrl) {
+      if (!pageOrigin) {
+        throw new Error("missing page origin");
+      }
+      parsed = new URL(pageOrigin);
+    } else if (baseUrl.startsWith("/") && !baseUrl.startsWith("//")) {
+      if (!pageOrigin) {
+        throw new Error("missing page origin");
+      }
+      parsed = new URL(baseUrl, pageOrigin);
+    } else {
+      parsed = new URL(baseUrl);
+    }
+  } catch {
+    throw new Error("Invalid WebSocket base URL");
+  }
+
+  if (!WEBSOCKET_BASE_PROTOCOLS.has(parsed.protocol)) {
+    throw new Error("Invalid WebSocket base URL");
+  }
+  if (parsed.search || parsed.hash) {
+    throw new Error("Invalid WebSocket base URL");
+  }
+  return parsed;
+}
 
 /**
  * Compute the WebSocket URL for a given job.
  *
- * Derives a ws:// (or wss://) URL from NEXT_PUBLIC_API_BASE_URL or, when
- * running in the browser without an explicit base, falls back to the
- * current page origin. The returned URL has no auth token in the query
- * string -- credentials are sent via the auth frame.
+ * Derives a ws:// (or wss://) URL from the shared API base resolver
+ * (settings → env → localhost), or an explicit override. When the resolved
+ * HTTP base is unavailable in-browser without env, falls back to the current
+ * page origin. Credentials are sent via the auth frame (maintenance review), not query.
  */
 export function buildJobWebSocketUrl(jobId: string, baseUrl?: string): string {
-  let base = baseUrl;
-  if (!base) {
-    base =
-      (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_BASE_URL) ||
-      (typeof window !== "undefined" ? window.location.origin : "http://localhost:8000");
+  const pageOrigin = currentPageOrigin();
+  const parsed = parseWebSocketBaseUrl(selectWebSocketBaseUrl(baseUrl), pageOrigin);
+
+  parsed.protocol = parsed.protocol === "https:" || parsed.protocol === "wss:" ? "wss:" : "ws:";
+  const basePath = parsed.pathname.replace(/\/+$/, "");
+  parsed.pathname = `${basePath}/ws/jobs/${encodeURIComponent(jobId)}`;
+
+  const output = parsed.toString();
+  if (!/^wss?:\/\//.test(output)) {
+    throw new Error("Invalid WebSocket URL");
   }
-  const trimmed = base.replace(/\/+$/, "");
-  const wsBase = trimmed
-    .replace(/^https:\/\//, "wss://")
-    .replace(/^http:\/\//, "ws://");
-  return `${wsBase}/ws/jobs/${encodeURIComponent(jobId)}`;
+  return output;
 }
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 const MAX_BUFFERED_MESSAGES = 200;
+const COOKIE_AUTH_PROTOCOL = "ocr-local.auth.cookie.v1";
+const FRAME_AUTH_PROTOCOL = "ocr-local.auth.frame.v1";
+const AUTH_PROTOCOL_MISMATCH_CLOSE_CODE = 4002;
+const AUTH_PROTOCOL_MISMATCH_REASON = "WebSocket authentication protocol mismatch";
+const AUTHENTICATION_FAILURE_CLOSE_CODE = 4001;
 
 export interface UseJobWebSocketResult {
   status: WSStatus;
   messages: JobWSMessage[];
   lastMessage: JobWSMessage | null;
-  reconnect:  => void;
+  reconnect: () => void;
   send: (data: string | Record<string, unknown>) => void;
 }
 
@@ -56,15 +108,14 @@ interface Backoff {
 function nextBackoffDelay(attempt: number): number {
   const base = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
   // Add modest jitter (+/- 20%) to avoid thundering herd.
-  const jitter = 0.8 + Math.random * 0.4;
+  const jitter = 0.8 + Math.random() * 0.4;
   return Math.round(base * jitter);
 }
 
 /**
  * React hook that manages a WebSocket connection to /ws/jobs/{jobId}.
  *
- * - Authenticates by sending {"type": "auth", "api_key": "..."} as the
- *   first frame after the socket opens.
+ * - Negotiates an explicit frame or HttpOnly-cookie authentication mode.
  * - Reconnects with exponential backoff (1s, 2s, 4s, 8s, ..., capped at 30s).
  * - Pauses (closes) when the document becomes hidden and reconnects when
  *   it becomes visible again.
@@ -83,11 +134,13 @@ export function useJobWebSocket(
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedByUserRef = useRef<boolean>(false);
   const visibilityPausedRef = useRef<boolean>(false);
+  const authenticationRejectedRef = useRef<boolean>(false);
 
   const reconnectEnabled = options.reconnect !== false;
   const WSImpl = options.webSocketImpl ?? (typeof WebSocket !== "undefined" ? WebSocket : undefined);
+  const explicitApiKeyProvided = Object.prototype.hasOwnProperty.call(options, "apiKey");
 
-  const cleanupSocket = useCallback( => {
+  const cleanupSocket = useCallback(() => {
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -103,7 +156,7 @@ export function useJobWebSocket(
           ws.readyState === 0 /* CONNECTING */ ||
           ws.readyState === 1 /* OPEN */
         ) {
-          ws.close;
+          ws.close();
         }
       } catch {
         // Ignore -- the socket is being torn down.
@@ -112,30 +165,60 @@ export function useJobWebSocket(
     }
   }, []);
 
-  const connect = useCallback( => {
-    if (!WSImpl || !jobId) {
+  const connect = useCallback(() => {
+    if (!WSImpl || !jobId || authenticationRejectedRef.current) {
       return;
     }
-    cleanupSocket;
+    cleanupSocket();
     closedByUserRef.current = false;
     setStatus(backoffRef.current.attempt > 0 ? "reconnecting" : "connecting");
 
+    // Snapshot the credential mode before each handshake. An explicitly
+    // supplied empty value stays in frame mode and cannot fall back to cookie.
+    const cookieAuthSelected = isHttpOnlySessionEnabled() && !explicitApiKeyProvided;
+    const authProtocol = cookieAuthSelected ? COOKIE_AUTH_PROTOCOL : FRAME_AUTH_PROTOCOL;
+    const frameApiKey = cookieAuthSelected
+      ? null
+      : explicitApiKeyProvided
+        ? (options.apiKey ?? "")
+        : (getApiKey() ?? "");
+
     let ws: WebSocket;
     try {
-      ws = new WSImpl(buildJobWebSocketUrl(jobId, options.baseUrl));
+      ws = new WSImpl(buildJobWebSocketUrl(jobId, options.baseUrl), authProtocol);
     } catch {
       setStatus("error");
-      scheduleReconnect;
+      scheduleReconnect();
       return;
     }
     wsRef.current = ws;
+    let protocolRejected = false;
 
-    ws.onopen =  => {
+    ws.onopen = () => {
+      if (ws.protocol !== authProtocol) {
+        protocolRejected = true;
+        setStatus("error");
+        try {
+          // Browser APIs reserve close code 1002 for the user agent.
+          ws.close(AUTH_PROTOCOL_MISMATCH_CLOSE_CODE, AUTH_PROTOCOL_MISMATCH_REASON);
+        } catch {
+          try {
+            ws.close();
+          } catch {
+            // Keep the socket credential-silent even if teardown fails.
+          }
+        }
+        return;
+      }
       setStatus("authenticating");
-      const apiKey = options.apiKey ?? getApiKey;
+      // Native browser WebSockets carry the cookie. Cookie mode sends no
+      // placeholder auth frame; frame mode sends the captured credential.
+      if (frameApiKey === null) {
+        return;
+      }
       // Send auth frame first; backend rejects all other frames before auth.
       try {
-        ws.send(JSON.stringify({ type: "auth", api_key: apiKey ?? "" }));
+        ws.send(JSON.stringify({ type: "auth", api_key: frameApiKey }));
       } catch {
         // If send fails, the onclose handler will trigger reconnect.
       }
@@ -167,12 +250,24 @@ export function useJobWebSocket(
       });
     };
 
-    ws.onerror =  => {
+    ws.onerror = () => {
       setStatus("error");
     };
 
-    ws.onclose =  => {
+    ws.onclose = (event: CloseEvent) => {
       wsRef.current = null;
+      if (protocolRejected) {
+        setStatus("error");
+        return;
+      }
+      if (event.code === AUTHENTICATION_FAILURE_CLOSE_CODE) {
+        // Authentication failures and session logout are terminal until the
+        // user explicitly reconnects or switches to another job. Retrying the
+        // rejected credential only creates a loop of failed handshakes.
+        authenticationRejectedRef.current = true;
+        setStatus("error");
+        return;
+      }
       if (closedByUserRef.current) {
         setStatus("closed");
         return;
@@ -185,34 +280,44 @@ export function useJobWebSocket(
         setStatus("closed");
         return;
       }
-      scheduleReconnect;
+      scheduleReconnect();
     };
     // Inline scheduleReconnect to keep closure references explicit.
-    function scheduleReconnect {
+    function scheduleReconnect() {
       const delay = nextBackoffDelay(backoffRef.current.attempt);
       backoffRef.current.attempt += 1;
       setStatus("reconnecting");
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
       }
-      reconnectTimerRef.current = setTimeout( => {
-        connect;
+      reconnectTimerRef.current = setTimeout(() => {
+        connect();
       }, delay);
     }
-  }, [WSImpl, jobId, options.apiKey, options.baseUrl, reconnectEnabled, cleanupSocket]);
+  }, [
+    WSImpl,
+    jobId,
+    options.apiKey,
+    options.baseUrl,
+    reconnectEnabled,
+    cleanupSocket,
+    explicitApiKeyProvided,
+    authenticationRejectedRef,
+  ]);
 
   // (Re)connect when the jobId changes, and tear down on unmount.
-  useEffect( => {
+  useEffect(() => {
     if (!jobId) {
       return;
     }
+    authenticationRejectedRef.current = false;
     backoffRef.current = { attempt: 0 };
     setMessages([]);
     setLastMessage(null);
-    connect;
-    return  => {
+    connect();
+    return () => {
       closedByUserRef.current = true;
-      cleanupSocket;
+      cleanupSocket();
     };
     // We deliberately depend on jobId only -- connect is stable per render
     // because of useCallback dependencies, and re-running it would loop.
@@ -220,32 +325,33 @@ export function useJobWebSocket(
   }, [jobId]);
 
   // Pause when the tab is hidden; reconnect when it becomes visible again.
-  useEffect( => {
+  useEffect(() => {
     if (typeof document === "undefined") {
       return;
     }
-    function onVisibilityChange {
+    function onVisibilityChange() {
       if (document.visibilityState === "hidden") {
         visibilityPausedRef.current = true;
-        cleanupSocket;
+        cleanupSocket();
         setStatus("closed");
       } else if (document.visibilityState === "visible") {
         if (visibilityPausedRef.current) {
           visibilityPausedRef.current = false;
           backoffRef.current = { attempt: 0 };
-          connect;
+          connect();
         }
       }
     }
     document.addEventListener("visibilitychange", onVisibilityChange);
-    return  => document.removeEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [cleanupSocket, connect]);
 
-  const reconnect = useCallback( => {
+  const reconnect = useCallback(() => {
     backoffRef.current = { attempt: 0 };
     closedByUserRef.current = false;
     visibilityPausedRef.current = false;
-    connect;
+    authenticationRejectedRef.current = false;
+    connect();
   }, [connect]);
 
   const send = useCallback((data: string | Record<string, unknown>) => {

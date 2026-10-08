@@ -1,3 +1,4 @@
+import { handleUnauthorized } from "./api-client";
 /**
  * Audit-specific API helpers.
  *
@@ -10,19 +11,9 @@
  * UI can render a clear failure state instead of silently dropping events.
  */
 
-import { ApiError, UnauthorizedError, get } from "./api-client";
-import { getApiKey, clearApiKey } from "./auth";
+import { ApiError, UnauthorizedError, buildUrl, createTimeoutSignal, get } from "./api-client";
+import { getApiKey, getAuthRequestCredentials } from "./auth";
 import type { CustodyEvent } from "./audit-verify";
-
-const API_BASE_URL =
-  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_BASE_URL) ||
-  "http://localhost:8000";
-
-function buildUrl(path: string): string {
-  const base = API_BASE_URL.replace(/\/+$/, "");
-  const suffix = path.startsWith("/") ? path : `/${path}`;
-  return `${base}${suffix}`;
-}
 
 export interface JobSummary {
   job_id: string;
@@ -59,29 +50,39 @@ export async function fetchCustodyLog(jobId: string): Promise<CustodyEvent[]> {
   if (apiKey) {
     headers.set("X-API-Key", apiKey);
   }
-  const response = await fetch(buildUrl(`/api/v1/jobs/${encodeURIComponent(jobId)}/outputs/custody`), {
-    method: "GET",
-    headers,
-    cache: "no-store",
-  });
-  if (response.status === 401 || response.status === 403) {
-    clearApiKey();
-    throw new UnauthorizedError(response.status, null);
-  }
-  if (!response.ok) {
-    let detail = `Request failed with status ${response.status}`;
-    try {
-      const body = await response.json();
-      if (body && typeof body === "object" && "detail" in body) {
-        detail = String((body as { detail: unknown }).detail);
+  const { signal, cleanup } = createTimeoutSignal();
+  try {
+    const response = await fetch(
+      buildUrl(`/api/v1/jobs/${encodeURIComponent(jobId)}/outputs/custody`),
+      {
+        method: "GET",
+        headers,
+        credentials: getAuthRequestCredentials(),
+        cache: "no-store",
+        signal,
       }
-    } catch {
-      // Non-JSON error body; keep generic message.
+    );
+    if (response.status === 401) {
+      handleUnauthorized();
+      throw new UnauthorizedError(response.status, null);
     }
-    throw new ApiError(response.status, detail, null);
+    if (!response.ok) {
+      let detail = `Request failed with status ${response.status}`;
+      try {
+        const body = await response.json();
+        if (body && typeof body === "object" && "detail" in body) {
+          detail = String((body as { detail: unknown }).detail);
+        }
+      } catch {
+        // Non-JSON error body; keep generic message.
+      }
+      throw new ApiError(response.status, detail, null);
+    }
+    const text = await response.text();
+    return parseJsonlEvents(text);
+  } finally {
+    cleanup();
   }
-  const text = await response.text();
-  return parseJsonlEvents(text);
 }
 
 export function parseJsonlEvents(text: string): CustodyEvent[] {

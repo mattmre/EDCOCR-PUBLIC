@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -627,6 +628,44 @@ class TestABTestEngineExecution:
 class TestLevenshteinDistance:
     """Test edit distance computation."""
 
+    def test_import_keeps_heavy_ocr_dependencies_lazy(self):
+        code = "\n".join(
+            [
+                "import sys",
+                f"sys.path.insert(0, {str(_SCRIPTS_DIR)!r})",
+                f"sys.path.insert(0, {str(_PROJECT_ROOT)!r})",
+                "import inspect",
+                "from pathlib import Path",
+                "import benchmark_accuracy",
+                f"expected = Path({str(_PROJECT_ROOT / 'ocr_distributed' / 'text_metrics.py')!r}).resolve()",
+                "metrics = (",
+                "    benchmark_accuracy.edit_distance,",
+                "    benchmark_accuracy.character_error_rate,",
+                "    benchmark_accuracy.word_error_rate,",
+                ")",
+                "sources = {Path(inspect.getsourcefile(fn)).resolve() for fn in metrics}",
+                "if sources != {expected}:",
+                "    raise SystemExit('non-canonical metric source: ' + repr(sources))",
+                (
+                    "blocked = sorted({name.split('.')[0] for name in sys.modules "
+                    "if name.split('.')[0] in "
+                    "{'ocr_distributed', 'cv2', 'fitz', 'PIL', 'numpy'}})"
+                ),
+                "if blocked:",
+                "    raise SystemExit('unexpected eager imports: ' + ', '.join(blocked))",
+            ]
+        )
+
+        completed = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=str(_PROJECT_ROOT),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr or completed.stdout
+
     def test_identical_strings(self):
         from benchmark_accuracy import levenshtein_distance
         assert levenshtein_distance("hello", "hello") == 0
@@ -657,6 +696,17 @@ class TestLevenshteinDistance:
         from benchmark_accuracy import levenshtein_distance
         assert levenshtein_distance("abc", "aec") == levenshtein_distance("aec", "abc")
 
+    def test_uses_canonical_text_metrics(self, monkeypatch):
+        import benchmark_accuracy
+
+        def fake_edit_distance(s1, s2):
+            assert (s1, s2) == ("abc", "xyz")
+            return 42
+
+        monkeypatch.setattr(benchmark_accuracy, "edit_distance", fake_edit_distance)
+
+        assert benchmark_accuracy.levenshtein_distance("abc", "xyz") == 42
+
 
 class TestCER:
     """Test Character Error Rate computation."""
@@ -680,6 +730,21 @@ class TestCER:
         from benchmark_accuracy import compute_cer
         cer = compute_cer("abc", "xyz")
         assert cer == 1.0
+
+    def test_uses_canonical_text_metrics(self, monkeypatch):
+        import benchmark_accuracy
+
+        def fake_character_error_rate(reference, hypothesis):
+            assert (reference, hypothesis) == ("ref", "hyp")
+            return 0.125
+
+        monkeypatch.setattr(
+            benchmark_accuracy,
+            "character_error_rate",
+            fake_character_error_rate,
+        )
+
+        assert benchmark_accuracy.compute_cer("ref", "hyp") == 0.125
 
 
 class TestWER:
@@ -710,6 +775,21 @@ class TestWER:
         # "hello" -> "hello world": 1 insertion, ref len=1
         wer = compute_wer("hello", "hello world")
         assert wer == 1.0  # 1 insertion / 1 ref word
+
+    def test_uses_canonical_text_metrics(self, monkeypatch):
+        import benchmark_accuracy
+
+        def fake_word_error_rate(reference, hypothesis):
+            assert (reference, hypothesis) == ("ref words", "hyp words")
+            return 0.375
+
+        monkeypatch.setattr(
+            benchmark_accuracy,
+            "word_error_rate",
+            fake_word_error_rate,
+        )
+
+        assert benchmark_accuracy.compute_wer("ref words", "hyp words") == 0.375
 
 
 class TestPrecisionRecallF1:

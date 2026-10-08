@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PostgreSQL backup validation framework for EDCOCR.
+"""PostgreSQL backup validation framework for OCR_LOCAL.
 
 Validates PostgreSQL backup configuration, tests backup integrity,
 and optionally performs restore-to-temporary-database verification.
@@ -32,18 +32,17 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-BACKUP_FILE_PATTERN = re.compile(
-    r"ocr-coordinator-(\d{8}-\d{6})\.sql\.gz$"
-)
+BACKUP_FILE_PATTERN = re.compile(r"ocr-coordinator-(\d{8}-\d{6})\.sql\.gz$")
 DEFAULT_MAX_AGE_HOURS = 24
 DEFAULT_MIN_SIZE_BYTES = 1024  # 1 KB minimum — anything less is truncated
 DEFAULT_BACKUP_DIR = "/backups"
@@ -138,13 +137,42 @@ def mask_database_url(url: str) -> str:
 def parse_database_url(url: str) -> dict:
     """Parse a PostgreSQL database URL into connection components."""
     parsed = urlparse(url)
-    return {
-        "host": parsed.hostname or "localhost",
-        "port": str(parsed.port or 5432),
-        "user": parsed.username or "ocr",
-        "password": parsed.password or "",
-        "dbname": (parsed.path or "/ocr_coordinator").lstrip("/"),
+    if parsed.scheme not in {"postgres", "postgresql"} or parsed.fragment:
+        raise ValueError("Expected a PostgreSQL connection URL without a fragment")
+    # Preserve transport and session settings rather than silently downgrading
+    # the caller's connection. Unknown/ambiguous parameters fail explicitly.
+    parameter_env = {
+        "sslmode": "PGSSLMODE", "sslrootcert": "PGSSLROOTCERT",
+        "sslcert": "PGSSLCERT", "sslkey": "PGSSLKEY", "sslcrl": "PGSSLCRL",
+        "sslcrldir": "PGSSLCRLDIR", "sslsni": "PGSSLSNI",
+        "ssl_min_protocol_version": "PGSSLMINPROTOCOLVERSION",
+        "ssl_max_protocol_version": "PGSSLMAXPROTOCOLVERSION",
+        "channel_binding": "PGCHANNELBINDING", "gssencmode": "PGGSSENCMODE",
+        "connect_timeout": "PGCONNECT_TIMEOUT", "options": "PGOPTIONS",
+        "application_name": "PGAPPNAME", "target_session_attrs": "PGTARGETSESSIONATTRS",
+        "passfile": "PGPASSFILE", "hostaddr": "PGHOSTADDR",
     }
+    connection_env = {}
+    for name, value in parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True):
+        if name not in parameter_env or parameter_env[name] in connection_env or not value:
+            raise ValueError(f"Unsupported, repeated or empty PostgreSQL URL parameter: {name}")
+        connection_env[parameter_env[name]] = value
+    return {
+        "host": unquote(parsed.hostname or "localhost"),
+        "port": str(parsed.port or 5432),
+        "user": unquote(parsed.username or "ocr"),
+        "password": unquote(parsed.password or ""),
+        "dbname": unquote((parsed.path or "/ocr_coordinator").lstrip("/")),
+        "connection_env": connection_env,
+    }
+
+
+def _connection_env(parts: dict) -> dict:
+    return {**parts["connection_env"], "PGPASSWORD": parts["password"]}
+
+
+def _sql_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
 
 
 def parse_backup_timestamp(filename: str) -> Optional[datetime.datetime]:
@@ -230,6 +258,7 @@ def check_config(
         List of CheckResult objects.
     """
     results = []
+    parts = None
 
     # 1. Database URL format
     if database_url:
@@ -268,17 +297,20 @@ def check_config(
             )
         )
 
-    # 2. Database connectivity
-    if database_url:
-        parts = parse_database_url(database_url)
-        env = {"PGPASSWORD": parts["password"]}
+    # 2. Database connectivity only after successful URL validation.
+    if parts is not None:
+        env = _connection_env(parts)
         rc, stdout, stderr = run_command(
             [
                 "pg_isready",
-                "-h", parts["host"],
-                "-p", parts["port"],
-                "-U", parts["user"],
-                "-d", parts["dbname"],
+                "-h",
+                parts["host"],
+                "-p",
+                parts["port"],
+                "-U",
+                parts["user"],
+                "-d",
+                parts["dbname"],
             ],
             timeout=10,
             env=env,
@@ -287,7 +319,9 @@ def check_config(
             CheckResult(
                 name="database_connectivity",
                 passed=(rc == 0),
-                message=stdout.strip() if rc == 0 else f"pg_isready failed: {stderr.strip()}",
+                message=stdout.strip()
+                if rc == 0
+                else f"pg_isready failed: {stderr.strip()}",
             )
         )
 
@@ -306,7 +340,9 @@ def check_config(
             CheckResult(
                 name="backup_dir_writable",
                 passed=writable,
-                message="Backup directory is writable" if writable else f"Backup directory is NOT writable: {backup_dir}",
+                message="Backup directory is writable"
+                if writable
+                else f"Backup directory is NOT writable: {backup_dir}",
             )
         )
     else:
@@ -324,7 +360,9 @@ def check_config(
         CheckResult(
             name="pg_dump_available",
             passed=(rc == 0),
-            message=stdout.strip() if rc == 0 else f"pg_dump not found: {stderr.strip()}",
+            message=stdout.strip()
+            if rc == 0
+            else f"pg_dump not found: {stderr.strip()}",
         )
     )
 
@@ -334,7 +372,9 @@ def check_config(
         CheckResult(
             name="pg_restore_available",
             passed=(rc == 0),
-            message=stdout.strip() if rc == 0 else f"pg_restore not found: {stderr.strip()}",
+            message=stdout.strip()
+            if rc == 0
+            else f"pg_restore not found: {stderr.strip()}",
         )
     )
 
@@ -356,7 +396,9 @@ def check_config(
                 CheckResult(
                     name="helm_backup_schedule",
                     passed=(parts_count == 5),
-                    message=f"Schedule: {schedule}" if parts_count == 5 else f"Invalid cron schedule ({parts_count} fields): {schedule}",
+                    message=f"Schedule: {schedule}"
+                    if parts_count == 5
+                    else f"Invalid cron schedule ({parts_count} fields): {schedule}",
                 )
             )
             # Retention
@@ -413,17 +455,22 @@ def trigger_backup(
     # Ensure backup directory exists
     Path(backup_dir).mkdir(parents=True, exist_ok=True)
 
-    env = {"PGPASSWORD": parts["password"]}
+    env = _connection_env(parts)
     cmd = [
         "pg_dump",
-        "-h", parts["host"],
-        "-p", parts["port"],
-        "-U", parts["user"],
-        "-d", parts["dbname"],
+        "-h",
+        parts["host"],
+        "-p",
+        parts["port"],
+        "-U",
+        parts["user"],
+        "-d",
+        parts["dbname"],
         "--no-password",
         "--format=custom",
         "--compress=6",
-        "-f", output_path,
+        "-f",
+        output_path,
     ]
 
     logger.info("Running pg_dump: %s -> %s", parts["dbname"], output_path)
@@ -541,22 +588,18 @@ def verify_backup_file(
 
     # Size check
     if size < min_size_bytes:
-        errors.append(
-            f"File too small: {size} bytes (minimum: {min_size_bytes})"
-        )
+        errors.append(f"File too small: {size} bytes (minimum: {min_size_bytes})")
 
     # Age check
     if age_hours > max_age_hours:
-        errors.append(
-            f"File too old: {age_hours:.1f}h (maximum: {max_age_hours}h)"
-        )
+        errors.append(f"File too old: {age_hours:.1f}h (maximum: {max_age_hours}h)")
 
     # pg_restore --list check
     rc, stdout, stderr = run_command(
         ["pg_restore", "--list", str(fp)],
         timeout=120,
     )
-    info.pg_restore_list_ok = (rc == 0)
+    info.pg_restore_list_ok = rc == 0
     if rc == 0:
         tables = []
         for line in stdout.splitlines():
@@ -625,8 +668,12 @@ def restore_test(
     errors = []
     checks = []
     parts = parse_database_url(database_url)
-    env = {"PGPASSWORD": parts["password"]}
-    temp_db = f"ocr_restore_test_{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    env = _connection_env(parts)
+    schema = os.environ.get("DATABASE_SCHEMA", "").strip()
+    if schema and not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", schema):
+        raise ValueError("DATABASE_SCHEMA must be a valid lowercase PostgreSQL schema identifier")
+    temp_db = f"ocr_restore_test_{uuid.uuid4().hex}"
+    created = False
 
     # Find latest backup
     files = find_backup_files(backup_dir)
@@ -658,11 +705,19 @@ def restore_test(
         rc, stdout, stderr = run_command(
             [
                 "psql",
-                "-h", parts["host"],
-                "-p", parts["port"],
-                "-U", parts["user"],
-                "-d", "postgres",
-                "-c", f"CREATE DATABASE {temp_db} OWNER {parts['user']};",
+                "-X",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-h",
+                parts["host"],
+                "-p",
+                parts["port"],
+                "-U",
+                parts["user"],
+                "-d",
+                "postgres",
+                "-c",
+                f"CREATE DATABASE {temp_db} OWNER {_sql_identifier(parts['user'])};",
             ],
             timeout=30,
             env=env,
@@ -670,6 +725,8 @@ def restore_test(
         if rc != 0:
             errors.append(f"Failed to create temp database: {stderr.strip()}")
             return False, checks, errors
+
+        created = True
 
         checks.append(
             CheckResult(
@@ -683,10 +740,14 @@ def restore_test(
         rc, stdout, stderr = run_command(
             [
                 "pg_restore",
-                "-h", parts["host"],
-                "-p", parts["port"],
-                "-U", parts["user"],
-                "-d", temp_db,
+                "-h",
+                parts["host"],
+                "-p",
+                parts["port"],
+                "-U",
+                parts["user"],
+                "-d",
+                temp_db,
                 "--no-owner",
                 "--no-acl",
                 latest,
@@ -694,14 +755,18 @@ def restore_test(
             timeout=3600,
             env=env,
         )
-        # pg_restore can return non-zero for warnings (e.g., extension issues),
-        # so we check stderr for actual errors
-        restore_ok = rc == 0 or "ERROR" not in stderr
+        # A restore is successful only when pg_restore reports success.  Its
+        # stderr is diagnostic output, not a substitute for the exit status:
+        # a lower-case error or a warning-only nonzero exit must not be
+        # mistaken for a usable database.
+        restore_ok = rc == 0
         checks.append(
             CheckResult(
                 name="restore_completed",
                 passed=restore_ok,
-                message="Restore completed" if restore_ok else f"Restore had errors: {stderr[:200]}",
+                message="Restore completed"
+                if restore_ok
+                else f"Restore had errors: {stderr[:200]}",
             )
         )
 
@@ -711,15 +776,25 @@ def restore_test(
 
         # 3. Compare row counts for key tables
         for table_name in EXPECTED_TABLES:
+            table_ref = f"{_sql_identifier(schema)}.{_sql_identifier(table_name)}" if schema else _sql_identifier(table_name)
             # Source count
             rc_src, stdout_src, _ = run_command(
                 [
                     "psql",
-                    "-h", parts["host"],
-                    "-p", parts["port"],
-                    "-U", parts["user"],
-                    "-d", parts["dbname"],
-                    "-t", "-c", f"SELECT count(*) FROM {table_name};",
+                "-X",
+                "-v",
+                "ON_ERROR_STOP=1",
+                    "-h",
+                    parts["host"],
+                    "-p",
+                    parts["port"],
+                    "-U",
+                    parts["user"],
+                    "-d",
+                    parts["dbname"],
+                    "-t",
+                    "-c",
+                    f"SELECT count(*) FROM {table_ref};",
                 ],
                 timeout=30,
                 env=env,
@@ -728,11 +803,20 @@ def restore_test(
             rc_dst, stdout_dst, _ = run_command(
                 [
                     "psql",
-                    "-h", parts["host"],
-                    "-p", parts["port"],
-                    "-U", parts["user"],
-                    "-d", temp_db,
-                    "-t", "-c", f"SELECT count(*) FROM {table_name};",
+                "-X",
+                "-v",
+                "ON_ERROR_STOP=1",
+                    "-h",
+                    parts["host"],
+                    "-p",
+                    parts["port"],
+                    "-U",
+                    parts["user"],
+                    "-d",
+                    temp_db,
+                    "-t",
+                    "-c",
+                    f"SELECT count(*) FROM {table_ref};",
                 ],
                 timeout=30,
                 env=env,
@@ -750,7 +834,7 @@ def restore_test(
 
             src_count = stdout_src.strip()
             dst_count = stdout_dst.strip()
-            match = (src_count == dst_count)
+            match = bool(re.fullmatch(r"[0-9]+", src_count)) and src_count == dst_count
             checks.append(
                 CheckResult(
                     name=f"row_count_{table_name}",
@@ -766,29 +850,39 @@ def restore_test(
                 )
 
     finally:
-        # 4. Drop temporary database
-        rc, _, stderr = run_command(
-            [
-                "psql",
-                "-h", parts["host"],
-                "-p", parts["port"],
-                "-U", parts["user"],
-                "-d", "postgres",
-                "-c", f"DROP DATABASE IF EXISTS {temp_db};",
-            ],
-            timeout=30,
-            env=env,
-        )
-        if rc == 0:
-            checks.append(
-                CheckResult(
-                    name="temp_db_dropped",
-                    passed=True,
-                    message=f"Temporary database dropped: {temp_db}",
-                )
+        # Never drop a database unless this invocation created it.
+        if created:
+            # 4. Drop temporary database
+            rc, _, stderr = run_command(
+                [
+                    "psql",
+                "-X",
+                "-v",
+                "ON_ERROR_STOP=1",
+                    "-h",
+                    parts["host"],
+                    "-p",
+                    parts["port"],
+                    "-U",
+                    parts["user"],
+                    "-d",
+                    "postgres",
+                    "-c",
+                    f"DROP DATABASE IF EXISTS {temp_db};",
+                ],
+                timeout=30,
+                env=env,
             )
-        else:
-            errors.append(f"Failed to drop temp database {temp_db}: {stderr.strip()}")
+            if rc == 0:
+                checks.append(
+                    CheckResult(
+                        name="temp_db_dropped",
+                        passed=True,
+                        message=f"Temporary database dropped: {temp_db}",
+                    )
+                )
+            else:
+                errors.append(f"Failed to drop temp database {temp_db}: {stderr.strip()}")
 
     success = all(c.passed for c in checks) and not errors
     return success, checks, errors
@@ -849,7 +943,11 @@ def generate_report(
         "max_age_hours": max_age_hours,
         "checks_passed": checks_passed,
         "checks_total": checks_total,
-        "overall_health": "HEALTHY" if (valid_files > 0 and recent_files > 0 and checks_passed == checks_total) else "DEGRADED" if valid_files > 0 else "CRITICAL",
+        "overall_health": "HEALTHY"
+        if (valid_files > 0 and recent_files > 0 and checks_passed == checks_total)
+        else "DEGRADED"
+        if valid_files > 0
+        else "CRITICAL",
     }
 
     return report
@@ -890,8 +988,12 @@ def write_report_markdown(report: ValidationReport, output_dir: str) -> str:
     lines.append(f"| Overall Health | **{s.get('overall_health', 'UNKNOWN')}** |")
     lines.append(f"| Total Backup Files | {s.get('total_backup_files', 0)} |")
     lines.append(f"| Valid Backup Files | {s.get('valid_backup_files', 0)} |")
-    lines.append(f"| Recent (< {s.get('max_age_hours', DEFAULT_MAX_AGE_HOURS)}h) | {s.get('recent_backup_files', 0)} |")
-    lines.append(f"| Config Checks | {s.get('checks_passed', 0)}/{s.get('checks_total', 0)} passed |")
+    lines.append(
+        f"| Recent (< {s.get('max_age_hours', DEFAULT_MAX_AGE_HOURS)}h) | {s.get('recent_backup_files', 0)} |"
+    )
+    lines.append(
+        f"| Config Checks | {s.get('checks_passed', 0)}/{s.get('checks_total', 0)} passed |"
+    )
     lines.append("")
 
     # Config checks
@@ -908,8 +1010,12 @@ def write_report_markdown(report: ValidationReport, output_dir: str) -> str:
     if report.backup_files:
         lines.append("## Backup Files")
         lines.append("")
-        lines.append("| File | Size | Age (h) | Format | pg_restore | Tables | Errors |")
-        lines.append("|------|------|---------|--------|------------|--------|--------|")
+        lines.append(
+            "| File | Size | Age (h) | Format | pg_restore | Tables | Errors |"
+        )
+        lines.append(
+            "|------|------|---------|--------|------------|--------|--------|"
+        )
         for b in report.backup_files:
             size_mb = b["size_bytes"] / (1024 * 1024)
             fmt_ok = "OK" if b["is_valid_format"] else "BAD"
@@ -943,7 +1049,7 @@ def write_report_markdown(report: ValidationReport, output_dir: str) -> str:
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
-        description="PostgreSQL backup validation for EDCOCR",
+        description="PostgreSQL backup validation for OCR_LOCAL",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -1065,13 +1171,16 @@ def main(argv: Optional[list] = None) -> int:
 
     # Require at least one mode
     if not any([args.check, args.backup, args.verify, args.restore_test, args.report]):
-        parser.error("At least one mode is required: --check, --backup, --verify, --restore-test, --report")
+        parser.error(
+            "At least one mode is required: --check, --backup, --verify, --restore-test, --report"
+        )
 
     # Load Helm values if specified
     helm_values = None
     if args.helm_values:
         try:
             import yaml
+
             with open(args.helm_values, encoding="utf-8") as f:
                 helm_values = yaml.safe_load(f)
         except ImportError:
@@ -1109,8 +1218,13 @@ def main(argv: Optional[list] = None) -> int:
             )
             if success:
                 if info:
-                    logger.info("  Backup: %s (%d bytes)", info.filename, info.size_bytes)
-                    logger.info("  pg_restore --list: %s", "OK" if info.pg_restore_list_ok else "FAIL")
+                    logger.info(
+                        "  Backup: %s (%d bytes)", info.filename, info.size_bytes
+                    )
+                    logger.info(
+                        "  pg_restore --list: %s",
+                        "OK" if info.pg_restore_list_ok else "FAIL",
+                    )
                 else:
                     logger.info("  [DRY RUN] Backup skipped")
             else:
@@ -1133,7 +1247,11 @@ def main(argv: Optional[list] = None) -> int:
             status = "OK" if (info.pg_restore_list_ok and not info.errors) else "FAIL"
             logger.info(
                 "  [%s] %s  size=%d  age=%.1fh  tables=%d",
-                status, info.filename, info.size_bytes, info.age_hours, info.table_count,
+                status,
+                info.filename,
+                info.size_bytes,
+                info.age_hours,
+                info.table_count,
             )
             for err in info.errors:
                 logger.warning("    - %s", err)
@@ -1174,7 +1292,9 @@ def main(argv: Optional[list] = None) -> int:
         md_path = write_report_markdown(report, args.output_dir)
         logger.info("  JSON report: %s", json_path)
         logger.info("  Markdown report: %s", md_path)
-        logger.info("  Overall health: %s", report.summary.get("overall_health", "UNKNOWN"))
+        logger.info(
+            "  Overall health: %s", report.summary.get("overall_health", "UNKNOWN")
+        )
         if report.summary.get("overall_health") == "CRITICAL":
             exit_code = 1
 

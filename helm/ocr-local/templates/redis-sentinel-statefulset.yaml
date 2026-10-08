@@ -1,3 +1,6 @@
+{{- if and .Values.productionMode .Values.redis.sentinel.enabled }}
+{{- fail "Redis Sentinel is not a production-safe chart mode until every Redis consumer uses Sentinel-aware configuration; supply an operator-managed Sentinel overlay" }}
+{{- end }}
 {{- if and .Values.redis.enabled .Values.redis.sentinel.enabled }}
 # =============================================================================
 # Redis Sentinel Headless Service
@@ -19,6 +22,27 @@ spec:
   selector:
     {{- include "ocr-local.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: redis-sentinel
+---
+# =============================================================================
+# Redis Replica Headless Service
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-redis-replica
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-replica
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+  selector:
+    {{- include "ocr-local.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-replica
 ---
 # =============================================================================
 # Redis Replica StatefulSet
@@ -43,13 +67,14 @@ spec:
         {{- include "ocr-local.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redis-replica
     spec:
+      {{- include "ocr-local.haScheduling" (dict "root" . "component" "redis-replica") | nindent 6 }}
       {{- with .Values.redis.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: redis-replica
-          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          image: {{ include "ocr-local.imageRef" (dict "image" .Values.redis.image "defaultTag" "" "requireDigest" .Values.image.requireDigest "name" "redis") | quote }}
           imagePullPolicy: IfNotPresent
           command:
             - sh
@@ -137,13 +162,14 @@ spec:
         {{- include "ocr-local.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redis-sentinel
     spec:
+      {{- include "ocr-local.haScheduling" (dict "root" . "component" "redis-sentinel") | nindent 6 }}
       {{- with .Values.redis.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: sentinel
-          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          image: {{ include "ocr-local.imageRef" (dict "image" .Values.redis.image "defaultTag" "" "requireDigest" .Values.image.requireDigest "name" "redis-sentinel") | quote }}
           imagePullPolicy: IfNotPresent
           command:
             - sh
@@ -151,6 +177,8 @@ spec:
             - |
               cat > /tmp/sentinel.conf <<CONF
               port 26379
+              sentinel resolve-hostnames yes
+              sentinel announce-hostnames yes
               sentinel monitor {{ .Values.redis.sentinel.masterName }} {{ .Release.Name }}-redis 6379 {{ .Values.redis.sentinel.quorum }}
               sentinel auth-pass {{ .Values.redis.sentinel.masterName }} $(REDIS_PASSWORD)
               sentinel down-after-milliseconds {{ .Values.redis.sentinel.masterName }} {{ .Values.redis.sentinel.downAfterMs }}

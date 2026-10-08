@@ -1,4 +1,4 @@
-"""Comprehensive tests for custody_hooks.py (, TEST-003).
+"""Comprehensive tests for custody_hooks.py (maintenance review, TEST-003).
 
 Covers all public functions, error paths, hash-chain integrity under
 failures, edge cases, and forensic audit trail error scenarios.
@@ -7,6 +7,8 @@ failures, edge cases, and forensic audit trail error scenarios.
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from custody import CustodyChain, compute_file_hash
 from custody_hooks import (
@@ -25,6 +27,7 @@ from custody_hooks import (
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
 
 class TestEventTypeConstants:
     """Verify event type constants are correct strings."""
@@ -51,6 +54,7 @@ class TestEventTypeConstants:
 # ---------------------------------------------------------------------------
 # record_transform_lifecycle -- happy paths
 # ---------------------------------------------------------------------------
+
 
 class TestRecordTransformLifecycleSuccess:
     """Happy-path tests for record_transform_lifecycle."""
@@ -239,6 +243,7 @@ class TestRecordTransformLifecycleSuccess:
 # record_transform_lifecycle -- failure paths
 # ---------------------------------------------------------------------------
 
+
 class TestRecordTransformLifecycleFailure:
     """Tests for transform failure scenarios."""
 
@@ -367,6 +372,7 @@ class TestRecordTransformLifecycleFailure:
 # record_transform_lifecycle -- hash error paths
 # ---------------------------------------------------------------------------
 
+
 class TestRecordTransformHashErrors:
     """Tests for file hash computation failures in transform lifecycle."""
 
@@ -479,6 +485,7 @@ class TestRecordTransformHashErrors:
 # ---------------------------------------------------------------------------
 # record_stamp_lifecycle -- happy paths
 # ---------------------------------------------------------------------------
+
 
 class TestRecordStampLifecycleSuccess:
     """Happy-path tests for record_stamp_lifecycle."""
@@ -631,6 +638,7 @@ class TestRecordStampLifecycleSuccess:
 # record_stamp_lifecycle -- failure paths
 # ---------------------------------------------------------------------------
 
+
 class TestRecordStampLifecycleFailure:
     """Tests for stamp failure scenarios."""
 
@@ -723,6 +731,7 @@ class TestRecordStampLifecycleFailure:
 # record_stamp_lifecycle -- hash error paths
 # ---------------------------------------------------------------------------
 
+
 class TestRecordStampHashErrors:
     """Tests for hash computation failures in stamp lifecycle."""
 
@@ -766,19 +775,73 @@ class TestRecordStampHashErrors:
 # create_custody_chain_for_operation
 # ---------------------------------------------------------------------------
 
+
 class TestCreateCustodyChainForOperation:
     """Tests for create_custody_chain_for_operation factory."""
 
     def test_creates_chain_with_hash_based_id(self, tmp_path):
-        """When input file exists, document_id is first 16 chars of hash."""
+        """When input file exists, document_id binds path + content + stat."""
+        from custody_hooks import _operation_document_id
+
         inp = tmp_path / "source.pdf"
         inp.write_bytes(b"hello-forensic")
 
         chain = create_custody_chain_for_operation(str(inp))
 
-        expected_hash = compute_file_hash(str(inp))
-        assert chain.document_id == expected_hash[:16]
+        assert chain.document_id == _operation_document_id(str(inp))
+        assert chain.document_id != compute_file_hash(str(inp))[:16]
         assert chain.source_path == str(inp)
+
+    def test_explicit_document_id_wins(self, tmp_path):
+        inp = tmp_path / "source.pdf"
+        inp.write_bytes(b"hello-forensic")
+        chain = create_custody_chain_for_operation(
+            str(inp), document_id="jobboundabcdef01"
+        )
+        assert chain.document_id == "jobboundabcdef01"
+
+    @pytest.mark.parametrize(
+        "document_id",
+        ["", "../evil", "nested/evil", r"nested\evil", " spaced", "x" * 129],
+    )
+    def test_explicit_document_id_rejects_pathlike_or_unsafe_values(
+        self,
+        tmp_path,
+        document_id,
+    ):
+        inp = tmp_path / "source.pdf"
+        inp.write_bytes(b"hello-forensic")
+        custody_dir = tmp_path / "custody"
+
+        with pytest.raises(ValueError, match="filename-safe"):
+            create_custody_chain_for_operation(
+                str(inp),
+                str(custody_dir),
+                document_id=document_id,
+            )
+
+        assert not custody_dir.exists()
+
+    def test_explicit_document_ids_are_not_truncated_into_one_chain(self, tmp_path):
+        inp = tmp_path / "source.pdf"
+        inp.write_bytes(b"hello-forensic")
+        custody_dir = tmp_path / "custody"
+        prefix = "same-first-sixteen"
+        first_id = f"{prefix}-first"
+        second_id = f"{prefix}-second"
+
+        first = create_custody_chain_for_operation(
+            str(inp), str(custody_dir), document_id=first_id
+        )
+        second = create_custody_chain_for_operation(
+            str(inp), str(custody_dir), document_id=second_id
+        )
+        first.append_event("transform_start", {})
+        second.append_event("transform_start", {})
+
+        assert first.document_id == first_id
+        assert second.document_id == second_id
+        assert len(list(custody_dir.glob("*.custody.jsonl"))) == 2
 
     def test_creates_chain_with_custody_dir(self, tmp_path):
         """When custody_dir is provided, chain writes to disk."""
@@ -800,24 +863,10 @@ class TestCreateCustodyChainForOperation:
 
         assert chain._filepath is None
 
-    def test_fallback_id_when_file_missing(self):
-        """When input file does not exist, uses filename-based ID."""
-        chain = create_custody_chain_for_operation("/nonexistent/report.pdf")
-
-        assert chain.document_id == "report_pdf"
-        assert chain.source_path == "/nonexistent/report.pdf"
-
-    def test_fallback_id_strips_path_components(self):
-        """Fallback ID uses only basename, not full path."""
-        chain = create_custody_chain_for_operation("/a/b/c/document.tiff")
-
-        assert chain.document_id == "document_tiff"
-
-    def test_fallback_id_replaces_dots(self):
-        """Fallback ID replaces dots with underscores."""
-        chain = create_custody_chain_for_operation("/path/my.report.v2.pdf")
-
-        assert chain.document_id == "my_report_v2_pdf"
+    def test_missing_file_fails_closed(self):
+        """Missing input must not fall back to a colliding basename id."""
+        with pytest.raises(ValueError, match="cannot establish forensic document_id"):
+            create_custody_chain_for_operation("/nonexistent/report.pdf")
 
     def test_chain_is_functional_after_creation(self, tmp_path):
         """Returned chain can immediately record events."""
@@ -845,15 +894,17 @@ class TestCreateCustodyChainForOperation:
         assert len(jsonl_files) == 1
 
     @patch("custody_hooks.compute_file_hash", side_effect=IOError("read error"))
-    def test_ioerror_triggers_fallback(self, mock_hash):
-        """IOError from compute_file_hash triggers filename fallback."""
-        chain = create_custody_chain_for_operation("/some/file.pdf")
-        assert chain.document_id == "file_pdf"
+    def test_ioerror_fails_closed(self, mock_hash, tmp_path):
+        inp = tmp_path / "file.pdf"
+        inp.write_bytes(b"data")
+        with pytest.raises(ValueError, match="cannot establish forensic document_id"):
+            create_custody_chain_for_operation(str(inp))
 
 
 # ---------------------------------------------------------------------------
 # get_custody_diagnostics_summary
 # ---------------------------------------------------------------------------
+
 
 class TestGetCustodyDiagnosticsSummary:
     """Tests for get_custody_diagnostics_summary."""
@@ -879,6 +930,21 @@ class TestGetCustodyDiagnosticsSummary:
         assert summary["output_hash"] == "def456"
         assert summary["custody_chain_hash"] == "chain789"
         assert "custody_errors" not in summary
+
+    def test_compromised_diagnostics_are_not_reported_as_recorded(self):
+        diag = {
+            "operation_type": "transform",
+            "operation_id": "clean_pages",
+            "custody_recorded": False,
+            "custody_durable": False,
+            "custody_integrity_compromised": True,
+        }
+
+        summary = get_custody_diagnostics_summary(diag)
+
+        assert summary["custody_recorded"] is False
+        assert summary["custody_durable"] is False
+        assert summary["custody_integrity_compromised"] is True
 
     def test_failure_diagnostics_no_output_hash(self):
         """Summary from a failed lifecycle has no output_hash."""
@@ -970,10 +1036,52 @@ class TestGetCustodyDiagnosticsSummary:
         assert summary["operation_id"] is None
         assert "custody_errors" not in summary
 
+    def test_memory_only_lifecycle_is_explicitly_non_durable(self, tmp_path):
+        inp = tmp_path / "in.pdf"
+        out = tmp_path / "out.pdf"
+        inp.write_bytes(b"input")
+        out.write_bytes(b"output")
+
+        diagnostics = record_transform_lifecycle(
+            custody_chain=CustodyChain("memory_doc", str(inp)),
+            operation_id="clean",
+            input_path=str(inp),
+            output_path=str(out),
+            params={},
+            success=True,
+        )
+
+        summary = get_custody_diagnostics_summary(diagnostics)
+        assert summary["custody_recorded"] is True
+        assert summary["custody_durable"] is False
+        assert summary["custody_integrity_compromised"] is False
+
+    def test_disk_backed_lifecycle_is_marked_durable(self, tmp_path):
+        inp = tmp_path / "in.pdf"
+        out = tmp_path / "out.pdf"
+        custody_dir = tmp_path / "custody"
+        inp.write_bytes(b"input")
+        out.write_bytes(b"output")
+
+        diagnostics = record_transform_lifecycle(
+            custody_chain=CustodyChain("durable_doc", str(inp), str(custody_dir)),
+            operation_id="clean",
+            input_path=str(inp),
+            output_path=str(out),
+            params={},
+            success=True,
+        )
+
+        summary = get_custody_diagnostics_summary(diagnostics)
+        assert summary["custody_recorded"] is True
+        assert summary["custody_durable"] is True
+        assert summary["custody_integrity_compromised"] is False
+
 
 # ---------------------------------------------------------------------------
 # Integration: chained transform + stamp on same chain
 # ---------------------------------------------------------------------------
+
 
 class TestChainedOperations:
     """Tests for multiple operations on the same custody chain."""
@@ -1085,6 +1193,7 @@ class TestChainedOperations:
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestEdgeCases:
     """Edge cases and boundary conditions."""
@@ -1277,6 +1386,7 @@ class TestEdgeCases:
 # Interaction with custody chain disk persistence
 # ---------------------------------------------------------------------------
 
+
 class TestCustodyHooksWithDiskPersistence:
     """Verify custody_hooks functions work with disk-backed chains."""
 
@@ -1355,6 +1465,7 @@ class TestCustodyHooksWithDiskPersistence:
 # ---------------------------------------------------------------------------
 # Mock-based tests for append_event interaction
 # ---------------------------------------------------------------------------
+
 
 class TestAppendEventInteraction:
     """Verify custody_hooks calls append_event with correct arguments."""

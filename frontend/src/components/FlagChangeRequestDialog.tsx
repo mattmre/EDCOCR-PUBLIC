@@ -49,7 +49,7 @@ const METHOD_GUIDANCE: Record<CertifyAuthMethod, string> = {
 export interface FlagChangeRequestDialogProps {
   flag: FeatureFlag;
   open: boolean;
-  onClose: => void;
+  onClose: () => void;
   onSubmitted: (entry: FeatureFlagHistoryEntry) => void;
 }
 

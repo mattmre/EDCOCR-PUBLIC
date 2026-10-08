@@ -1,6 +1,6 @@
 """Tests for the root-level ``translation`` shim module -- Plan B M1-PR5.
 
-The shim follows the  Phase 2 sys.modules-replacement pattern,
+The shim follows the maintenance review Phase 2 sys.modules-replacement pattern,
 preserving access to private/underscore-prefixed names that other
 re-export patterns drop.
 """

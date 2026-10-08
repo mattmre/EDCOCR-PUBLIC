@@ -26,12 +26,12 @@ def _isolate_api(tmp_path):
             "API_DB_PATH": db_file,
             "OCR_QUEUE_THRESHOLDS_PATH": thresholds_file,
         },
-    ), patch("api.config.DB_PATH", db_file), patch("api.database.DB_PATH", db_file), \
-        patch("api.config.OCR_API_KEY", ""), \
-        patch("api.config.ALLOW_UNAUTHENTICATED", True), \
-        patch("api.config.ANONYMOUS_ROLE", "admin"), \
-        patch("api.auth.OCR_API_KEY", ""), \
-        patch("api.auth.ALLOW_UNAUTHENTICATED", True), \
+    ), patch("api.config.DB_PATH", db_file), patch("api.database.DB_PATH", db_file),\
+        patch("api.config.OCR_API_KEY", ""),\
+        patch("api.config.ALLOW_UNAUTHENTICATED", True),\
+        patch("api.config.ANONYMOUS_ROLE", "admin"),\
+        patch("api.auth.OCR_API_KEY", ""),\
+        patch("api.auth.ALLOW_UNAUTHENTICATED", True),\
         patch("api.auth.ANONYMOUS_ROLE", "admin"):
         import api.queue_alerting as queue_alerting
 

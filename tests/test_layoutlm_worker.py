@@ -389,7 +389,7 @@ class TestRunLayoutLMExtractionDirect:
         mock_job_cls.DoesNotExist = type("DoesNotExist", (Exception,), {})
         mock_job_cls.objects.get.side_effect = mock_job_cls.DoesNotExist("not found")
 
-        with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True), \
+        with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True),\
              mock.patch.object(task_mod, "Job", mock_job_cls):
             result = task_mod.run_layoutlm_extraction.__wrapped__(
                 mock_self, "nonexistent-job", 1,
@@ -421,10 +421,10 @@ class TestRunLayoutLMExtractionDirect:
 
             mock_job.nfs_job_path = job_path
 
-            with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True), \
-                 mock.patch.object(task_mod, "Job") as mock_job_cls, \
+            with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True),\
+                 mock.patch.object(task_mod, "Job") as mock_job_cls,\
                  mock.patch.object(task_mod, "_get_backend_for_job",
-                                   return_value=mock.MagicMock(backend_name="nfs")), \
+                                   return_value=mock.MagicMock(backend_name="nfs")),\
                  mock.patch.object(task_mod, "Worker"):
                 mock_job_cls.objects.get.return_value = mock_job
 
@@ -475,15 +475,15 @@ class TestRunLayoutLMExtractionDirect:
             mock_image = mock.MagicMock()
             mock_image.size = (612, 792)
 
-            with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True), \
-                 mock.patch.object(task_mod, "Job") as mock_job_cls, \
+            with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True),\
+                 mock.patch.object(task_mod, "Job") as mock_job_cls,\
                  mock.patch.object(task_mod, "_get_backend_for_job",
-                                   return_value=mock.MagicMock(backend_name="nfs")), \
+                                   return_value=mock.MagicMock(backend_name="nfs")),\
                  mock.patch.object(task_mod, "_render_page_image",
-                                   return_value=mock_image), \
-                 mock.patch.object(task_mod, "Worker"), \
-                 mock.patch.object(task_mod, "CustodyEvent"), \
-                 mock.patch.object(task_mod, "LAYOUTLM_CONFIDENCE_THRESHOLD", 0.5), \
+                                   return_value=mock_image),\
+                 mock.patch.object(task_mod, "Worker"),\
+                 mock.patch.object(task_mod, "CustodyEvent"),\
+                 mock.patch.object(task_mod, "LAYOUTLM_CONFIDENCE_THRESHOLD", 0.5),\
                  mock.patch.dict("sys.modules",
                                  {"semantic_extraction": types.ModuleType("semantic_extraction")}):
                 mock_job_cls.objects.get.return_value = mock_job
@@ -559,20 +559,20 @@ class TestRunLayoutLMExtractionDirect:
             mock_image = mock.MagicMock()
             mock_image.size = (612, 792)
 
-            with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True), \
-                 mock.patch.object(task_mod, "Job") as mock_job_cls, \
+            with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True),\
+                 mock.patch.object(task_mod, "Job") as mock_job_cls,\
                  mock.patch.object(task_mod, "_get_backend_for_job",
-                                   return_value=mock.MagicMock(backend_name="nfs")), \
+                                   return_value=mock.MagicMock(backend_name="nfs")),\
                  mock.patch.object(task_mod, "_render_page_image",
-                                   return_value=mock_image), \
-                 mock.patch.object(task_mod, "Worker"), \
-                 mock.patch.object(task_mod, "CustodyEvent"), \
-                 mock.patch.object(task_mod, "LAYOUTLM_CONFIDENCE_THRESHOLD", 0.5), \
+                                   return_value=mock_image),\
+                 mock.patch.object(task_mod, "Worker"),\
+                 mock.patch.object(task_mod, "CustodyEvent"),\
+                 mock.patch.object(task_mod, "LAYOUTLM_CONFIDENCE_THRESHOLD", 0.5),\
                  mock.patch.object(
                      task_mod,
                      "resolve_active_model_selection",
                      return_value=selection,
-                 ), \
+                 ),\
                  mock.patch.dict("sys.modules",
                                  {"semantic_extraction": types.ModuleType("semantic_extraction")}):
                 mock_job_cls.objects.get.return_value = mock_job
@@ -640,19 +640,19 @@ class TestRunLayoutLMExtractionDirect:
             mock_image = mock.MagicMock()
             mock_image.size = (612, 792)
 
-            with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True), \
-                 mock.patch.object(task_mod, "Job") as mock_job_cls, \
+            with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True),\
+                 mock.patch.object(task_mod, "Job") as mock_job_cls,\
                  mock.patch.object(task_mod, "_get_backend_for_job",
-                                   return_value=mock.MagicMock(backend_name="nfs")), \
+                                   return_value=mock.MagicMock(backend_name="nfs")),\
                  mock.patch.object(task_mod, "_render_page_image",
-                                   return_value=mock_image), \
-                 mock.patch.object(task_mod, "Worker"), \
-                 mock.patch.object(task_mod, "CustodyEvent"), \
+                                   return_value=mock_image),\
+                 mock.patch.object(task_mod, "Worker"),\
+                 mock.patch.object(task_mod, "CustodyEvent"),\
                  mock.patch.object(
                      task_mod,
                      "resolve_active_model_selection",
                      return_value=selection,
-                 ), \
+                 ),\
                  mock.patch.dict("sys.modules",
                                  {"semantic_extraction": types.ModuleType("semantic_extraction")}):
                 mock_job_cls.objects.get.return_value = mock_job
@@ -697,13 +697,13 @@ class TestRunLayoutLMExtractionDirect:
             mock_image = mock.MagicMock()
             mock_image.size = (612, 792)
 
-            with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True), \
-                 mock.patch.object(task_mod, "Job") as mock_job_cls, \
+            with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True),\
+                 mock.patch.object(task_mod, "Job") as mock_job_cls,\
                  mock.patch.object(task_mod, "_get_backend_for_job",
-                                   return_value=mock.MagicMock(backend_name="nfs")), \
+                                   return_value=mock.MagicMock(backend_name="nfs")),\
                  mock.patch.object(task_mod, "_render_page_image",
-                                   return_value=mock_image), \
-                 mock.patch.object(task_mod, "Worker"), \
+                                   return_value=mock_image),\
+                 mock.patch.object(task_mod, "Worker"),\
                  mock.patch("builtins.__import__",
                             side_effect=_import_blocker("semantic_extraction")):
                 mock_job_cls.objects.get.return_value = mock_job
@@ -764,15 +764,15 @@ class TestRunLayoutLMExtractionDirect:
             mock_image = mock.MagicMock()
             mock_image.size = (612, 792)
 
-            with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True), \
-                 mock.patch.object(task_mod, "Job") as mock_job_cls, \
+            with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True),\
+                 mock.patch.object(task_mod, "Job") as mock_job_cls,\
                  mock.patch.object(task_mod, "_get_backend_for_job",
-                                   return_value=mock.MagicMock(backend_name="nfs")), \
+                                   return_value=mock.MagicMock(backend_name="nfs")),\
                  mock.patch.object(task_mod, "_render_page_image",
-                                   return_value=mock_image), \
-                 mock.patch.object(task_mod, "Worker"), \
-                 mock.patch.object(task_mod, "CustodyEvent"), \
-                 mock.patch.object(task_mod, "LAYOUTLM_CONFIDENCE_THRESHOLD", 0.5), \
+                                   return_value=mock_image),\
+                 mock.patch.object(task_mod, "Worker"),\
+                 mock.patch.object(task_mod, "CustodyEvent"),\
+                 mock.patch.object(task_mod, "LAYOUTLM_CONFIDENCE_THRESHOLD", 0.5),\
                  mock.patch.dict("sys.modules",
                                  {"semantic_extraction": types.ModuleType("semantic_extraction")}):
                 mock_job_cls.objects.get.return_value = mock_job
@@ -806,8 +806,8 @@ class TestRunLayoutLMExtractionDirect:
         # Make job.status == job.Status.CANCELLED return True
         mock_job.Status.CANCELLED = "cancelled"
 
-        with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True), \
-             mock.patch.object(task_mod, "Job") as mock_job_cls, \
+        with mock.patch.object(task_mod, "ENABLE_LAYOUTLM", True),\
+             mock.patch.object(task_mod, "Job") as mock_job_cls,\
              mock.patch.object(task_mod, "Worker"):
             mock_job_cls.objects.get.return_value = mock_job
 

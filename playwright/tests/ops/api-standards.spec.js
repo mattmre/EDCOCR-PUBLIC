@@ -17,14 +17,16 @@ const {
 const API_AUTH_REQUIRED = getExpectedFlag("PLAYWRIGHT_EXPECT_API_AUTH_REQUIRED");
 const METRICS_AUTH_REQUIRED = getExpectedFlag("PLAYWRIGHT_EXPECT_METRICS_AUTH_REQUIRED");
 
-test.describe("Phase 8 operational standards", => {
+test.describe("Phase 8 operational standards", () => {
   test.skip(
     !hasEnv("PLAYWRIGHT_API_BASE_URL"),
-    "Set PLAYWRIGHT_API_BASE_URL to run Phase 8 API operational tests.");
+    "Set PLAYWRIGHT_API_BASE_URL to run Phase 8 API operational tests.",
+  );
 
   test.skip(
     API_AUTH_REQUIRED === null,
-    "Set PLAYWRIGHT_EXPECT_API_AUTH_REQUIRED to declare the local API auth posture.");
+    "Set PLAYWRIGHT_EXPECT_API_AUTH_REQUIRED to declare the local API auth posture.",
+  );
 
   test("FastAPI exempt and protected paths reflect expected auth policy", async ({ request, baseURL }) => {
     const healthResponse = await request.get(`${baseURL}/api/v1/health`);
@@ -53,7 +55,8 @@ test.describe("Phase 8 operational standards", => {
   test("job submit preserves processing timeout override", async ({ request, baseURL }) => {
     test.skip(
       !hasPrimaryApiKey() && API_AUTH_REQUIRED,
-      "Set PLAYWRIGHT_OCR_API_KEY or PLAYWRIGHT_FEATURE_FLAGS_API_KEY for auth-required timeout coverage.");
+      "Set PLAYWRIGHT_OCR_API_KEY or PLAYWRIGHT_FEATURE_FLAGS_API_KEY for auth-required timeout coverage.",
+    );
 
     const submitResponse = await submitJobUpload(request, baseURL, {
       processing_timeout_minutes: "7",
@@ -73,7 +76,8 @@ test.describe("Phase 8 operational standards", => {
   test("batch submit preserves processing timeout override", async ({ request, baseURL }) => {
     test.skip(
       !hasPrimaryApiKey() && API_AUTH_REQUIRED,
-      "Set PLAYWRIGHT_OCR_API_KEY or PLAYWRIGHT_FEATURE_FLAGS_API_KEY for auth-required timeout coverage.");
+      "Set PLAYWRIGHT_OCR_API_KEY or PLAYWRIGHT_FEATURE_FLAGS_API_KEY for auth-required timeout coverage.",
+    );
 
     const submitResponse = await submitBatchUpload(request, baseURL, {
       processing_timeout_minutes: "9",
@@ -84,21 +88,24 @@ test.describe("Phase 8 operational standards", => {
 
     const statusResponse = await request.get(
       `${baseURL}/api/v1/jobs/batch/${submitted.batch_id}`,
-      { headers: buildPrimaryApiHeaders() });
+      { headers: buildPrimaryApiHeaders() },
+    );
     expect(statusResponse.status()).toBe(200);
     const payload = await statusResponse.json();
     expect(payload.settings.processing_timeout_minutes).toBe(9);
   });
 });
 
-test.describe("Phase 8 coordinator metrics auth", => {
+test.describe("Phase 8 coordinator metrics auth", () => {
   test.skip(
     !hasEnv("PLAYWRIGHT_COORDINATOR_BASE_URL"),
-    "Set PLAYWRIGHT_COORDINATOR_BASE_URL to run coordinator operational tests.");
+    "Set PLAYWRIGHT_COORDINATOR_BASE_URL to run coordinator operational tests.",
+  );
 
   test.skip(
     METRICS_AUTH_REQUIRED === null,
-    "Set PLAYWRIGHT_EXPECT_METRICS_AUTH_REQUIRED to declare the local coordinator metrics auth posture.");
+    "Set PLAYWRIGHT_EXPECT_METRICS_AUTH_REQUIRED to declare the local coordinator metrics auth posture.",
+  );
 
   test("metrics endpoint reflects expected auth mode", async ({ request }) => {
     const metricsUrl = `${process.env.PLAYWRIGHT_COORDINATOR_BASE_URL}/api/v1/metrics/`;
@@ -114,7 +121,8 @@ test.describe("Phase 8 coordinator metrics auth", => {
 
     test.skip(
       !hasMetricsKey(),
-      "Set PLAYWRIGHT_METRICS_API_KEY for metrics auth-required coverage.");
+      "Set PLAYWRIGHT_METRICS_API_KEY for metrics auth-required coverage.",
+    );
 
     expect(unauthenticatedResponse.status()).toBe(401);
     expect((await unauthenticatedResponse.json()).error).toBe("Unauthorized");
@@ -144,7 +152,8 @@ test.describe("Phase 8 coordinator metrics auth", => {
 
     test.skip(
       !hasMetricsKey(),
-      "Set PLAYWRIGHT_METRICS_API_KEY for Prometheus auth-required coverage.");
+      "Set PLAYWRIGHT_METRICS_API_KEY for Prometheus auth-required coverage.",
+    );
 
     expect(unauthenticatedResponse.status()).toBe(401);
     expect((await unauthenticatedResponse.json()).error).toBe("Unauthorized");

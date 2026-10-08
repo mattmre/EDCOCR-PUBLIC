@@ -24,7 +24,11 @@ CHART_PATH = REPO_ROOT / "helm" / "ocr-local"
 
 MIN_SECRETS = {
     "secrets.djangoSecretKey": "test-django-key",
+    "secrets.apiKey": "test-api-key",
     "secrets.postgresPassword": "test-pg",
+    "secrets.webhookSecretKey": "test-webhook",
+    "secrets.piiEncryptionKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "secrets.celeryTaskSigningKey": "test-signing",
     "secrets.rabbitmqPassword": "test-rmq",
     "secrets.redisPassword": "test-redis",
     "secrets.flowerPassword": "test-flower",
@@ -61,9 +65,7 @@ def _resource(docs: list[dict], kind: str, suffix: str) -> dict | None:
     return None
 
 
-pytestmark = pytest.mark.skipif(
-    not _helm_available(), reason="helm CLI not on PATH"
-)
+pytestmark = pytest.mark.skipif(not _helm_available(), reason="helm CLI not on PATH")
 
 
 # ---------------------------------------------------------------------------
@@ -94,8 +96,10 @@ def test_chart_default_discovery_block_is_disabled():
 # ---------------------------------------------------------------------------
 def test_federation_enabled_discovery_disabled_renders_no_cronjob():
     rendered = _helm_template(
-        "--set", "federation.enabled=true",
-        "--set", "federation.clusterName=test-local",
+        "--set",
+        "federation.enabled=true",
+        "--set",
+        "federation.clusterName=test-local",
     )
     docs = _parse_docs(rendered)
     assert _resource(docs, "CronJob", "-federation-discovery") is None
@@ -107,10 +111,14 @@ def test_federation_enabled_discovery_disabled_renders_no_cronjob():
 # ---------------------------------------------------------------------------
 def _enabled_template_args() -> list[str]:
     return [
-        "--set", "federation.enabled=true",
-        "--set", "federation.clusterName=test-local",
-        "--set", "federation.discovery.enabled=true",
-        "--set", "federation.discovery.domain=clusters.example.com",
+        "--set",
+        "federation.enabled=true",
+        "--set",
+        "federation.clusterName=test-local",
+        "--set",
+        "federation.discovery.enabled=true",
+        "--set",
+        "federation.discovery.domain=clusters.example.com",
     ]
 
 
@@ -127,9 +135,7 @@ def test_cronjob_command_invokes_discovery_module():
     rendered = _helm_template(*_enabled_template_args())
     docs = _parse_docs(rendered)
     cj = _resource(docs, "CronJob", "-federation-discovery")
-    container = cj["spec"]["jobTemplate"]["spec"]["template"]["spec"][
-        "containers"
-    ][0]
+    container = cj["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
     assert container["command"] == [
         "python",
         "-m",
@@ -141,50 +147,39 @@ def test_cronjob_env_carries_required_vars():
     rendered = _helm_template(*_enabled_template_args())
     docs = _parse_docs(rendered)
     cj = _resource(docs, "CronJob", "-federation-discovery")
-    container = cj["spec"]["jobTemplate"]["spec"]["template"]["spec"][
-        "containers"
-    ][0]
+    container = cj["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
     env = {e["name"]: e for e in container.get("env", [])}
     assert env["OCR_FEDERATION_DISCOVERY_ENABLED"]["value"] == "true"
+    assert env["OCR_FEDERATION_DISCOVERY_DOMAIN"]["value"] == "clusters.example.com"
     assert (
-        env["OCR_FEDERATION_DISCOVERY_DOMAIN"]["value"]
-        == "clusters.example.com"
-    )
-    assert (
-        env["OCR_FEDERATION_DISCOVERY_SERVICE_TYPE"]["value"]
-        == "_ocr-federation._tcp"
+        env["OCR_FEDERATION_DISCOVERY_SERVICE_TYPE"]["value"] == "_ocr-federation._tcp"
     )
     # Namespace is always sourced from the downward API.
-    assert env["OCR_FEDERATION_DISCOVERY_NAMESPACE"]["valueFrom"][
-        "fieldRef"
-    ]["fieldPath"] == "metadata.namespace"
     assert (
-        env["OCR_FEDERATION_DISCOVERY_CONFIGMAP"]["value"]
-        == "federation-clusters"
+        env["OCR_FEDERATION_DISCOVERY_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"]
+        == "metadata.namespace"
     )
+    assert env["OCR_FEDERATION_DISCOVERY_CONFIGMAP"]["value"] == "federation-clusters"
     assert env["OCR_FEDERATION_DISCOVERY_DRY_RUN"]["value"] == "false"
 
 
 def test_cronjob_dry_run_overrides_propagate():
     rendered = _helm_template(
         *_enabled_template_args(),
-        "--set", "federation.discovery.dryRun=true",
-        "--set", "federation.discovery.schedule=0 * * * *",
+        "--set",
+        "federation.discovery.dryRun=true",
+        "--set",
+        "federation.discovery.schedule=0 * * * *",
         "--set",
         "federation.discovery.configmapName=custom-fed-clusters",
     )
     docs = _parse_docs(rendered)
     cj = _resource(docs, "CronJob", "-federation-discovery")
     assert cj["spec"]["schedule"] == "0 * * * *"
-    container = cj["spec"]["jobTemplate"]["spec"]["template"]["spec"][
-        "containers"
-    ][0]
+    container = cj["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
     env = {e["name"]: e for e in container.get("env", [])}
     assert env["OCR_FEDERATION_DISCOVERY_DRY_RUN"]["value"] == "true"
-    assert (
-        env["OCR_FEDERATION_DISCOVERY_CONFIGMAP"]["value"]
-        == "custom-fed-clusters"
-    )
+    assert env["OCR_FEDERATION_DISCOVERY_CONFIGMAP"]["value"] == "custom-fed-clusters"
 
 
 def test_rbac_role_grants_scoped_to_named_configmap():

@@ -10,10 +10,11 @@ async function submitLifecycleJob(request, baseURL) {
   return expectJobSubmitResponse(submitResponse);
 }
 
-test.describe("OCR job lifecycle request contracts", => {
+test.describe("OCR job lifecycle request contracts", () => {
   test.skip(
     !hasEnv("PLAYWRIGHT_API_BASE_URL"),
-    "Set PLAYWRIGHT_API_BASE_URL to run request-level API lifecycle tests.");
+    "Set PLAYWRIGHT_API_BASE_URL to run request-level API lifecycle tests.",
+  );
 
   test("@smoke upload submit appears in list and status", async ({ request, baseURL }) => {
     const submitted = await submitLifecycleJob(request, baseURL);

@@ -281,7 +281,7 @@ def validate_compartment_id(
         if "compartment_id" in line and "var." not in line:
             if COMPARTMENT_OCID_PATTERN.search(line):
                 findings.append(ValidationFinding(
-                    rule="OKE-CO",
+                    rule="OKE-COMP-001",
                     severity="warning",
                     message="Hardcoded compartment OCID found; use variable reference",
                     file=file_path,

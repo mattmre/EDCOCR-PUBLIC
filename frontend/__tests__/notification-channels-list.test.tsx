@@ -18,17 +18,17 @@ function mkChannel(overrides: Partial<NotificationChannel>): NotificationChannel
   };
 }
 
-describe("<NotificationChannelsList />", => {
+describe("<NotificationChannelsList />", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("renders an empty-state when no channels are configured", => {
+  it("renders an empty-state when no channels are configured", () => {
     render(<NotificationChannelsList channels={[]} />);
     expect(screen.getByTestId("channels-empty")).toBeInTheDocument();
   });
 
-  it("renders one row per channel with redacted target text", => {
+  it("renders one row per channel with redacted target text", () => {
     const channels = [
       mkChannel({ id: "ch_slack", type: "slack", target: "#ops-alerts" }),
       mkChannel({
@@ -59,7 +59,7 @@ describe("<NotificationChannelsList />", => {
     expect(hookTarget).not.toContain("secret");
   });
 
-  it("redactChannelTarget shape per channel type", => {
+  it("redactChannelTarget shape per channel type", () => {
     expect(redactChannelTarget("slack", "#ops-alerts")).toMatch(/^#o\*+s$/);
     expect(redactChannelTarget("email", "alice@example.com")).toMatch(
       /\*+e@example\.com/
@@ -70,7 +70,7 @@ describe("<NotificationChannelsList />", => {
     expect(redactChannelTarget("webhook", "not-a-url")).toMatch(/\*\*\*/);
   });
 
-  it("shows PASS with a fresh timestamp when test-channel succeeds", async => {
+  it("shows PASS with a fresh timestamp when test-channel succeeds", async () => {
     const onTest = vi.fn().mockResolvedValue({ ok: true });
     render(
       <NotificationChannelsList
@@ -90,7 +90,7 @@ describe("<NotificationChannelsList />", => {
     });
   });
 
-  it("shows FAIL when the test-channel callback returns ok=false", async => {
+  it("shows FAIL when the test-channel callback returns ok=false", async () => {
     const onTest = vi
       .fn()
       .mockResolvedValue({ ok: false, message: "401 from slack" });
@@ -110,14 +110,14 @@ describe("<NotificationChannelsList />", => {
     });
   });
 
-  it("renders the test button as disabled when no onTest handler is supplied", => {
+  it("renders the test button as disabled when no onTest handler is supplied", () => {
     render(
       <NotificationChannelsList channels={[mkChannel({ id: "ch_slack" })]} />
     );
     expect(screen.getByTestId("channel-test-ch_slack")).toBeDisabled();
   });
 
-  it("renders the disabled state for channels with enabled=false", => {
+  it("renders the disabled state for channels with enabled=false", () => {
     render(
       <NotificationChannelsList
         channels={[mkChannel({ id: "ch_slack", enabled: false })]}
@@ -127,7 +127,7 @@ describe("<NotificationChannelsList />", => {
     expect(row.textContent).toContain("disabled");
   });
 
-  it("falls back to last_test_at when no fresh result has been recorded", => {
+  it("falls back to last_test_at when no fresh result has been recorded", () => {
     const channel = mkChannel({
       id: "ch_slack",
       last_test_at: "2026-04-26T12:00:00Z",

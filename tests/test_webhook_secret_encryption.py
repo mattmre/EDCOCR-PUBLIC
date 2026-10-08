@@ -1,4 +1,4 @@
-"""Tests for webhook secret at-rest encryption (SEC-001 / ).
+"""Tests for webhook secret at-rest encryption (SEC-001 / maintenance review).
 
 Verifies that:
 - Secrets round-trip correctly through encrypt/decrypt
@@ -16,11 +16,19 @@ from unittest.mock import patch
 
 import pytest
 
-from api.database import Batch, Job, get_engine
+from api.database import Batch, Job, get_engine, reset_engine
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_database_engine():
+    """Keep per-test SQLite paths explicit under the binding guard."""
+    reset_engine()
+    yield
+    reset_engine()
 
 
 @pytest.fixture()
@@ -29,6 +37,7 @@ def _fixed_key():
     with patch.dict(os.environ, {"WEBHOOK_SECRET_KEY": "test-encryption-key-fixed"}):
         # Reload config module-level vars so helpers pick up the patched value
         import api.config as cfg
+
         original_key = cfg.WEBHOOK_SECRET_KEY
         cfg.WEBHOOK_SECRET_KEY = "test-encryption-key-fixed"
         yield
@@ -80,6 +89,7 @@ class TestEncryptDecryptRoundTrip:
 
         cfg.WEBHOOK_SECRET_KEY = "key-alpha"
         from api.config import encrypt_webhook_secret
+
         ct1 = encrypt_webhook_secret(plaintext)
 
         cfg.WEBHOOK_SECRET_KEY = "key-beta"
@@ -97,6 +107,7 @@ class TestEncryptDecryptRoundTrip:
 
         cfg.WEBHOOK_SECRET_KEY = "original-key"
         from api.config import decrypt_webhook_secret, encrypt_webhook_secret
+
         ciphertext = encrypt_webhook_secret("my-secret")
 
         # Switch key — decryption should fail and return ciphertext as-is
@@ -276,6 +287,7 @@ class TestKeyDerivation:
 
         cfg.WEBHOOK_SECRET_KEY = "deterministic-test"
         from api.config import _get_webhook_encryption_key
+
         key1 = _get_webhook_encryption_key()
         key2 = _get_webhook_encryption_key()
         assert key1 == key2
@@ -289,6 +301,7 @@ class TestKeyDerivation:
         cfg.OCR_API_KEY = "my-api-key-fallback"
 
         from api.config import _get_webhook_encryption_key
+
         key = _get_webhook_encryption_key()
         assert len(key) == 44  # base64-encoded 32 bytes
 
@@ -302,6 +315,7 @@ class TestKeyDerivation:
         cfg.OCR_API_KEY = ""
 
         from api.config import _get_webhook_encryption_key
+
         key = _get_webhook_encryption_key()
         # Should still produce a valid key (from "dev-key-not-for-production")
         assert len(key) == 44

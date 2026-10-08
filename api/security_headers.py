@@ -11,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from api.config import CSP_POLICY
+from api.versioning import get_version_header
 
 # Paths serving Swagger UI / ReDoc that need inline styles/scripts
 _DOCS_PATHS = frozenset({"/docs", "/openapi.json", "/redoc"})
@@ -38,6 +39,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         for header, value in _STATIC_HEADERS.items():
+            response.headers[header] = value
+
+        # The registry's advertised compatibility metadata must be present on
+        # live responses, not merely available to callers of a helper.
+        for header, value in get_version_header().items():
             response.headers[header] = value
 
         # Apply CSP only on non-docs paths

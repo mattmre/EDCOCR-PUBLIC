@@ -7,6 +7,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from api.config import MAX_PROCESSING_TIMEOUT_MINUTES
+
 # ---------------------------------------------------------------------------
 # Request
 # ---------------------------------------------------------------------------
@@ -16,24 +18,31 @@ class JobSubmitRequest(BaseModel):
     """Body fields for job submission (used alongside optional file upload)."""
 
     source_path: Optional[str] = Field(
-        None, description="Server-side path to source document."
+        None,
+        max_length=512,
+        description="Server-side path to source document.",
     )
     priority: Literal["urgent", "normal", "low"] = "normal"
     enable_docintel: bool = False
     docintel_mode: Literal["layout_only", "tables_only", "full"] = "full"
     skip_ocr: bool = Field(
-        False, description="Skip the primary OCR engine step. Only supported if the document is a native PDF with embedded text or if relying entirely on NLP extraction."
+        False,
+        description="Skip the primary OCR engine step. Only supported if the document is a native PDF with embedded text or if relying entirely on NLP extraction.",
     )
     processing_timeout_minutes: Optional[int] = Field(
         None,
         ge=1,
+        le=MAX_PROCESSING_TIMEOUT_MINUTES,
         description="Optional per-job processing timeout override in minutes.",
     )
     webhook_url: Optional[str] = Field(
-        None, description="HTTPS URL to receive job completion notifications."
+        None,
+        max_length=2_048,
+        description="HTTPS URL to receive job completion notifications.",
     )
     webhook_secret: Optional[str] = Field(
         None,
+        max_length=256,
         description="HMAC secret for signing webhook payloads (write-only).",
     )
 
@@ -83,6 +92,7 @@ class JobStatusResponse(BaseModel):
     progress: Optional[JobProgress] = None
     settings: dict[str, Any] = {}
     webhook_status: Optional[str] = None
+    error_message: Optional[str] = None
 
 
 class JobListResponse(BaseModel):
@@ -123,6 +133,8 @@ class DetailedHealthResponse(HealthResponse):
     """Extended health response with subsystem checks."""
 
     checks: dict[str, SubsystemCheck] = {}
+    # An omitted/tenant-scoped snapshot must never be interpreted as zero work.
+    drain: dict[str, Any] | None = None
 
 
 class ErrorResponse(BaseModel):
@@ -217,16 +229,22 @@ class ReviewDecisionRequest(BaseModel):
     """Body for submitting a review decision."""
 
     status: Literal["approved", "rejected", "reprocess"]
-    reviewer: str = ""
-    notes: str = ""
+    reviewer: str = Field(default="", max_length=4096)
+    notes: str = Field(default="", max_length=4096)
 
 
 class ReviewCertifyRequest(BaseModel):
     """Body for certifying an approved review item with strong-auth evidence."""
 
     auth_method: Literal["piv_cac", "oidc_mfa", "hardware_token"]
-    auth_token: str = Field(..., min_length=1)
-    notes: str = ""
+    auth_token: str = Field(..., min_length=1, max_length=4096)
+    notes: str = Field(default="", max_length=2000)
+    # RC-08: real custody event id from prior emission (not synthetic waiver:*)
+    custody_event_id: str = Field(
+        default="",
+        max_length=128,
+        description="Custody event id linking certification (required for forensic certify)",
+    )
 
 
 # ---------------------------------------------------------------------------

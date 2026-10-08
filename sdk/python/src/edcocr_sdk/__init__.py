@@ -1,10 +1,10 @@
-"""EDCOCR SDK -- Python client for the forensic-grade OCR pipeline.
+"""OCR_LOCAL SDK -- Python client for the forensic-grade OCR pipeline.
 
-Quick start::
+Quick start (set OCR_API_KEY in the environment)::
 
     from edcocr_sdk import EDCOCRClient
 
-    with EDCOCRClient("http://localhost:8000", api_key="my-key") as client:
+    with EDCOCRClient("http://localhost:8000", api_key=os.environ["OCR_API_KEY"]) as client:
         job = client.submit_job("document.pdf")
         result = client.wait_for_completion(job.job_id)
         print(result.status)
@@ -13,7 +13,9 @@ For async usage::
 
     from edcocr_sdk import AsyncEDCOCRClient
 
-    async with AsyncEDCOCRClient("http://localhost:8000", api_key="k") as client:
+    async with AsyncEDCOCRClient(
+        "http://localhost:8000", api_key=os.environ["OCR_API_KEY"]
+    ) as client:
         job = await client.submit_job("document.pdf")
         result = await client.wait_for_completion(job.job_id)
 """
@@ -44,7 +46,7 @@ from edcocr_sdk.models import (
     Priority,
 )
 
-__version__ = "4.1.0"
+__version__ = "4.2.0-rc.1"
 
 __all__ = [
     # Clients

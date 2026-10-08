@@ -1,0 +1,15 @@
+{
+  "name": "solo",
+  "num_extractors": 4,
+  "num_workers": 4,
+  "num_compressors": 2,
+  "image_queue_size": 25,
+  "chunk_queue_size": 12,
+  "dpi": 300,
+  "description": "Single-machine SOLO defaults (matches docker-compose.solo.yml spirit)",
+  "topology_class": "solo",
+  "honest_limits": [
+    "Single-host. Pair with OCR_AUTO_TUNE for host-specific refine."
+  ],
+  "extra": {}
+}

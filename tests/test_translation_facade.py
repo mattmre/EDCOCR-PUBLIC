@@ -7,6 +7,53 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
+from ocr_local.translation.models import EngineCapability, SpanTranslation
+
+
+class _RealOutputTestEngine:
+    capability = EngineCapability(
+        id="test-real-output",
+        is_local=True,
+        is_cloud=False,
+        supports_pairs="any",
+        quality_class="standard",
+        latency_class="standard",
+        license="internal-test",
+        provider_retention_class="local_only",
+        deployment_envs=["test"],
+    )
+
+    def translate_spans(self, spans, src, tgt):
+        return [
+            SpanTranslation(
+                span_id=span.get("span_id", f"s{index}"),
+                source_text=span["text"],
+                target_text=f"translated:{span['text']}",
+                source_bbox=span.get("bbox", [0.0, 0.0, 100.0, 12.0]),
+                source_bboxes=[span.get("bbox", [0.0, 0.0, 100.0, 12.0])],
+                source_language=src,
+                target_language=tgt,
+                confidence=1.0,
+                quality_score=None,
+                engine_id=self.capability.id,
+            )
+            for index, span in enumerate(spans)
+        ]
+
+    def model_provenance(self):
+        return {"weights_sha256": "test-fixture"}
+
+
+@pytest.fixture
+def real_output_engine():
+    with patch(
+        "ocr_local.translation.api._instantiate_engine",
+        return_value=_RealOutputTestEngine(),
+    ):
+        yield
+
 
 def test_translate_document_empty_snap():
     """page_data_snap=None -> still returns one doc per target with 0 pages."""
@@ -23,7 +70,7 @@ def test_translate_document_empty_snap():
     assert result[0].pages == []
 
 
-def test_translate_document_with_snap():
+def test_translate_document_with_snap(real_output_engine):
     """page_data_snap with text_by_page -> returns docs with pages populated."""
     from ocr_local.translation.api import translate_document
 
@@ -38,7 +85,7 @@ def test_translate_document_with_snap():
     assert len(result[0].pages) == 2
 
 
-def test_facade_certified_false():
+def test_facade_certified_false(real_output_engine):
     """certified is never True for raw facade output."""
     from ocr_local.translation.api import translate_document
 
@@ -52,7 +99,7 @@ def test_facade_certified_false():
     assert all(d.certified is False for d in result)
 
 
-def test_facade_tenant_policy_hash_in_custody():
+def test_facade_tenant_policy_hash_in_custody(real_output_engine):
     from ocr_local.translation.api import translate_document
 
     snap = {"text_by_page": {1: "x"}}
@@ -108,7 +155,7 @@ def test_facade_fails_open_on_policy_denied():
     assert result == []
 
 
-def test_facade_emits_chars_metric():
+def test_facade_emits_chars_metric(real_output_engine):
     """record_translation_chars is called with the per-engine total."""
     from ocr_local.translation.api import translate_document
 
@@ -128,7 +175,7 @@ def test_facade_emits_chars_metric():
     assert args[0] == "default"
 
 
-def test_facade_multiple_languages():
+def test_facade_multiple_languages(real_output_engine):
     from ocr_local.translation.api import translate_document
 
     snap = {"text_by_page": {1: "hi"}}
@@ -141,7 +188,7 @@ def test_facade_multiple_languages():
     assert {d.target_language for d in result} == {"fr", "de"}
 
 
-def test_facade_processing_timestamp_set():
+def test_facade_processing_timestamp_set(real_output_engine):
     """processing.timestamp is an ISO-8601 string ending with Z."""
     from ocr_local.translation.api import translate_document
 
@@ -159,7 +206,7 @@ def test_facade_processing_timestamp_set():
     assert "T" in ts
 
 
-def test_facade_schema_version_1_0():
+def test_facade_schema_version_1_0(real_output_engine):
     from ocr_local.translation.api import translate_document
 
     snap = {"text_by_page": {1: "hi"}}

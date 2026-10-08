@@ -1,3 +1,5 @@
+> Design/reference material. Optional deployment and feature claims require the acceptance checks in [candidate scope](../release-candidate.md).
+
 # International OCR Limitations
 
 The low-resource language tranche expands the model baseline beyond the

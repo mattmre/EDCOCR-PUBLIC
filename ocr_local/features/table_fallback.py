@@ -24,7 +24,6 @@ and returns safe defaults on failure.
 from __future__ import annotations
 
 import datetime
-import json
 import logging
 import os
 from dataclasses import asdict, dataclass, field
@@ -34,7 +33,8 @@ from PIL import Image, ImageEnhance, ImageFilter
 
 from ocr_distributed.ocr_utils import (
     build_sidecar_base_name,
-    sanitize_path_segment,
+    resolve_safe_output_subfolder,
+    write_json_atomic,
 )
 
 logger = logging.getLogger(__name__)
@@ -573,30 +573,7 @@ def write_table_fallback_json(
     """
     try:
         fallback_dir = os.path.join(output_folder, "EXPORT", "TABLE_FALLBACK")
-
-        if subfolder and subfolder != ".":
-            safe_parts = [
-                s
-                for s in (
-                    sanitize_path_segment(p)
-                    for p in subfolder.replace("\\", "/").split("/")
-                    if p
-                )
-                if s
-            ]
-            target_dir = (
-                os.path.join(fallback_dir, *safe_parts) if safe_parts else fallback_dir
-            )
-        else:
-            target_dir = fallback_dir
-
-        # Path traversal protection
-        resolved = os.path.realpath(target_dir)
-        if not resolved.startswith(os.path.realpath(fallback_dir)):
-            logger.error(
-                "Path traversal blocked in table fallback output: %s", subfolder
-            )
-            return None
+        target_dir = resolve_safe_output_subfolder(fallback_dir, subfolder)
 
         os.makedirs(target_dir, exist_ok=True)
 
@@ -625,8 +602,7 @@ def write_table_fallback_json(
             "pages": summary.pages,
         }
 
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2, ensure_ascii=False, default=str)
+        write_json_atomic(json_path, report, allowed_root=fallback_dir)
 
         return json_path
     except Exception as exc:

@@ -84,7 +84,8 @@ def project_root(tmp_path: Path) -> Path:
 def env_file(tmp_path: Path) -> Path:
     """Create a sample .env file."""
     p = tmp_path / ".env"
-    p.write_text(textwrap.dedent("""\
+    p.write_text(
+        textwrap.dedent("""\
         DJANGO_SECRET_KEY=test-secret-key-12345
         POSTGRES_PASSWORD=supersecret
         RABBITMQ_PASSWORD=rabbitpass
@@ -93,7 +94,8 @@ def env_file(tmp_path: Path) -> Path:
         OCR_TASK_ROUTING=cpu
         ENABLE_PER_GPU_QUEUES=true
         GPU_COUNT=4
-    """))
+    """)
+    )
     return p
 
 
@@ -228,7 +230,7 @@ class TestEnvHelpers:
 
     def test_load_env_file_quoted_values(self, tmp_path: Path) -> None:
         p = tmp_path / ".env"
-        p.write_text('KEY1="double quoted"\nKEY2=\'single quoted\'\n')
+        p.write_text("KEY1=\"double quoted\"\nKEY2='single quoted'\n")
         env = load_env_file(p)
         assert env["KEY1"] == "double quoted"
         assert env["KEY2"] == "single quoted"
@@ -271,14 +273,20 @@ class TestValidateEnvVars:
         assert all(r.status == "pass" for r in results)
 
     def test_distributed_gpu_missing_vars(self) -> None:
-        results = validate_env_vars(TOPOLOGY_DISTRIBUTED_GPU, {})
+        # ``validate_env_vars`` intentionally supplements an override with
+        # process environment values.  Clear that ambient source so this test
+        # actually exercises the all-missing contract under a broad-suite run.
+        with patch.dict(os.environ, {}, clear=True):
+            results = validate_env_vars(TOPOLOGY_DISTRIBUTED_GPU, {})
         failed = [r for r in results if r.status == "fail"]
         assert len(failed) == len(REQUIRED_ENV[TOPOLOGY_DISTRIBUTED_GPU])
 
     def test_single_cpu_routing_set(self) -> None:
         env = {"OCR_TASK_ROUTING": "cpu"}
         results = validate_env_vars(TOPOLOGY_SINGLE_CPU, env)
-        assert any(r.status == "pass" and "OCR_TASK_ROUTING" in r.message for r in results)
+        assert any(
+            r.status == "pass" and "OCR_TASK_ROUTING" in r.message for r in results
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +382,14 @@ class TestValidateTools:
         results = validate_tools(TOPOLOGY_SINGLE_GPU)
         assert any(r.status == "fail" and r.name == "docker" for r in results)
 
-    @patch("shutil.which", side_effect=lambda cmd: "/usr/bin/kubectl" if cmd == "kubectl" else "/usr/bin/helm" if cmd == "helm" else None)
+    @patch(
+        "shutil.which",
+        side_effect=lambda cmd: "/usr/bin/kubectl"
+        if cmd == "kubectl"
+        else "/usr/bin/helm"
+        if cmd == "helm"
+        else None,
+    )
     def test_kubernetes_tools(self, mock_which: MagicMock) -> None:
         results = validate_tools(TOPOLOGY_KUBERNETES)
         assert any(r.status == "pass" and "kubectl" in r.name for r in results)
@@ -607,8 +622,12 @@ class TestCLI:
     """Tests for the main() CLI entry point."""
 
     @patch("scripts.validate_topology.detect_gpu_count", return_value=0)
-    def test_main_json_output(self, mock_gpu: MagicMock, capsys: pytest.CaptureFixture, project_root: Path) -> None:
-        exit_code = main(["--topology", "single-cpu", "--json", "--project-root", str(project_root)])
+    def test_main_json_output(
+        self, mock_gpu: MagicMock, capsys: pytest.CaptureFixture, project_root: Path
+    ) -> None:
+        exit_code = main(
+            ["--topology", "single-cpu", "--json", "--project-root", str(project_root)]
+        )
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert data["topology"] == "single-cpu"
@@ -617,22 +636,37 @@ class TestCLI:
         assert exit_code in (0, 1)
 
     @patch("scripts.validate_topology.detect_gpu_count", return_value=0)
-    def test_main_text_output(self, mock_gpu: MagicMock, capsys: pytest.CaptureFixture, project_root: Path) -> None:
+    def test_main_text_output(
+        self, mock_gpu: MagicMock, capsys: pytest.CaptureFixture, project_root: Path
+    ) -> None:
         main(["--topology", "kubernetes", "--project-root", str(project_root)])
         captured = capsys.readouterr()
         assert "Kubernetes" in captured.out
 
     @patch("scripts.validate_topology.detect_gpu_count", return_value=0)
-    def test_main_report_file(self, mock_gpu: MagicMock, tmp_path: Path, project_root: Path) -> None:
+    def test_main_report_file(
+        self, mock_gpu: MagicMock, tmp_path: Path, project_root: Path
+    ) -> None:
         report_path = tmp_path / "report.md"
-        main(["--topology", "kubernetes", "--report", str(report_path), "--project-root", str(project_root)])
+        main(
+            [
+                "--topology",
+                "kubernetes",
+                "--report",
+                str(report_path),
+                "--project-root",
+                str(project_root),
+            ]
+        )
         assert report_path.is_file()
         content = report_path.read_text(encoding="utf-8")
         assert "# Topology Validation Report" in content
 
     @patch("scripts.validate_topology.detect_gpu_count", return_value=1)
     def test_main_pass_exit_code(self, mock_gpu: MagicMock, project_root: Path) -> None:
-        exit_code = main(["--topology", "single-gpu", "--project-root", str(project_root)])
+        exit_code = main(
+            ["--topology", "single-gpu", "--project-root", str(project_root)]
+        )
         # May pass or fail depending on docker availability, but should not crash
         assert exit_code in (0, 1)
 
@@ -689,4 +723,6 @@ class TestEdgeCases:
     def test_multi_gpu_gpu_count_non_numeric(self) -> None:
         env = {"ENABLE_PER_GPU_QUEUES": "true", "GPU_COUNT": "not-a-number"}
         results = validate_env_values(TOPOLOGY_MULTI_GPU, env)
-        assert any(r.status == "fail" and "not a valid integer" in r.message for r in results)
+        assert any(
+            r.status == "fail" and "not a valid integer" in r.message for r in results
+        )

@@ -1,0 +1,38 @@
+{{- if .Values.fleetIngress.enabled }}
+{{- $host := required "fleetIngress.host is required when fleetIngress.enabled=true" .Values.fleetIngress.host -}}
+{{- if and .Values.ingress.enabled (eq $host .Values.ingress.host) -}}
+{{- fail "fleetIngress.host must differ from ingress.host to preserve the standalone API contract" -}}
+{{- end -}}
+{{- if not .Values.fleetIngress.tls -}}
+{{- fail "fleetIngress.tls must be true for external fleet admission" -}}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-fleet-ingress
+  labels:
+    {{- include "ocr-local.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fleet-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.fleetIngress.clusterIssuer | quote }}
+    {{- with .Values.fleetIngress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.fleetIngress.className }}
+  tls:
+    - hosts:
+        - {{ $host | quote }}
+      secretName: {{ default (printf "%s-fleet-tls" .Release.Name) .Values.fleetIngress.tlsSecretName }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /api/v1/jobs
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-coordinator
+                port:
+                  name: http
+{{- end }}

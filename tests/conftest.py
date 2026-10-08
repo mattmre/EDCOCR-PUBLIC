@@ -26,10 +26,16 @@ os.environ.setdefault("OCR_RATE_LIMIT", PERMISSIVE_RATE_LIMIT)
 # FastAPI app startup now requires explicit insecure override when OCR_API_KEY
 # is unset; keep test defaults explicit.
 os.environ.setdefault("ALLOW_UNAUTHENTICATED", "true")
-# Anonymous role defaults to "viewer" in production; set to "admin" here so
-# existing tests that rely on admin-level anonymous access are unaffected.
-# Tests that specifically verify anonymous role behavior patch this explicitly.
-os.environ.setdefault("ANONYMOUS_ROLE", "admin")
+# API audit persistence is exercised by the dedicated audit test modules.  The
+# broad unit suite creates many short-lived apps without an output directory;
+# keep those tests from accidentally targeting the production default
+# ``/app/ocr_output`` while leaving the product default enabled for real
+# processes and allowing audit-specific fixtures to opt back in.
+os.environ.setdefault("API_AUDIT_LOG_ENABLED", "0")
+# S2-10: production-like default is viewer. Tests that need anonymous admin
+# must set ANONYMOUS_ROLE=admin explicitly (fixture / monkeypatch / module
+# top) — suite-wide admin was authz evidence pollution (R4 conftest theater).
+os.environ.setdefault("ANONYMOUS_ROLE", "viewer")
 
 # Pre-import slowapi and its dependency chain (limits → slowapi.extension)
 # to prevent "partially initialized module" circular-import errors when
@@ -63,13 +69,27 @@ if importlib.util.find_spec("pytesseract") is None and "pytesseract" not in sys.
 
 
 @pytest.fixture(autouse=True)
+def _isolate_background_writer_registry(monkeypatch):
+    """Keep captured/mock writers from leaking into another test's lifespan.
+
+    Each test still exercises the real reservation/drain implementation. Tests
+    that intentionally capture a Thread or Future without executing its target
+    must not make later, unrelated API clients wait for those synthetic writers.
+    Real shutdown/ownership tests keep the same registry throughout their test.
+    """
+    import api.background_work as background_work
+
+    monkeypatch.setattr(background_work, "_pending", set())
+
+
+@pytest.fixture(autouse=True)
 def _reset_job_manager_singleton():
     """Clear the JobManager singleton between tests.
 
     Without this, the singleton created by one test's DB fixture would
     persist into the next test with a stale session factory.
 
-    worker threads are now non-daemon, so we must call shutdown()
+    maintenance review: worker threads are now non-daemon, so we must call shutdown()
     on any live singleton before clearing the reference to avoid leaking
     worker threads between tests.
 
@@ -122,8 +142,7 @@ def _isolate_db(tmp_path):
 
     reset_engine()
     db_file = str(tmp_path / "test_jobs.db")
-    with patch("api.config.DB_PATH", db_file), \
-         patch("api.database.DB_PATH", db_file):
+    with patch("api.config.DB_PATH", db_file), patch("api.database.DB_PATH", db_file):
         reset_engine()
         get_engine(db_file)
         yield
@@ -268,9 +287,17 @@ def sample_structure_data():
         1: {
             "layout_regions": [
                 {"type": "title", "bbox": [50, 10, 200, 40], "text": "INVOICE"},
-                {"type": "text", "bbox": [50, 50, 400, 210], "text": "Bill To: Acme Corporation"},
+                {
+                    "type": "text",
+                    "bbox": [50, 50, 400, 210],
+                    "text": "Bill To: Acme Corporation",
+                },
                 {"type": "table", "bbox": [50, 230, 500, 400], "text": ""},
-                {"type": "text", "bbox": [50, 410, 400, 500], "text": "Total: $8,586.00"},
+                {
+                    "type": "text",
+                    "bbox": [50, 410, 400, 500],
+                    "text": "Total: $8,586.00",
+                },
             ],
             "tables": [
                 {
@@ -282,10 +309,22 @@ def sample_structure_data():
         },
         2: {
             "layout_regions": [
-                {"type": "title", "bbox": [100, 10, 600, 45], "text": "UNITED STATES DISTRICT COURT"},
-                {"type": "title", "bbox": [100, 55, 500, 85], "text": "NORTHERN DISTRICT OF ILLINOIS"},
+                {
+                    "type": "title",
+                    "bbox": [100, 10, 600, 45],
+                    "text": "UNITED STATES DISTRICT COURT",
+                },
+                {
+                    "type": "title",
+                    "bbox": [100, 55, 500, 85],
+                    "text": "NORTHERN DISTRICT OF ILLINOIS",
+                },
                 {"type": "text", "bbox": [100, 100, 500, 180], "text": "Case details"},
-                {"type": "text", "bbox": [100, 190, 550, 400], "text": "Memorandum text"},
+                {
+                    "type": "text",
+                    "bbox": [100, 190, 550, 400],
+                    "text": "Memorandum text",
+                },
                 {"type": "text", "bbox": [100, 410, 500, 500], "text": "Conclusion"},
             ],
             "tables": [],

@@ -18,12 +18,31 @@ logs a warning and returns PaddleOCR text unchanged.
 """
 
 import logging
+import math
 import os
 import threading
 from dataclasses import dataclass, field
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _bounded_float_env(name, default, minimum, maximum):
+    try:
+        value = float(os.environ.get(name, str(default)) or str(default))
+    except (TypeError, ValueError):
+        value = default
+    if not math.isfinite(value):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _bounded_int_env(name, default, minimum, maximum):
+    try:
+        value = int(os.environ.get(name, str(default)) or str(default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 class _TorchPlaceholder:
@@ -47,13 +66,21 @@ VisionEncoderDecoderModel = None
 # ---------------------------------------------------------------------------
 
 ENABLE_TROCR = os.environ.get("ENABLE_TROCR", "").lower() in ("1", "true", "yes")
-TROCR_MODEL_PATH = os.environ.get("TROCR_MODEL_PATH", "microsoft/trocr-base-handwritten")
-TROCR_CONFIDENCE_THRESHOLD = float(os.environ.get("TROCR_CONFIDENCE_THRESHOLD", "0.85"))
-TROCR_AGREEMENT_MODE = os.environ.get("TROCR_AGREEMENT_MODE", "verify")  # verify, trust, reject
-TROCR_MAX_LENGTH = int(os.environ.get("TROCR_MAX_LENGTH", "256"))
+TROCR_MODEL_PATH = os.environ.get(
+    "TROCR_MODEL_PATH", "microsoft/trocr-base-handwritten"
+)
+TROCR_CONFIDENCE_THRESHOLD = _bounded_float_env(
+    "TROCR_CONFIDENCE_THRESHOLD", 0.85, 0.0, 1.0
+)
+TROCR_AGREEMENT_MODE = os.environ.get("TROCR_AGREEMENT_MODE", "verify").lower()
+if TROCR_AGREEMENT_MODE not in {"verify", "trust", "reject"}:
+    TROCR_AGREEMENT_MODE = "verify"
+TROCR_MAX_LENGTH = _bounded_int_env("TROCR_MAX_LENGTH", 256, 1, 4_096)
 
 # Minimum edit-distance similarity for "verify" mode agreement
-TROCR_AGREEMENT_THRESHOLD = float(os.environ.get("TROCR_AGREEMENT_THRESHOLD", "0.40"))
+TROCR_AGREEMENT_THRESHOLD = _bounded_float_env(
+    "TROCR_AGREEMENT_THRESHOLD", 0.40, 0.0, 1.0
+)
 
 # ---------------------------------------------------------------------------
 # Guarded imports
@@ -142,9 +169,9 @@ def compute_agreement_score(text_a: str, text_b: str) -> float:
         for j in range(1, len_b + 1):
             cost = 0 if a[i - 1] == b[j - 1] else 1
             curr[j] = min(
-                prev[j] + 1,       # deletion
-                curr[j - 1] + 1,   # insertion
-                prev[j - 1] + cost  # substitution
+                prev[j] + 1,  # deletion
+                curr[j - 1] + 1,  # insertion
+                prev[j - 1] + cost,  # substitution
             )
         prev, curr = curr, prev
 
@@ -164,7 +191,9 @@ class TrOCRRecognizer:
     safe for concurrent reads (PyTorch model.eval mode).
     """
 
-    def __init__(self, model_path: str = TROCR_MODEL_PATH, device: Optional[str] = None):
+    def __init__(
+        self, model_path: str = TROCR_MODEL_PATH, device: Optional[str] = None
+    ):
         self._model_path = model_path
         self._device = device
         self._processor = None
@@ -200,7 +229,9 @@ class TrOCRRecognizer:
             try:
                 logger.info("Loading TrOCR model from: %s", self._model_path)
                 self._processor = TrOCRProcessor.from_pretrained(self._model_path)
-                self._model = VisionEncoderDecoderModel.from_pretrained(self._model_path)
+                self._model = VisionEncoderDecoderModel.from_pretrained(
+                    self._model_path
+                )
 
                 # Determine device
                 if self._device is None:
@@ -212,7 +243,9 @@ class TrOCRRecognizer:
                 logger.info("TrOCR model loaded on device: %s", self._device)
                 return True
             except Exception as e:
-                logger.error("Failed to load TrOCR model from %s: %s", self._model_path, e)
+                logger.error(
+                    "Failed to load TrOCR model from %s: %s", self._model_path, e
+                )
                 self._load_failed = True
                 return False
 
@@ -252,7 +285,9 @@ class TrOCRRecognizer:
 
             # Decode text
             generated_ids = outputs.sequences
-            text = self._processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+            text = self._processor.batch_decode(
+                generated_ids, skip_special_tokens=True
+            )[0]
 
             # Compute confidence from scores
             confidence = _compute_sequence_confidence(outputs)

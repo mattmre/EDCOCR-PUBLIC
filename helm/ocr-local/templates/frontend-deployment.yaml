@@ -19,6 +19,7 @@ spec:
         app.kubernetes.io/component: frontend
     spec:
       serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      {{- include "ocr-local.imagePullSecrets" . | nindent 6 }}
       {{- with .Values.frontend.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -32,8 +33,10 @@ spec:
               containerPort: 3000
               protocol: TCP
           env:
-            - name: NEXT_PUBLIC_API_BASE_URL
+            - name: OCR_FRONTEND_API_BASE_URL
               value: {{ .Values.frontend.apiBaseUrl | quote }}
+            - name: OCR_FRONTEND_HTTPONLY_SESSION
+              value: {{ .Values.frontend.httpOnlySession | quote }}
           livenessProbe:
             httpGet:
               path: /

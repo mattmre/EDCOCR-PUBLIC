@@ -17,31 +17,41 @@ spec:
         {{- include "ocr-local.labels" . | nindent 8 }}
         app.kubernetes.io/component: coordinator
     spec:
-      serviceAccountName: {{ include "ocr-local.serviceAccountName" . }}
+      serviceAccountName: {{ include "ocr-local.controlPlaneServiceAccountName" . }}
+      {{- include "ocr-local.imagePullSecrets" . | nindent 6 }}
       terminationGracePeriodSeconds: {{ .Values.coordinatorTerminationGracePeriodSeconds | default 60 }}
+      {{- include "ocr-local.haScheduling" (dict "root" . "component" "coordinator") | nindent 6 }}
       {{- with .Values.coordinator.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
-        - name: migrate
+        {{- if ne .Values.coordinator.env.DATABASE_SCHEMA "public" }}
+        - name: ensure-database-schema
           image: {{ include "ocr-local.coordinatorImage" . }}
           imagePullPolicy: {{ .Values.image.coordinator.pullPolicy | default "IfNotPresent" }}
-          command: ["python", "manage.py", "migrate", "--noinput"]
-          envFrom:
-            - configMapRef:
-                name: {{ .Release.Name }}-config
-            - secretRef:
-                name: {{ .Release.Name }}-secret
+          command: ["python", "manage.py", "ensure_database_schema"]
+          {{- include "ocr-local.coordinatorEnvFrom" . | nindent 10 }}
+          env:
+            {{- include "ocr-local.coordinatorSecretEnv" . | nindent 12 }}
+          {{- if eq (include "ocr-local.hasClientCaVolumes" .) "true" }}
+          volumeMounts:
+            {{- include "ocr-local.tlsCaVolumeMount" . | nindent 12 }}
+          {{- end }}
           {{- with .Values.coordinator.containerSecurityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+        {{- end }}
+        {{- include "ocr-local.serializedMigrationInit" . | nindent 8 }}
       containers:
         - name: coordinator
           image: {{ include "ocr-local.coordinatorImage" . }}
           imagePullPolicy: {{ .Values.image.coordinator.pullPolicy | default "IfNotPresent" }}
           command:
+            - /usr/bin/tini
+            - -g
+            - --
             - gunicorn
             - coordinator.coordinator.wsgi:application
             - --bind
@@ -54,44 +64,38 @@ spec:
             - name: http
               containerPort: 8000
               protocol: TCP
-          envFrom:
-            - configMapRef:
-                name: {{ .Release.Name }}-config
-            - secretRef:
-                name: {{ .Release.Name }}-secret
-            {{- if .Values.federation.enabled }}
-            - configMapRef:
-                name: {{ .Release.Name }}-federation-overlay
-            {{- end }}
+          {{- include "ocr-local.coordinatorEnvFrom" . | nindent 10 }}
+          env:
+            {{- include "ocr-local.coordinatorSecretEnv" . | nindent 12 }}
+            - name: OCR_COORDINATOR_ALLOW_ZERO_WORKER_READINESS
+              value: {{ include "ocr-local.allowZeroWorkerReadiness" . | quote }}
           livenessProbe:
             httpGet:
-              path: /api/v1/metrics/
+              path: /api/v1/health
               port: 8000
-              {{- if .Values.secrets.metricsApiKey }}
               httpHeaders:
-                - name: X-Api-Key
-                  value: {{ .Values.secrets.metricsApiKey | quote }}
-              {{- end }}
+                - name: Host
+                  value: localhost
             periodSeconds: 30
           readinessProbe:
-            httpGet:
-              path: /api/v1/metrics/
-              port: 8000
-              {{- if .Values.secrets.metricsApiKey }}
-              httpHeaders:
-                - name: X-Api-Key
-                  value: {{ .Values.secrets.metricsApiKey | quote }}
-              {{- end }}
-            periodSeconds: 30
+            exec:
+              command:
+                - python
+                - -c
+                - >-
+                  import os,urllib.request;
+                  request=urllib.request.Request('http://127.0.0.1:8000/api/v1/health/detailed',headers={'X-API-Key':os.environ['OCR_COORDINATOR_API_KEY'],'X-Tenant-ID':os.environ['OCR_COORDINATOR_HEALTH_TENANT_ID']});
+                  response=urllib.request.urlopen(request,timeout=5);
+                  assert response.status == 200
+            periodSeconds: 15
+            timeoutSeconds: 10
           startupProbe:
             httpGet:
-              path: /api/v1/metrics/
+              path: /api/v1/health
               port: 8000
-              {{- if .Values.secrets.metricsApiKey }}
               httpHeaders:
-                - name: X-Api-Key
-                  value: {{ .Values.secrets.metricsApiKey | quote }}
-              {{- end }}
+                - name: Host
+                  value: localhost
             failureThreshold: 30
             periodSeconds: 10
           resources:
@@ -100,16 +104,33 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
+          {{- if or (eq (include "ocr-local.hasClientCaVolumes" .) "true") (and .Values.federation.enabled .Values.federation.mtls.enabled) (and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled) (eq .Values.storage.backend "s3") }}
           volumeMounts:
+            {{- include "ocr-local.tlsCaVolumeMount" . | nindent 12 }}
+            {{- include "ocr-local.s3CacheStagingMount" . | nindent 12 }}
+            {{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+            - name: nfs-data
+              mountPath: {{ .Values.storage.nfs.mountPath | default "/shared" }}
+            {{- end }}
+            {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
             - name: federation-mtls-client
               mountPath: /etc/federation-mtls
               readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
+      {{- if or (eq (include "ocr-local.hasClientCaVolumes" .) "true") (and .Values.federation.enabled .Values.federation.mtls.enabled) (and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled) (eq .Values.storage.backend "s3") }}
       volumes:
+        {{- include "ocr-local.tlsCaVolume" . | nindent 8 }}
+        {{- include "ocr-local.s3CacheStagingVolume" . | nindent 8 }}
+        {{- if and (eq .Values.storage.backend "nfs") .Values.storage.nfs.persistence.enabled }}
+        - name: nfs-data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-nfs-data
+        {{- end }}
+        {{- if and .Values.federation.enabled .Values.federation.mtls.enabled }}
         - name: federation-mtls-client
           secret:
             secretName: {{ .Release.Name }}-federation-mtls-client-tls
             defaultMode: 0440
+        {{- end }}
       {{- end }}

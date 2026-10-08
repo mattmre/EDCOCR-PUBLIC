@@ -15,7 +15,7 @@ requiring external datasets. The --dataset-dir flag loads real labeled samples
 from a directory structured as: <dataset-dir>/handwritten/*.txt and
 <dataset-dir>/printed/*.txt (ground truth text files).
 
-Requires: handwriting.py (from EDCOCR project root)
+Requires: handwriting.py (from OCR_LOCAL project root)
 """
 
 import argparse

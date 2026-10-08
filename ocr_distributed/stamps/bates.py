@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 try:
     import fitz  # PyMuPDF
+
     _HAS_FITZ = True
 except ImportError:
     _HAS_FITZ = False
@@ -27,7 +28,7 @@ from .zone import ZoneDetector
 @dataclass
 class BatesConfig:
     """Configuration for Bates numbering.
-    
+
     Attributes:
         prefix: Optional prefix (e.g., "PROD")
         suffix: Optional suffix (e.g., "CONF")
@@ -35,6 +36,7 @@ class BatesConfig:
         width: Zero-padding width (1-12)
         separator: Separator between prefix/number/suffix (default: no separator)
     """
+
     prefix: str = ""
     suffix: str = ""
     start: int = 1
@@ -53,7 +55,7 @@ class BatesAssigner:
 
     def __init__(self, config: BatesConfig):
         """Initialize Bates assigner.
-        
+
         Args:
             config: Bates configuration
         """
@@ -62,42 +64,42 @@ class BatesAssigner:
 
     def next(self) -> str:
         """Generate next Bates number.
-        
+
         Returns:
             Formatted Bates number
         """
         number_str = str(self._current).zfill(self.config.width)
         self._current += 1
-        
+
         parts = []
         if self.config.prefix:
             parts.append(self.config.prefix)
         parts.append(number_str)
         if self.config.suffix:
             parts.append(self.config.suffix)
-        
+
         return self.config.separator.join(parts)
 
     def peek(self) -> str:
         """Peek at next Bates number without incrementing.
-        
+
         Returns:
             Next Bates number
         """
         number_str = str(self._current).zfill(self.config.width)
-        
+
         parts = []
         if self.config.prefix:
             parts.append(self.config.prefix)
         parts.append(number_str)
         if self.config.suffix:
             parts.append(self.config.suffix)
-        
+
         return self.config.separator.join(parts)
 
     def reset(self, start: Optional[int] = None) -> None:
         """Reset counter to start value.
-        
+
         Args:
             start: New start value (uses config.start if None)
         """
@@ -167,105 +169,109 @@ class BatesStampOperation(StampOperation):
 
     def validate_config(self, config: StampConfig) -> list[str]:
         errors = []
-        
+
         # Validate Bates config
         try:
             self._extract_bates_config(config)
         except StampValidationError as e:
             errors.append(str(e))
             return errors
-        
+
         # Validate font size
         font_size = config.params.get("font_size", 10.0)
         if not isinstance(font_size, (int, float)) or font_size <= 0:
             errors.append(f"font_size must be positive number, got {font_size}")
-        
+
         # Validate font color
         font_color = config.params.get("font_color", (0.0, 0.0, 0.0))
         if not isinstance(font_color, (list, tuple)) or len(font_color) != 3:
             errors.append(f"font_color must be RGB tuple, got {font_color}")
         else:
-            if not all(isinstance(c, (int, float)) and 0.0 <= c <= 1.0 for c in font_color):
+            if not all(
+                isinstance(c, (int, float)) and 0.0 <= c <= 1.0 for c in font_color
+            ):
                 errors.append("font_color values must be 0.0-1.0")
-        
+
         # Validate page range
         page_range = config.params.get("page_range", "all")
         if not isinstance(page_range, str):
             errors.append(f"page_range must be string, got {type(page_range)}")
-        
+
         return errors
 
-    def execute(self, input_path: str, output_path: str, config: StampConfig) -> StampResult:
+    def execute(
+        self, input_path: str, output_path: str, config: StampConfig
+    ) -> StampResult:
         if not _HAS_FITZ:
             return StampResult(
                 success=False,
-                error_message="PyMuPDF not available - cannot apply Bates stamps"
+                error_message="PyMuPDF not available - cannot apply Bates stamps",
             )
-        
+
         # Validate input
         if not os.path.exists(input_path):
             raise StampValidationError(f"Input file not found: {input_path}")
-        
+
         if not input_path.lower().endswith(".pdf"):
             return StampResult(
                 success=False,
-                error_message=f"Unsupported format: {input_path} (only PDF supported)"
+                error_message=f"Unsupported format: {input_path} (only PDF supported)",
             )
-        
+
         # Validate configuration
         errors = self.validate_config(config)
         if errors:
             return StampResult(
                 success=False,
-                error_message=f"Configuration errors: {'; '.join(errors)}"
+                error_message=f"Configuration errors: {'; '.join(errors)}",
             )
-        
+
         # Extract parameters
         bates_config = self._extract_bates_config(config)
         font_size = config.params.get("font_size", 10.0)
         font_color = config.params.get("font_color", (0.0, 0.0, 0.0))
         page_range = config.params.get("page_range", "all")
-        
+
         try:
             # Open PDF
             doc = fitz.open(input_path)
-            
+
             # Parse page range
             pages_to_stamp = self._parse_page_range(page_range, len(doc))
-            
+
             # Initialize Bates assigner and zone detector
             assigner = BatesAssigner(bates_config)
             detector = ZoneDetector()
-            
+
             stamp_values = []
             warnings = []
-            
+
             # Stamp each page
             for page_num in pages_to_stamp:
                 page = doc[page_num]
                 bates_number = assigner.next()
                 stamp_values.append(bates_number)
-                
+
                 # Detect zones if overlap checking enabled
                 zones = None
                 if config.check_overlap:
                     zones = detector.detect_text_zones(page)
-                
+
                 # Compute stamp size
                 text_width = fitz.get_text_length(bates_number, fontsize=font_size)
                 text_height = font_size * 1.2  # Approximate line height
-                
+
                 # Compute placement
                 stamp_rect = detector.compute_placement_rect(
                     page, config.placement, text_width, text_height, zones
                 )
-                
+
                 # Check for overlap warnings
                 if config.check_overlap and zones:
                     page_warnings = detector.detect_overlap_warnings(stamp_rect, zones)
                     for warning in page_warnings:
                         warnings.append(f"Page {page_num + 1}: {warning}")
-                
+
                 # Insert text
                 page.insert_text(
                     (stamp_rect.x0, stamp_rect.y0 + font_size),  # Baseline adjustment
@@ -273,11 +279,11 @@ class BatesStampOperation(StampOperation):
                     fontsize=font_size,
                     color=font_color,
                 )
-            
+
             # Save output
             doc.save(output_path)
             doc.close()
-            
+
             return StampResult(
                 success=True,
                 output_path=output_path,
@@ -292,39 +298,89 @@ class BatesStampOperation(StampOperation):
                     "separator": bates_config.separator,
                 },
             )
-        
+
         except Exception as e:
             return StampResult(
-                success=False,
-                error_message=f"Bates stamping failed: {str(e)}"
+                success=False, error_message=f"Bates stamping failed: {str(e)}"
             )
 
     def _extract_bates_config(self, config: StampConfig) -> BatesConfig:
-        """Extract BatesConfig from StampConfig."""
+        """Extract BatesConfig from StampConfig.
+
+        Accepts both ``start`` and documented ``start_number`` (R3-RC-01).
+        When ``allocate`` is true (default under multi-tenant API use), the
+        start is reserved from the durable ledger for ``(tenant_id, prefix)``.
+        """
+        params = config.params or {}
+        if "start" in params and "start_number" in params:
+            if params.get("start") != params.get("start_number"):
+                raise StampValidationError(
+                    "params.start and params.start_number disagree"
+                )
+        raw_start = params.get("start", params.get("start_number", 1))
+        try:
+            start = int(raw_start)
+        except (TypeError, ValueError):
+            start = 1
+
+        # Validate before ledger allocation so invalid starts still fail closed.
+        width = int(params.get("width", 6) or 6)
+        if start < 1 or width < 1 or width > 12:
+            # BatesConfig.__post_init__ would raise; keep explicit for allocate path.
+            return BatesConfig(
+                prefix=params.get("prefix", "") or "",
+                suffix=params.get("suffix", "") or "",
+                start=start,
+                width=width,
+                separator=params.get("separator", "") or "",
+            )
+
+        prefix = params.get("prefix", "") or ""
+        tenant_id = params.get("tenant_id")
+        if isinstance(tenant_id, str) and not tenant_id.strip():
+            tenant_id = None
+        # Opt-in durable allocation (API sets allocate=True + tenant_id).
+        allocate = params.get("allocate", False)
+        if allocate is True or (
+            isinstance(allocate, str) and allocate.lower() in ("1", "true", "yes")
+        ):
+            from ocr_distributed.stamps.bates_ledger import allocate_range
+
+            page_count = int(params.get("_page_count") or params.get("count") or 1)
+            preferred = (
+                start if ("start" in params or "start_number" in params) else None
+            )
+            start = allocate_range(
+                prefix=str(prefix),
+                tenant_id=tenant_id if isinstance(tenant_id, str) else None,
+                count=max(1, page_count),
+                preferred_start=preferred,
+            )
+
         return BatesConfig(
-            prefix=config.params.get("prefix", ""),
-            suffix=config.params.get("suffix", ""),
-            start=config.params.get("start", 1),
-            width=config.params.get("width", 6),
-            separator=config.params.get("separator", ""),
+            prefix=prefix,
+            suffix=params.get("suffix", "") or "",
+            start=start,
+            width=width,
+            separator=params.get("separator", "") or "",
         )
 
     def _parse_page_range(self, page_range: str, total_pages: int) -> list[int]:
         """Parse page range string into list of page indices (0-based).
-        
+
         Args:
             page_range: Page range string (e.g., '1-5,7,9-12' or 'all')
             total_pages: Total number of pages in document
-            
+
         Returns:
             List of page indices (0-based)
         """
         if page_range.lower() == "all":
             return list(range(total_pages))
-        
+
         pages = set()
         parts = page_range.split(",")
-        
+
         for part in parts:
             part = part.strip()
             if "-" in part:
@@ -340,5 +396,5 @@ class BatesStampOperation(StampOperation):
                 page_num = int(part) - 1  # Convert to 0-based
                 if 0 <= page_num < total_pages:
                     pages.add(page_num)
-        
+
         return sorted(pages)

@@ -9,7 +9,7 @@ export interface JobProgressProps {
   job: Job;
   wsStatus: WSStatus;
   lastMessage: JobWSMessage | null;
-  onReconnect: => void;
+  onReconnect: () => void;
 }
 
 interface DerivedProgress {

@@ -7,8 +7,8 @@ import {
 } from "@/components/JobsFilterBar";
 import type { JobsFilterState } from "@/lib/types";
 
-describe("<JobsFilterBar />", => {
-  it("toggles status chips and emits onChange", => {
+describe("<JobsFilterBar />", () => {
+  it("toggles status chips and emits onChange", () => {
     const handleChange = vi.fn();
     render(<JobsFilterBar value={EMPTY_FILTER_STATE} onChange={handleChange} />);
 
@@ -19,7 +19,7 @@ describe("<JobsFilterBar />", => {
     });
   });
 
-  it("debounces the search input before emitting onChange", async => {
+  it("debounces the search input before emitting onChange", async () => {
     const handleChange = vi.fn();
     render(
       <JobsFilterBar
@@ -36,7 +36,8 @@ describe("<JobsFilterBar />", => {
     // Should not fire immediately because of the debounce.
     expect(handleChange).not.toHaveBeenCalled();
 
-    await waitFor( => {
+    await waitFor(
+      () => {
         expect(handleChange).toHaveBeenCalledTimes(1);
       },
       { timeout: 1000 }
@@ -48,7 +49,7 @@ describe("<JobsFilterBar />", => {
     });
   });
 
-  it("clears all filters via the clear-filters button", => {
+  it("clears all filters via the clear-filters button", () => {
     const handleChange = vi.fn();
     const populated: JobsFilterState = {
       status: ["failed", "completed"],
@@ -63,7 +64,7 @@ describe("<JobsFilterBar />", => {
     expect(handleChange).toHaveBeenCalledWith(EMPTY_FILTER_STATE);
   });
 
-  it("emits the sort selection on change", => {
+  it("emits the sort selection on change", () => {
     const handleChange = vi.fn();
     render(<JobsFilterBar value={EMPTY_FILTER_STATE} onChange={handleChange} />);
     fireEvent.change(screen.getByTestId("jobs-filter-sort"), {
@@ -76,13 +77,13 @@ describe("<JobsFilterBar />", => {
   });
 });
 
-describe("jobsFilterToQuery", => {
-  it("omits empty/default fields", => {
+describe("jobsFilterToQuery", () => {
+  it("omits empty/default fields", () => {
     const params = jobsFilterToQuery(EMPTY_FILTER_STATE);
     expect(params.toString()).toBe("");
   });
 
-  it("emits repeated status= entries for multi-select", => {
+  it("emits repeated status= entries for multi-select", () => {
     const params = jobsFilterToQuery({
       ...EMPTY_FILTER_STATE,
       status: ["failed", "completed"],
@@ -91,7 +92,7 @@ describe("jobsFilterToQuery", => {
     expect(all).toEqual(["failed", "completed"]);
   });
 
-  it("includes q, dates, and non-default sort", => {
+  it("includes q, dates, and non-default sort", () => {
     const params = jobsFilterToQuery({
       status: [],
       submitted_after: "2026-04-01T00:00",

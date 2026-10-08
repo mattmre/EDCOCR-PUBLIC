@@ -30,7 +30,11 @@ EXAMPLE_VALUES = CHART_PATH / "values-federation-example.yaml"
 # fail-on-missing-secret guards in templates/secret.yaml.
 MIN_SECRETS = {
     "secrets.djangoSecretKey": "test-django-key",
+    "secrets.apiKey": "test-api-key",
     "secrets.postgresPassword": "test-pg",
+    "secrets.webhookSecretKey": "test-webhook",
+    "secrets.piiEncryptionKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "secrets.celeryTaskSigningKey": "test-signing",
     "secrets.rabbitmqPassword": "test-rmq",
     "secrets.redisPassword": "test-redis",
     "secrets.flowerPassword": "test-flower",
@@ -69,19 +73,22 @@ def test_federation_disabled_renders_zero_federation_resources():
 
     federation_kinds = {"Federation", "Policy", "ApplicationSet"}
     fed_resources = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") in federation_kinds
         and "federation" in (d.get("metadata", {}).get("name", "") or "").lower()
     ]
     # No federation-overlay ConfigMap
     overlay_cms = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "ConfigMap"
         and d.get("metadata", {}).get("name", "").endswith("-federation-overlay")
     ]
     # No federation-egress NetworkPolicy
     fed_netpols = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "NetworkPolicy"
         and d.get("metadata", {}).get("name", "").endswith("-federation-egress")
     ]
@@ -102,7 +109,8 @@ def test_federation_enabled_renders_all_resources():
 
     # 1. Federation overlay ConfigMap
     overlay_cms = [
-        d for d in by_kind.get("ConfigMap", [])
+        d
+        for d in by_kind.get("ConfigMap", [])
         if d.get("metadata", {}).get("name", "").endswith("-federation-overlay")
     ]
     assert len(overlay_cms) == 1, "expected exactly one federation-overlay ConfigMap"
@@ -116,18 +124,20 @@ def test_federation_enabled_renders_all_resources():
     # over `.federation.clusters` when populated and falls back to the legacy
     # `upstreamClusters` list otherwise. Either form must produce >= 2 CRs.
     fed_uprstreams = [
-        d for d in by_kind.get("Federation", [])
+        d
+        for d in by_kind.get("Federation", [])
         if d.get("apiVersion", "").startswith("rabbitmq.com/")
     ]
-    assert len(fed_uprstreams) >= 2, (
-        f"expected >= 2 Federation upstream CRs, got {len(fed_uprstreams)}"
-    )
+    assert (
+        len(fed_uprstreams) >= 2
+    ), f"expected >= 2 Federation upstream CRs, got {len(fed_uprstreams)}"
 
     # 3. RabbitMQ Policy CR(s). C2 emits one Policy per (cluster x queue-class)
     # combo when the dynamic registry is populated; when only the legacy
     # `upstreamClusters` list is used, exactly one aggregated policy renders.
     fed_policies = [
-        d for d in by_kind.get("Policy", [])
+        d
+        for d in by_kind.get("Policy", [])
         if d.get("apiVersion", "").startswith("rabbitmq.com/")
         and "fed-policy" in d.get("metadata", {}).get("name", "")
     ]
@@ -142,7 +152,8 @@ def test_federation_enabled_renders_all_resources():
 
     # 5. Federation egress NetworkPolicy
     fed_netpols = [
-        d for d in by_kind.get("NetworkPolicy", [])
+        d
+        for d in by_kind.get("NetworkPolicy", [])
         if d.get("metadata", {}).get("name", "").endswith("-federation-egress")
     ]
     assert len(fed_netpols) == 1, "expected exactly one federation egress NetworkPolicy"
@@ -170,33 +181,45 @@ def test_coordinator_gets_federation_envfrom_only_when_enabled():
     disabled_rendered = _helm_template()
     disabled_docs = _parse_docs(disabled_rendered)
     coord_disabled = next(
-        d for d in disabled_docs
+        d
+        for d in disabled_docs
         if d.get("kind") == "Deployment"
         and d.get("metadata", {}).get("name", "") == "ocr-local-coordinator"
     )
     container = coord_disabled["spec"]["template"]["spec"]["containers"][0]
     env_from = container.get("envFrom", [])
     overlay_refs = [
-        ef for ef in env_from
-        if (ef.get("configMapRef", {}) or {}).get("name", "").endswith("-federation-overlay")
+        ef
+        for ef in env_from
+        if (ef.get("configMapRef", {}) or {})
+        .get("name", "")
+        .endswith("-federation-overlay")
     ]
-    assert overlay_refs == [], "coordinator must NOT mount federation overlay when disabled"
+    assert (
+        overlay_refs == []
+    ), "coordinator must NOT mount federation overlay when disabled"
 
     # enabled -> federation envFrom present
     enabled_rendered = _helm_template(values_files=[EXAMPLE_VALUES])
     enabled_docs = _parse_docs(enabled_rendered)
     coord_enabled = next(
-        d for d in enabled_docs
+        d
+        for d in enabled_docs
         if d.get("kind") == "Deployment"
         and d.get("metadata", {}).get("name", "") == "ocr-local-coordinator"
     )
     container = coord_enabled["spec"]["template"]["spec"]["containers"][0]
     env_from = container.get("envFrom", [])
     overlay_refs = [
-        ef for ef in env_from
-        if (ef.get("configMapRef", {}) or {}).get("name", "").endswith("-federation-overlay")
+        ef
+        for ef in env_from
+        if (ef.get("configMapRef", {}) or {})
+        .get("name", "")
+        .endswith("-federation-overlay")
     ]
-    assert len(overlay_refs) == 1, "coordinator must mount federation overlay when enabled"
+    assert (
+        len(overlay_refs) == 1
+    ), "coordinator must mount federation overlay when enabled"
 
 
 @pytest.mark.parametrize(
@@ -208,7 +231,8 @@ def test_workers_get_federation_envfrom_only_when_enabled(deployment_suffix):
     # disabled
     disabled_docs = _parse_docs(_helm_template())
     worker_disabled = next(
-        d for d in disabled_docs
+        d
+        for d in disabled_docs
         if d.get("kind") == "Deployment"
         and d.get("metadata", {}).get("name", "").endswith(deployment_suffix)
     )
@@ -216,17 +240,21 @@ def test_workers_get_federation_envfrom_only_when_enabled(deployment_suffix):
         "envFrom", []
     )
     refs = [
-        ef for ef in env_from
-        if (ef.get("configMapRef", {}) or {}).get("name", "").endswith("-federation-overlay")
+        ef
+        for ef in env_from
+        if (ef.get("configMapRef", {}) or {})
+        .get("name", "")
+        .endswith("-federation-overlay")
     ]
-    assert refs == [], (
-        f"{deployment_suffix} must NOT mount federation overlay when disabled"
-    )
+    assert (
+        refs == []
+    ), f"{deployment_suffix} must NOT mount federation overlay when disabled"
 
     # enabled
     enabled_docs = _parse_docs(_helm_template(values_files=[EXAMPLE_VALUES]))
     worker_enabled = next(
-        d for d in enabled_docs
+        d
+        for d in enabled_docs
         if d.get("kind") == "Deployment"
         and d.get("metadata", {}).get("name", "").endswith(deployment_suffix)
     )
@@ -234,12 +262,15 @@ def test_workers_get_federation_envfrom_only_when_enabled(deployment_suffix):
         "envFrom", []
     )
     refs = [
-        ef for ef in env_from
-        if (ef.get("configMapRef", {}) or {}).get("name", "").endswith("-federation-overlay")
+        ef
+        for ef in env_from
+        if (ef.get("configMapRef", {}) or {})
+        .get("name", "")
+        .endswith("-federation-overlay")
     ]
-    assert len(refs) == 1, (
-        f"{deployment_suffix} must mount federation overlay when enabled"
-    )
+    assert (
+        len(refs) == 1
+    ), f"{deployment_suffix} must mount federation overlay when enabled"
 
 
 def test_federation_example_values_file_exists():

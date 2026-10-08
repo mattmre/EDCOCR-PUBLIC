@@ -49,7 +49,40 @@ class TestAddToDlq:
         assert entry["event_type"] == "job.completed"
         assert entry["last_error"] == "HTTP 500"
         assert entry["attempts"] == 4
+        assert entry["tenant_id"] is None
         assert entry["retried_at"] is None
+
+    def test_stamps_tenant_id_when_provided(self, dlq_file):
+        """tenant_id is written onto the JSONL entry when known (AEP BE003)."""
+        entry_id = webhook_dlq.add_to_dlq(
+            job_id="job_aaaaaaaaaaaa",
+            webhook_url="https://example.com/hook",
+            event_type="job.completed",
+            payload={},
+            last_error="HTTP 500",
+            attempts=4,
+            tenant_id="tenant_aaaaaaaaaaaa",
+            dlq_file=dlq_file,
+        )
+
+        entry = json.loads(dlq_file.read_text(encoding="utf-8").strip())
+        assert entry["id"] == entry_id
+        assert entry["tenant_id"] == "tenant_aaaaaaaaaaaa"
+
+    def test_empty_tenant_id_stamped_as_null(self, dlq_file):
+        """Blank tenant_id is normalized to null on the entry."""
+        webhook_dlq.add_to_dlq(
+            job_id="job_aaaaaaaaaaaa",
+            webhook_url="https://example.com/hook",
+            event_type="job.completed",
+            payload={},
+            last_error="error",
+            attempts=1,
+            tenant_id="",
+            dlq_file=dlq_file,
+        )
+        entry = json.loads(dlq_file.read_text(encoding="utf-8").strip())
+        assert entry["tenant_id"] is None
 
     def test_appends_multiple_entries(self, dlq_file):
         """Multiple entries are appended to the same file."""
@@ -164,6 +197,166 @@ class TestListDlq:
         entries = webhook_dlq.list_dlq(dlq_file=dlq_file)
         assert len(entries) == 1
 
+    def test_skips_oversized_line_and_keeps_following_entry(
+        self, dlq_file, monkeypatch
+    ):
+        """A hostile giant JSONL record cannot hide later bounded entries."""
+        monkeypatch.setattr(webhook_dlq, "_DLQ_MAX_LINE_BYTES", 128)
+        dlq_file.write_bytes(b"x" * 256 + b"\n{" + b'"id":"keep"' + b"}\n")
+
+        entries = webhook_dlq.list_dlq(dlq_file=dlq_file)
+
+        assert [entry["id"] for entry in entries] == ["keep"]
+
+    def test_filters_by_stamped_tenant(self, dlq_file):
+        """list_dlq(tenant_id=...) returns only that tenant's stamped entries."""
+        webhook_dlq.add_to_dlq(
+            job_id="job_aaaaaaaaaaaa",
+            webhook_url="https://a.example.com",
+            event_type="job.completed",
+            payload={},
+            last_error="e1",
+            attempts=1,
+            tenant_id="tenant_aaaaaaaaaaaa",
+            dlq_file=dlq_file,
+        )
+        webhook_dlq.add_to_dlq(
+            job_id="job_bbbbbbbbbbbb",
+            webhook_url="https://b.example.com",
+            event_type="job.failed",
+            payload={},
+            last_error="e2",
+            attempts=1,
+            tenant_id="tenant_bbbbbbbbbbbb",
+            dlq_file=dlq_file,
+        )
+
+        a_entries = webhook_dlq.list_dlq(
+            tenant_id="tenant_aaaaaaaaaaaa", dlq_file=dlq_file
+        )
+        assert len(a_entries) == 1
+        assert a_entries[0]["job_id"] == "job_aaaaaaaaaaaa"
+
+        b_entries = webhook_dlq.list_dlq(
+            tenant_id="tenant_bbbbbbbbbbbb", dlq_file=dlq_file
+        )
+        assert len(b_entries) == 1
+        assert b_entries[0]["job_id"] == "job_bbbbbbbbbbbb"
+
+    def test_legacy_unstamped_resolved_via_lookup(self, dlq_file):
+        """Unstamped legacy entries are owned by the resolved job tenant."""
+        # Write a legacy line without tenant_id key
+        legacy = {
+            "id": "dlq_abc0000000000001",
+            "job_id": "job_aaaaaaaaaaaa",
+            "webhook_url": "https://example.com",
+            "event_type": "job.completed",
+            "payload": {},
+            "last_error": "old",
+            "attempts": 3,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "retried_at": None,
+        }
+        dlq_file.write_text(
+            json.dumps(legacy, separators=(",", ":")) + "\n", encoding="utf-8"
+        )
+
+        def _lookup(resource_id: str):
+            return {
+                "job_aaaaaaaaaaaa": "tenant_aaaaaaaaaaaa",
+            }.get(resource_id)
+
+        a = webhook_dlq.list_dlq(
+            tenant_id="tenant_aaaaaaaaaaaa",
+            dlq_file=dlq_file,
+            lookup=_lookup,
+        )
+        assert len(a) == 1
+        assert a[0]["id"] == "dlq_abc0000000000001"
+
+        b = webhook_dlq.list_dlq(
+            tenant_id="tenant_bbbbbbbbbbbb",
+            dlq_file=dlq_file,
+            lookup=_lookup,
+        )
+        assert b == []
+
+    def test_legacy_unresolvable_hidden_from_tenant(self, dlq_file):
+        """Unstamped unresolvable entries are admin-only (hidden from tenant keys)."""
+        legacy = {
+            "id": "dlq_abc0000000000002",
+            "job_id": "job_deadbeefdead",
+            "webhook_url": "https://example.com",
+            "event_type": "job.completed",
+            "payload": {"secret": "payload"},
+            "last_error": "gone",
+            "attempts": 4,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "retried_at": None,
+        }
+        dlq_file.write_text(
+            json.dumps(legacy, separators=(",", ":")) + "\n", encoding="utf-8"
+        )
+
+        tenant_view = webhook_dlq.list_dlq(
+            tenant_id="tenant_aaaaaaaaaaaa",
+            dlq_file=dlq_file,
+            lookup=lambda _rid: None,
+        )
+        assert tenant_view == []
+
+        # Unscoped (single-tenant / platform admin) still sees the entry
+        admin_view = webhook_dlq.list_dlq(dlq_file=dlq_file)
+        assert len(admin_view) == 1
+
+
+# ---------------------------------------------------------------------------
+# ownership helpers
+# ---------------------------------------------------------------------------
+
+
+class TestEntryOwnership:
+    """Unit tests for resolve_entry_tenant_id / entry_owned_by_tenant."""
+
+    def test_stamped_entry_owned(self):
+        entry = {"tenant_id": "tenant_aaaaaaaaaaaa", "job_id": "job_aaaaaaaaaaaa"}
+        assert webhook_dlq.entry_owned_by_tenant(entry, "tenant_aaaaaaaaaaaa")
+        assert not webhook_dlq.entry_owned_by_tenant(entry, "tenant_bbbbbbbbbbbb")
+
+    def test_legacy_resolved_owned(self):
+        entry = {"job_id": "job_aaaaaaaaaaaa"}  # no tenant_id stamp
+        assert webhook_dlq.entry_owned_by_tenant(
+            entry,
+            "tenant_aaaaaaaaaaaa",
+            lookup=lambda rid: "tenant_aaaaaaaaaaaa"
+            if rid == "job_aaaaaaaaaaaa"
+            else None,
+        )
+        assert not webhook_dlq.entry_owned_by_tenant(
+            entry,
+            "tenant_bbbbbbbbbbbb",
+            lookup=lambda rid: "tenant_aaaaaaaaaaaa"
+            if rid == "job_aaaaaaaaaaaa"
+            else None,
+        )
+
+    def test_unresolvable_not_owned(self):
+        entry = {"job_id": "job_missing00000"}
+        assert not webhook_dlq.entry_owned_by_tenant(
+            entry, "tenant_aaaaaaaaaaaa", lookup=lambda _rid: None
+        )
+
+    def test_resolve_prefers_stamp_over_lookup(self):
+        entry = {
+            "tenant_id": "tenant_aaaaaaaaaaaa",
+            "job_id": "job_bbbbbbbbbbbb",
+        }
+        # lookup would claim B — stamp wins
+        resolved = webhook_dlq.resolve_entry_tenant_id(
+            entry, lookup=lambda _rid: "tenant_bbbbbbbbbbbb"
+        )
+        assert resolved == "tenant_aaaaaaaaaaaa"
+
 
 # ---------------------------------------------------------------------------
 # get_dlq_entry
@@ -266,3 +459,38 @@ class TestMarkDlqRetried:
 
         assert entry1["retried_at"] is not None
         assert entry2["retried_at"] is None
+
+
+class TestDlqRetryClaims:
+    def test_claim_is_exclusive_and_release_is_reusable(self, dlq_file):
+        entry_id = webhook_dlq.add_to_dlq(
+            job_id="job_aaaaaaaaaaaa",
+            webhook_url="https://example.com",
+            event_type="job.completed",
+            payload={"ok": True},
+            last_error="error",
+            attempts=3,
+            dlq_file=dlq_file,
+        )
+
+        first = webhook_dlq.claim_dlq_retry(entry_id, dlq_file=dlq_file)
+        assert first
+        assert webhook_dlq.claim_dlq_retry(entry_id, dlq_file=dlq_file) is None
+        assert webhook_dlq.release_dlq_retry(entry_id, first, dlq_file=dlq_file) is True
+        assert webhook_dlq.claim_dlq_retry(entry_id, dlq_file=dlq_file)
+
+    def test_atomic_mark_preserves_readable_entry(self, dlq_file):
+        entry_id = webhook_dlq.add_to_dlq(
+            job_id="job_aaaaaaaaaaaa",
+            webhook_url="https://example.com",
+            event_type="job.completed",
+            payload={"ok": True},
+            last_error="error",
+            attempts=3,
+            dlq_file=dlq_file,
+        )
+
+        assert webhook_dlq.mark_dlq_retried(entry_id, dlq_file=dlq_file) is True
+        entry = webhook_dlq.get_dlq_entry(entry_id, dlq_file=dlq_file)
+        assert entry is not None
+        assert entry["retried_at"]

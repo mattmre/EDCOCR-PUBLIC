@@ -1,10 +1,10 @@
 /**
- * TypeScript SDK client for EDCOCR API.
+ * TypeScript SDK client for OCR_LOCAL API.
  *
  * Provides a typed, ergonomic interface for submitting OCR jobs,
  * polling for results, and downloading processed documents.
  *
- * Requires Node.js 18+ (uses native `fetch` API).
+ * Requires Node.js 20.19+ or 22.12+ (uses native `fetch` API).
  * No external dependencies.
  *
  * @example
@@ -13,7 +13,7 @@
  *
  * const client = new OcrClient({
  *   baseUrl: 'http://localhost:8000',
- *   apiKey: 'my-key',
+ *   apiKey: process.env.OCR_API_KEY,
  * });
  *
  * const job = await client.submit({ filePath: 'document.pdf' });
@@ -280,14 +280,14 @@ function isTerminalStatus(status: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * TypeScript SDK client for the EDCOCR API.
+ * TypeScript SDK client for the OCR_LOCAL API.
  *
- * Uses the native `fetch` API available in Node.js 18+ and modern browsers.
+ * Uses the native `fetch` API available in Node.js 20.19+ or 22.12+ and modern browsers.
  * All methods are async and return typed results.
  *
  * @example
  * ```typescript
- * const client = new OcrClient({ baseUrl: 'http://localhost:8000', apiKey: 'key' });
+ * const client = new OcrClient({ baseUrl: 'http://localhost:8000', apiKey: process.env.OCR_API_KEY });
  * const health = await client.health();
  * console.log(health.status); // "healthy"
  * ```
@@ -464,8 +464,9 @@ export class OcrClient {
   /**
    * Download a JSON output artifact and parse it.
    *
-   * For JSON sidecar outputs (entities, ner, extraction, classification,
-   * validation, handwriting, signature, vertical, structure).
+   * For JSON sidecar outputs (structure, entities, ner, extraction,
+   * classification, validation, handwriting, signature, vertical, retrieval,
+   * form, ai_text, language, and symbology).
    *
    * @param jobId - The unique job identifier.
    * @param outputType - Output type that produces JSON content.
@@ -509,7 +510,8 @@ export class OcrClient {
   async waitForResult(
     jobId: string,
     pollIntervalMs: number = 2_000,
-    timeoutMs: number = 600_000): Promise<JobInfo> {
+    timeoutMs: number = 600_000,
+  ): Promise<JobInfo> {
     const start = Date.now();
 
     while (true) {
@@ -522,7 +524,8 @@ export class OcrClient {
       const elapsed = Date.now() - start;
       if (elapsed >= timeoutMs) {
         throw new TimeoutError(
-          `Job ${jobId} did not complete within ${timeoutMs}ms (status: ${job.status})`);
+          `Job ${jobId} did not complete within ${timeoutMs}ms (status: ${job.status})`,
+        );
       }
 
       await sleep(pollIntervalMs);
@@ -542,7 +545,8 @@ export class OcrClient {
   async submitAndWait(
     options: SubmitOptions,
     pollIntervalMs: number = 2_000,
-    timeoutMs: number = 600_000): Promise<JobInfo> {
+    timeoutMs: number = 600_000,
+  ): Promise<JobInfo> {
     const job = await this.submit(options);
     return this.waitForResult(job.jobId, pollIntervalMs, timeoutMs);
   }
@@ -565,7 +569,7 @@ export class OcrClient {
    */
   private buildHeaders(extra: Record<string, string> = {}): Record<string, string> {
     const headers: Record<string, string> = {
-      'User-Agent': 'ocr-local-typescript-sdk/4.1.0',
+      'User-Agent': 'edcocr-typescript-sdk/4.2.0-rc.1',
       ...extra,
     };
     if (this.apiKey) {
@@ -615,7 +619,8 @@ export class OcrClient {
   private async fetchWithTimeout(
     url: string,
     init: RequestInit,
-    timeoutMs?: number): Promise<Response> {
+    timeoutMs?: number,
+  ): Promise<Response> {
     const ms = timeoutMs ?? this.timeoutMs;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ms);
@@ -647,14 +652,16 @@ export class OcrClient {
   private async request<T = Record<string, unknown>>(
     method: string,
     path: string,
-    options: { body?: BodyInit; isMultipart?: boolean } = {}): Promise<T> {
+    options: { body?: BodyInit; isMultipart?: boolean } = {},
+  ): Promise<T> {
     if (this.closed) {
       throw new OcrClientError('Client has been closed');
     }
 
     const url = `${this.baseUrl}${path}`;
     const headers = this.buildHeaders(
-      options.isMultipart ? {} : { 'Content-Type': 'application/json' });
+      options.isMultipart ? {} : { 'Content-Type': 'application/json' },
+    );
 
     let lastError: unknown;
 
@@ -705,7 +712,8 @@ export class OcrClient {
     }
 
     throw new OcrClientError(
-      `Request failed after ${this.maxRetries} retries: ${lastError}`);
+      `Request failed after ${this.maxRetries} retries: ${lastError}`,
+    );
   }
 
   /**
@@ -729,7 +737,8 @@ export class OcrClient {
       throw new AuthenticationError(
         `Authentication failed (HTTP ${status})`,
         status,
-        body);
+        body,
+      );
     }
 
     if (status === 404) {

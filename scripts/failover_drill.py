@@ -2,7 +2,7 @@
 """Automated failover drill scripts for v1.0 validation.
 
 Simulates and measures recovery for each stateful component in the
-EDCOCR distributed pipeline, following the procedures documented
+OCR_LOCAL distributed pipeline, following the procedures documented
 in docs/FAILOVER-RUNBOOK.md.
 
 Usage:
@@ -1295,7 +1295,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
         prog="failover_drill",
-        description="Automated failover drill scripts for EDCOCR v1.0 validation",
+        description="Automated failover drill scripts for OCR_LOCAL v1.0 validation",
     )
     subparsers = parser.add_subparsers(dest="command", help="Drill type to execute")
 

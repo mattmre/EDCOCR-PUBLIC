@@ -87,7 +87,8 @@ export function GlossaryEditor({ tenantId }: GlossaryEditorProps) {
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const load = useMemo( => async => {
+  const load = useMemo(
+    () => async () => {
       setLoading(true);
       try {
         const res = await listGlossary(tenantId, {
@@ -179,8 +180,8 @@ export function GlossaryEditor({ tenantId }: GlossaryEditorProps) {
     }
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onerror = => reject(reader.error ?? new Error("FileReader error"));
-      reader.onload = => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(reader.error ?? new Error("FileReader error"));
+      reader.onload = () => resolve(String(reader.result ?? ""));
       reader.readAsText(file);
     });
   }

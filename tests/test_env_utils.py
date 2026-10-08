@@ -1,4 +1,4 @@
-"""Tests for ocr_distributed.ocr_utils.get_env_int / get_env_float."""
+"""Tests for ocr_distributed.ocr_utils.get_env_int / get_env_float (maintenance review)."""
 
 import os
 

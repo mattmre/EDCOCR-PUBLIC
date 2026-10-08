@@ -5,15 +5,25 @@ WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
+FROM node:26-alpine AS runtime-deps
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
 FROM node:26-alpine AS builder
 WORKDIR /app/frontend
 ARG NEXT_PUBLIC_API_BASE_URL=/
+ARG NEXT_PUBLIC_OCR_HTTPONLY_SESSION=false
 ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+ENV NEXT_PUBLIC_OCR_HTTPONLY_SESSION=${NEXT_PUBLIC_OCR_HTTPONLY_SESSION}
+ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/frontend/node_modules ./node_modules
 COPY frontend/ ./
 RUN npm run build
 
 FROM node:26-alpine AS runtime
+ARG SOURCE_REVISION
+ARG SOURCE_TREE_SHA256
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app/frontend
@@ -21,7 +31,15 @@ COPY --from=builder /app/frontend/package.json ./package.json
 COPY --from=builder /app/frontend/package-lock.json ./package-lock.json
 COPY --from=builder /app/frontend/.next ./.next
 COPY --from=builder /app/frontend/public ./public
-COPY --from=builder /app/frontend/node_modules ./node_modules
+COPY --from=runtime-deps /app/frontend/node_modules ./node_modules
+RUN if [ -z "${SOURCE_REVISION}" ] || [ "${SOURCE_REVISION}" = "unknown" ] || \
+       [ -z "${SOURCE_TREE_SHA256}" ] || [ "${SOURCE_TREE_SHA256}" = "unknown" ]; then \
+      printf '%s\n' 'ERROR: frontend image requires source revision and frontend fingerprint' >&2; \
+      exit 1; \
+    fi
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      io.ocr_local.runtime-source-sha256="${SOURCE_TREE_SHA256}" \
+      io.ocr_local.runtime-profile="frontend"
 RUN addgroup -S nextjs && adduser -S nextjs -G nextjs
 USER nextjs
 EXPOSE 3000

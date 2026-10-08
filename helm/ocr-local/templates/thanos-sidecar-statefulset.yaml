@@ -2,7 +2,7 @@
 {{- if eq .Values.observability.federation.mode "thanos_sidecar" }}
 {{- if .Values.observability.federation.thanos_sidecar.enabled }}
 # =============================================================================
-#  -- C3 Federated Observability (Thanos sidecar)
+# Plan C Phase 1 -- C3 Federated Observability (Thanos sidecar)
 #
 # The Thanos sidecar runs alongside Prometheus and uploads completed TSDB
 # blocks to object storage. The chart does NOT include Prometheus itself --

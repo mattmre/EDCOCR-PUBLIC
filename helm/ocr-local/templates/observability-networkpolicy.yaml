@@ -1,7 +1,7 @@
 {{- if and .Values.observability .Values.observability.federation .Values.observability.federation.enabled }}
 {{- if .Values.observability.networkPolicy.enabled }}
 # =============================================================================
-#  -- C3 Federated Observability NetworkPolicy
+# Plan C Phase 1 -- C3 Federated Observability NetworkPolicy
 #
 # Restricts who may reach the Thanos sidecar's gRPC StoreAPI and what egress
 # is permitted from observability components. The policy is opt-in

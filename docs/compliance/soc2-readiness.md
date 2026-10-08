@@ -1,3 +1,5 @@
+> Design/reference material. Optional deployment and feature claims require the acceptance checks in [candidate scope](../release-candidate.md).
+
 # SOC 2 Type II Readiness -- EDCOCR v1.0
 
 ## Overview

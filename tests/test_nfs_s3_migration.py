@@ -166,7 +166,7 @@ class TestDryRunLabels:
 
     def test_cli_dry_run_output_no_misleading_uploaded(self, nfs_tree, capsys):
         """CLI dry-run output must say 'to upload' not 'uploaded'."""
-        with patch("migrate_nfs_to_s3.S3Backend") as MockS3, \
+        with patch("migrate_nfs_to_s3.S3Backend") as MockS3,\
              patch("migrate_nfs_to_s3.check_connectivity", return_value=(True, [])):
             mock_s3 = MagicMock()
             mock_s3.exists.return_value = False
@@ -196,7 +196,7 @@ class TestDryRunLabels:
 
     def test_cli_dry_run_banner_present(self, nfs_tree, capsys):
         """CLI dry-run must show start and end banners."""
-        with patch("migrate_nfs_to_s3.S3Backend") as MockS3, \
+        with patch("migrate_nfs_to_s3.S3Backend") as MockS3,\
              patch("migrate_nfs_to_s3.check_connectivity", return_value=(True, [])):
             mock_s3 = MagicMock()
             mock_s3.exists.return_value = False

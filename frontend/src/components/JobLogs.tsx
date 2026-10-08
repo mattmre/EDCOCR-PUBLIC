@@ -1,13 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { getApiKey } from "@/lib/auth";
-import type { JobLogLevel, JobLogRecord } from "@/lib/types";
+import { handleUnauthorized } from "@/lib/api-client";
 
-const API_BASE_URL =
-  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_BASE_URL) ||
-  "http://localhost:8000";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { buildUrl, createTimeoutSignal } from "@/lib/api-client";
+import { getApiKey, getAuthRequestCredentials } from "@/lib/auth";
+import type { JobLogLevel, JobLogRecord } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5_000;
 const DEFAULT_LIMIT = 500;
@@ -42,39 +41,60 @@ interface FetchResult {
   ok: boolean;
   status: number;
   notFound: boolean;
+  cursor: string | null;
+  reset: boolean;
 }
 
 async function fetchLogPage(
   jobId: string,
-  opts: { since?: string; level?: string; limit?: number; signal?: AbortSignal }
+  opts: { since?: string; cursor?: string; level?: string; limit?: number; signal?: AbortSignal }
 ): Promise<FetchResult> {
   const params = new URLSearchParams();
   if (opts.since) params.set("since", opts.since);
+  if (opts.cursor) params.set("cursor", opts.cursor);
   if (opts.level) params.set("level", opts.level);
   params.set("limit", String(opts.limit ?? DEFAULT_LIMIT));
   const headers = new Headers({ Accept: "application/x-ndjson" });
   const key = getApiKey();
   if (key) headers.set("X-API-Key", key);
-  const url = `${API_BASE_URL.replace(/\/+$/, "")}/api/v1/jobs/${jobId}/logs?${params.toString()}`;
-  const resp = await fetch(url, { method: "GET", headers, signal: opts.signal, cache: "no-store" });
-  if (resp.status === 404) {
-    return { records: [], ok: false, status: 404, notFound: true };
-  }
-  if (!resp.ok) {
-    return { records: [], ok: false, status: resp.status, notFound: false };
-  }
-  const text = await resp.text();
-  const records: JobLogRecord[] = [];
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      records.push(JSON.parse(trimmed) as JobLogRecord);
-    } catch {
-      // Skip malformed records rather than failing the whole stream.
+  const url = buildUrl(`/api/v1/jobs/${jobId}/logs?${params.toString()}`);
+  const { signal, cleanup } = createTimeoutSignal(opts.signal);
+  try {
+    const resp = await fetch(url, {
+      method: "GET",
+      headers,
+      credentials: getAuthRequestCredentials(),
+      signal,
+      cache: "no-store",
+    });
+    if (resp.status === 404) {
+      return { records: [], ok: false, status: 404, notFound: true, cursor: null, reset: false };
     }
+    if (resp.status === 401) {
+      handleUnauthorized();
+    }
+    if (!resp.ok) {
+      return { records: [], ok: false, status: resp.status, notFound: false, cursor: null, reset: false };
+    }
+    const text = await resp.text();
+    const records: JobLogRecord[] = [];
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        records.push(JSON.parse(trimmed) as JobLogRecord);
+      } catch {
+        // Skip malformed records rather than failing the whole stream.
+      }
+    }
+    return {
+      records, ok: true, status: resp.status, notFound: false,
+      cursor: resp.headers.get("X-Next-Cursor"),
+      reset: resp.headers.get("X-Log-Reset") === "true",
+    };
+  } finally {
+    cleanup();
   }
-  return { records, ok: true, status: resp.status, notFound: false };
 }
 
 export function JobLogs({
@@ -89,72 +109,68 @@ export function JobLogs({
   const [levelFilter, setLevelFilter] = useState<"" | JobLogLevel>("");
   const [missing, setMissing] = useState<boolean>(false);
 
-  const lastTsRef = useRef<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const pausedRef = useRef(paused);
+  const pollingRef = useRef(pollingEnabled);
+  pausedRef.current = paused;
+  pollingRef.current = pollingEnabled;
 
-  const tail = useCallback(
-    async (initial: boolean) => {
-      if (abortRef.current) abortRef.current.abort();
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      const result = await fetchLogPage(jobId, {
-        since: lastTsRef.current ?? undefined,
-        level: levelFilter || undefined,
-        limit: DEFAULT_LIMIT,
-        signal: ctrl.signal,
-      });
-      if (ctrl.signal.aborted) return;
-
-      if (result.notFound) {
-        setMissing(true);
-        setLoading(false);
-        return;
-      }
-      if (!result.ok) {
-        setError(`Log fetch failed (HTTP ${result.status})`);
-        setLoading(false);
-        return;
-      }
-      setMissing(false);
-      setError(null);
-
-      if (result.records.length > 0) {
-        setRecords((prev) => {
-          const next = initial ? result.records : [...prev, ...result.records];
-          // Cap retained line count so a long-running session doesn't blow up memory.
-          return next.length > MAX_RETAINED_LINES
-            ? next.slice(next.length - MAX_RETAINED_LINES)
-            : next;
-        });
-        const lastTs = result.records[result.records.length - 1]?.ts;
-        if (lastTs) lastTsRef.current = lastTs;
-      }
-      setLoading(false);
-    },
-    [jobId, levelFilter]
-  );
-
-  // Initial load.
   useEffect(() => {
+    let active = true;
+    let inFlight = false;
+    let cursor: string | null = null;
+    let lastTs: string | null = null;
+    const ctrl = new AbortController();
     setRecords([]);
     setMissing(false);
     setError(null);
     setLoading(true);
-    lastTsRef.current = null;
-    void tail(true);
-    return => {
-      if (abortRef.current) abortRef.current.abort();
-    };
-  }, [jobId, levelFilter, tail]);
-
-  // Auto-tail polling.
-  useEffect(() => {
-    if (!pollingEnabled || paused || missing) return;
+    async function tail() {
+      if (inFlight || !active) return;
+      inFlight = true;
+      try {
+        const result = await fetchLogPage(jobId, {
+          cursor: cursor ?? undefined,
+          since: cursor ? undefined : lastTs ?? undefined,
+          level: levelFilter || undefined,
+          limit: DEFAULT_LIMIT,
+          signal: ctrl.signal,
+        });
+        if (!active) return;
+        if (result.notFound) {
+          setMissing(true);
+          setError(null);
+        } else if (!result.ok) {
+          setError(`Log fetch failed (HTTP ${result.status})`);
+        } else {
+          setMissing(false);
+          setError(null);
+          if (result.reset) {
+            setRecords(result.records);
+          } else if (result.records.length > 0) {
+            setRecords((prev) => [...prev, ...result.records].slice(-MAX_RETAINED_LINES));
+          }
+          cursor = result.cursor;
+          lastTs = result.records[result.records.length - 1]?.ts ?? lastTs;
+        }
+        setLoading(false);
+      } catch (err) {
+        if (!active) return;
+        setError(err instanceof Error ? `Log fetch failed (${err.message})` : "Log fetch failed");
+        setLoading(false);
+      } finally {
+        inFlight = false;
+      }
+    }
+    void tail();
     const id = setInterval(() => {
-      void tail(false);
+      if (pollingRef.current && !pausedRef.current) void tail();
     }, pollIntervalMs);
-    return => clearInterval(id);
-  }, [pollingEnabled, paused, missing, pollIntervalMs, tail]);
+    return () => {
+      active = false;
+      clearInterval(id);
+      ctrl.abort();
+    };
+  }, [jobId, levelFilter, pollIntervalMs]);
 
   const visible = useMemo(() => records, [records]);
 
@@ -166,8 +182,8 @@ export function JobLogs({
       >
         <h3 className="text-sm font-semibold">Logs</h3>
         <p className="mt-2 text-muted-foreground">
-          No per-job logs are available for {jobId} yet. Logs appear here once the
-          pipeline emits its first event.
+          No per-job logs are available for {jobId} yet. Logs appear here once the pipeline emits
+          its first event.
         </p>
       </div>
     );
@@ -207,7 +223,7 @@ export function JobLogs({
             data-testid="job-logs-clear"
             onClick={() => {
               setRecords([]);
-              lastTsRef.current = null;
+              setLoading(false);
             }}
           >
             Clear
@@ -244,8 +260,7 @@ export function JobLogs({
               <div key={`${r.ts}-${i}`} className={colorCls}>
                 <span className="text-muted-foreground">{ts}</span>{" "}
                 <span className="font-semibold">[{r.level}]</span>{" "}
-                <span className="text-muted-foreground">{r.code}</span>{" "}
-                {r.message}
+                <span className="text-muted-foreground">{r.code}</span> {r.message}
               </div>
             );
           })}

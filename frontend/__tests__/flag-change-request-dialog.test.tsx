@@ -29,7 +29,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const VALID_REASON = "Routine canary rollout to validate flow.";
 
-describe("<FlagChangeRequestDialog />", => {
+describe("<FlagChangeRequestDialog />", () => {
   beforeEach(() => {
     setApiKey("test-key");
   });
@@ -37,7 +37,7 @@ describe("<FlagChangeRequestDialog />", => {
     vi.restoreAllMocks();
   });
 
-  it("does not render when open=false", => {
+  it("does not render when open=false", () => {
     render(
       <FlagChangeRequestDialog
         flag={flag({})}
@@ -49,7 +49,7 @@ describe("<FlagChangeRequestDialog />", => {
     expect(screen.queryByTestId("flag-change-dialog")).toBeNull();
   });
 
-  it("seeds the bool value to the inverse of current_value when opened", => {
+  it("seeds the bool value to the inverse of current_value when opened", () => {
     render(
       <FlagChangeRequestDialog
         flag={flag({ current_value: false })}
@@ -64,7 +64,7 @@ describe("<FlagChangeRequestDialog />", => {
     ).toBe(true);
   });
 
-  it("disables submit until the reason is at least 20 chars", => {
+  it("disables submit until the reason is at least 20 chars", () => {
     render(
       <FlagChangeRequestDialog
         flag={flag({ requires_strong_auth: false })}
@@ -84,7 +84,7 @@ describe("<FlagChangeRequestDialog />", => {
     expect(screen.getByTestId("flag-change-submit")).not.toBeDisabled();
   });
 
-  it("disables submit when the proposed value matches the current value", => {
+  it("disables submit when the proposed value matches the current value", () => {
     render(
       <FlagChangeRequestDialog
         flag={flag({ requires_strong_auth: false, current_value: true })}
@@ -104,7 +104,7 @@ describe("<FlagChangeRequestDialog />", => {
     expect(screen.getByTestId("flag-change-novalue")).toBeInTheDocument();
   });
 
-  it("renders strong-auth fields only when requires_strong_auth=true", => {
+  it("renders strong-auth fields only when requires_strong_auth=true", () => {
     const { rerender } = render(
       <FlagChangeRequestDialog
         flag={flag({ requires_strong_auth: false })}
@@ -130,7 +130,7 @@ describe("<FlagChangeRequestDialog />", => {
     ).toBeInTheDocument();
   });
 
-  it("requires both auth method and token before submit when strong-auth is on", => {
+  it("requires both auth method and token before submit when strong-auth is on", () => {
     render(
       <FlagChangeRequestDialog
         flag={flag({})}
@@ -153,7 +153,7 @@ describe("<FlagChangeRequestDialog />", => {
     expect(screen.getByTestId("flag-change-submit")).not.toBeDisabled();
   });
 
-  it("posts a complete payload on the happy path and calls onSubmitted", async => {
+  it("posts a complete payload on the happy path and calls onSubmitted", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse(
         {
@@ -210,7 +210,7 @@ describe("<FlagChangeRequestDialog />", => {
     });
   });
 
-  it("surfaces a method-specific message when the backend returns 403 strong_auth_required", async => {
+  it("surfaces a method-specific message when the backend returns 403 strong_auth_required", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse(
         { detail: "strong auth", error_code: "strong_auth_required" },
@@ -241,7 +241,7 @@ describe("<FlagChangeRequestDialog />", => {
     });
   });
 
-  it("surfaces a validation error on 422", async => {
+  it("surfaces a validation error on 422", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ detail: "value out of range" }, 422)
     );
@@ -269,7 +269,7 @@ describe("<FlagChangeRequestDialog />", => {
     });
   });
 
-  it("renders an enum select for enum-typed flags", => {
+  it("renders an enum select for enum-typed flags", () => {
     render(
       <FlagChangeRequestDialog
         flag={flag({
@@ -292,7 +292,7 @@ describe("<FlagChangeRequestDialog />", => {
     ]);
   });
 
-  it("renders a numeric input for integer-typed flags", => {
+  it("renders a numeric input for integer-typed flags", () => {
     render(
       <FlagChangeRequestDialog
         flag={flag({
@@ -311,7 +311,7 @@ describe("<FlagChangeRequestDialog />", => {
     expect(input.value).toBe("12");
   });
 
-  it("clears the form between opens for different flags", => {
+  it("clears the form between opens for different flags", () => {
     const { rerender } = render(
       <FlagChangeRequestDialog
         flag={flag({ key: "FLAG_A", current_value: false })}
@@ -337,7 +337,7 @@ describe("<FlagChangeRequestDialog />", => {
     expect(textarea.value).toBe("");
   });
 
-  it("shows a counter for the reason length", => {
+  it("shows a counter for the reason length", () => {
     render(
       <FlagChangeRequestDialog
         flag={flag({})}

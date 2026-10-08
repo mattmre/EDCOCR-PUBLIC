@@ -306,8 +306,8 @@ class TestImageVarianceDetection:
         mock_image = mock.MagicMock()
         mock_image.convert.return_value = mock_image
 
-        with mock.patch.object(hw_module, "_CV2_AVAILABLE", True), \
-             mock.patch.object(hw_module, "cv2", mock_cv2, create=True), \
+        with mock.patch.object(hw_module, "_CV2_AVAILABLE", True),\
+             mock.patch.object(hw_module, "cv2", mock_cv2, create=True),\
              mock.patch.object(hw_module, "np", mock_np, create=True):
             result = detect_handwriting_by_image(mock_image, page_num=1)
 
@@ -340,8 +340,8 @@ class TestImageVarianceDetection:
         import numpy as real_np
         test_array = real_np.zeros((100, 200, 3), dtype=real_np.uint8)
 
-        with mock.patch.object(hw_module, "_CV2_AVAILABLE", True), \
-             mock.patch.object(hw_module, "cv2", mock_cv2, create=True), \
+        with mock.patch.object(hw_module, "_CV2_AVAILABLE", True),\
+             mock.patch.object(hw_module, "cv2", mock_cv2, create=True),\
              mock.patch.object(hw_module, "np", real_np, create=True):
             result = detect_handwriting_by_image(test_array, page_num=1)
 
@@ -363,8 +363,8 @@ class TestImageVarianceDetection:
         mock_image = mock.MagicMock()
         mock_image.convert.return_value = mock_image
 
-        with mock.patch.object(hw_module, "_CV2_AVAILABLE", True), \
-             mock.patch.object(hw_module, "cv2", mock_cv2, create=True), \
+        with mock.patch.object(hw_module, "_CV2_AVAILABLE", True),\
+             mock.patch.object(hw_module, "cv2", mock_cv2, create=True),\
              mock.patch.object(hw_module, "np", mock_np, create=True):
             result = detect_handwriting_by_image(mock_image, page_num=1)
 
@@ -640,19 +640,13 @@ class TestWriteJson:
         assert os.path.isdir(expected_dir)
 
     def test_path_traversal_protection(self, tmp_path):
-        """Subfolder with '..' segments -- dots are stripped by sanitization so
-        '../../etc' becomes just 'etc' (a safe child dir), not a traversal escape."""
+        """Subfolder traversal tokens are rejected."""
         doc = DocumentHandwriting(document_id="traversal_test", source_file="evil.pdf")
         doc.pages = []
         doc = finalize_handwriting(doc)
         result = write_handwriting_json(doc, str(tmp_path), "../../etc", "0.5.0")
-        # The _sanitize_path_segment strips leading/trailing dots, so '..' becomes ''
-        # and is filtered out. The remaining 'etc' is a safe subdirectory name.
-        assert result is not None
-        handwriting_dir = os.path.join(str(tmp_path), "EXPORT", "HANDWRITING")
-        # Verify the resolved path stays under HANDWRITING dir
-        assert os.path.realpath(result).startswith(os.path.realpath(handwriting_dir))
-        assert os.path.basename(result) == "evil.handwriting.json"
+        assert result is None
+        assert not (tmp_path / "etc").exists()
 
     def test_empty_subfolder(self, tmp_path):
         doc = DocumentHandwriting(document_id="root_test", source_file="root_doc.pdf")
@@ -692,8 +686,8 @@ class TestGracefulDegradation:
         mock_np = mock.MagicMock()
         mock_np.ndarray = type(mock.MagicMock())
 
-        with mock.patch.object(hw_module, "_CV2_AVAILABLE", True), \
-             mock.patch.object(hw_module, "cv2", mock_cv2, create=True), \
+        with mock.patch.object(hw_module, "_CV2_AVAILABLE", True),\
+             mock.patch.object(hw_module, "cv2", mock_cv2, create=True),\
              mock.patch.object(hw_module, "np", mock_np, create=True):
             result = detect_handwriting_by_image(None, page_num=1)
 

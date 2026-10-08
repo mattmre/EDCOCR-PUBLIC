@@ -69,11 +69,48 @@ def _build_mock_django():
 
     class _FakeSettings:
         NFS_ROOT = "/tmp/test-nfs"
+        configured = True
 
     conf_mod.settings = _FakeSettings()
 
+    class _Atomic:
+        def __call__(self, func=None):
+            return self if func is None else func
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    transaction_mod = types.ModuleType("django.db.transaction")
+    transaction_mod.atomic = _Atomic()
+    db_mod = types.ModuleType("django.db")
+    db_models_mod = types.ModuleType("django.db.models")
+
+    class _F:
+        def __init__(self, field_name):
+            self.field_name = field_name
+
+        def __add__(self, value):
+            return (self.field_name, "+", value)
+
+    db_models_mod.F = _F
+
+    class _Q:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def __or__(self, other):
+            return (self, "OR", other)
+
+    db_models_mod.Q = _Q
+    db_mod.transaction = transaction_mod
+    db_mod.models = db_models_mod
+
     # django module stubs
     django_mod = types.ModuleType("django")
+    django_mod.__path__ = []
     django_utils = types.ModuleType("django.utils")
     django_core = types.ModuleType("django.core")
     django_core_management = types.ModuleType("django.core.management")
@@ -81,6 +118,9 @@ def _build_mock_django():
     return {
         "django": django_mod,
         "django.conf": conf_mod,
+        "django.db": db_mod,
+        "django.db.models": db_models_mod,
+        "django.db.transaction": transaction_mod,
         "django.utils": django_utils,
         "django.utils.timezone": tz_mod,
         "django.core": django_core,
@@ -95,8 +135,9 @@ class _FakeQuerySet:
     def __init__(self, items):
         self._items = list(items)
 
-    def filter(self, **kwargs):
+    def filter(self, *conditions, **kwargs):
         """Apply simple attribute-based filtering to items."""
+        del conditions
         result = list(self._items)
         for key, value in kwargs.items():
             filtered = []
@@ -120,7 +161,10 @@ class _FakeQuerySet:
         return _FakeQuerySet(self._items)
 
     def exclude(self, **kwargs):
-        return _FakeQuerySet(self._items)
+        result = list(self._items)
+        for key, value in kwargs.items():
+            result = [item for item in result if getattr(item, key, None) != value]
+        return _FakeQuerySet(result)
 
     def values_list(self, *fields, flat=False):
         """Return field values from items."""
@@ -131,6 +175,9 @@ class _FakeQuerySet:
 
     def count(self):
         return len(self._items)
+
+    def exists(self):
+        return bool(self._items)
 
     def delete(self):
         n = len(self._items)
@@ -145,6 +192,16 @@ class _FakeQuerySet:
 
     def __iter__(self):
         return iter(self._items)
+
+    def select_for_update(self):
+        """Match the locking queryset method used by the command."""
+        return self
+
+    def update(self, **kwargs):
+        for item in self._items:
+            for key, value in kwargs.items():
+                setattr(item, key, value)
+        return len(self._items)
 
     def __len__(self):
         return len(self._items)
@@ -167,13 +224,26 @@ def _build_mock_job_models():
             _store = []
 
             @classmethod
-            def filter(cls, **kwargs):
+            def select_for_update(cls):
+                return cls
+
+            @classmethod
+            def filter(cls, *conditions, **kwargs):
+                del conditions
                 items = cls._store
                 for key, value in kwargs.items():
                     if key == "tenant_id":
-                        items = [j for j in items if str(getattr(j, "tenant_id", "")) == str(value)]
+                        items = [
+                            j
+                            for j in items
+                            if str(getattr(j, "tenant_id", "")) == str(value)
+                        ]
                     elif key == "job_id":
-                        items = [j for j in items if str(getattr(j, "job_id", "")) == str(value)]
+                        items = [
+                            j
+                            for j in items
+                            if str(getattr(j, "job_id", "")) == str(value)
+                        ]
                 return _FakeQuerySet(items)
 
             @classmethod
@@ -196,11 +266,14 @@ def _build_mock_job_models():
                 return MagicMock()
 
             @classmethod
-            def filter(cls, **kwargs):
+            def filter(cls, *conditions, **kwargs):
+                del conditions
                 items = cls._store
                 for key, value in kwargs.items():
                     if key == "job_id__in":
-                        items = [e for e in items if getattr(e, "job_id", None) in value]
+                        items = [
+                            e for e in items if getattr(e, "job_id", None) in value
+                        ]
                 return _FakeQuerySet(items)
 
     class FakePiiEntity:
@@ -231,16 +304,42 @@ def _build_mock_job_models():
             def count(cls):
                 return len(cls._store)
 
+    class FakeTaskDispatchOutbox:
+        class Status:
+            PENDING = "pending"
+            FAILED = "failed"
+            DEAD = "dead"
+
+        class objects:
+            @classmethod
+            def filter(cls, **kwargs):
+                return _FakeQuerySet([])
+
     models_mod.Job = FakeJob
     models_mod.CustodyEvent = FakeCustodyEvent
     models_mod.PiiEntity = FakePiiEntity
     models_mod.PageResult = FakePageResult
+    models_mod.TaskDispatchOutbox = FakeTaskDispatchOutbox
 
     jobs_mod = types.ModuleType("jobs")
+    jobs_mod.__path__ = []
+
+    tasks_mod = types.ModuleType("jobs.tasks")
+
+    class _FakeNfsBackend:
+        backend_name = "nfs"
+
+    tasks_mod._get_backend_for_job = lambda _job: _FakeNfsBackend()
+
+    def _record_control_plane_custody_event(**kwargs):
+        return FakeCustodyEvent.objects.create(**kwargs)
+
+    tasks_mod._record_control_plane_custody_event = _record_control_plane_custody_event
 
     return {
         "jobs": jobs_mod,
         "jobs.models": models_mod,
+        "jobs.tasks": tasks_mod,
     }
 
 
@@ -248,6 +347,7 @@ def _make_job(job_id, tenant_id, nfs_job_path=""):
     """Create a fake Job-like object."""
     job = MagicMock()
     job.job_id = job_id
+    job.pk = job_id
     job.tenant_id = tenant_id
     job.nfs_job_path = nfs_job_path
     return job
@@ -287,6 +387,14 @@ def _import_purge_tenant(monkeypatch, django_mocks, model_mocks):
     """Import the purge_tenant command module with mocks in place."""
     all_mocks = {**django_mocks, **model_mocks}
 
+    rls_mod = types.ModuleType("jobs.rls")
+    rls_mod.tenant_rls_command = lambda func: func
+    all_mocks["jobs.rls"] = rls_mod
+
+    retirement_mod = types.ModuleType("jobs.artifact_retirement")
+    retirement_mod.retain_cleanup_authority = lambda _job, backend: backend.backend_name == "s3"
+    all_mocks["jobs.artifact_retirement"] = retirement_mod
+
     saved = {}
     for name, mod in all_mocks.items():
         saved[name] = sys.modules.get(name)
@@ -295,7 +403,9 @@ def _import_purge_tenant(monkeypatch, django_mocks, model_mocks):
     # Inject the real litigation_hold module so the command can import it
     lh_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "coordinator", "jobs", "litigation_hold.py",
+        "coordinator",
+        "jobs",
+        "litigation_hold.py",
     )
     lh_spec = importlib.util.spec_from_file_location("jobs.litigation_hold", lh_path)
     lh_mod = importlib.util.module_from_spec(lh_spec)
@@ -439,7 +549,9 @@ class TestPurgeByTenantId:
         output = cmd.stdout.getvalue()
         assert "5 jobs" in output
 
-    def test_purge_does_not_affect_other_tenants(self, purge_tenant_module, monkeypatch):
+    def test_purge_does_not_affect_other_tenants(
+        self, purge_tenant_module, monkeypatch
+    ):
         """Jobs for other tenants must not be deleted."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
 
@@ -615,7 +727,9 @@ class TestLitigationHold:
         assert len(FakeCustodyEvent._created) == 0
         assert len(FakeJob.objects._store) == 1
 
-    def test_litigation_hold_accepts_yes_and_one(self, purge_tenant_module, monkeypatch):
+    def test_litigation_hold_accepts_yes_and_one(
+        self, purge_tenant_module, monkeypatch
+    ):
         """LITIGATION_HOLD should accept 'yes', '1', and 'true'."""
         mod = purge_tenant_module["cmd_module"]
 
@@ -666,8 +780,8 @@ class TestCustodyEventEmitted:
                 include_output=False,
             )
 
-        assert len(FakeCustodyEvent._created) == 1
-        event = FakeCustodyEvent._created[0]
+        assert len(FakeCustodyEvent._created) == 2
+        event = FakeCustodyEvent._created[-1]
         assert event["event_type"] == "tenant_purged"
         assert event["data"]["action"] == "purge_tenant"
         assert event["data"]["tenant_id"] == tenant
@@ -709,7 +823,7 @@ class TestCustodyEventEmitted:
                 include_output=False,
             )
 
-        event = FakeCustodyEvent._created[0]
+        event = FakeCustodyEvent._created[-1]
         assert event["data"]["page_count"] == 2
         assert event["data"]["pii_entity_count"] == 2
         assert event["data"]["custody_event_count"] == 1
@@ -723,7 +837,9 @@ class TestCustodyEventEmitted:
 class TestIncludeOutput:
     """--include-output should remove NFS job directories."""
 
-    def test_include_output_removes_nfs_dirs(self, purge_tenant_module, monkeypatch, tmp_path):
+    def test_include_output_removes_nfs_dirs(
+        self, purge_tenant_module, monkeypatch, tmp_path
+    ):
         """NFS directories for tenant jobs should be removed."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
 
@@ -731,10 +847,16 @@ class TestIncludeOutput:
         FakeJob = purge_tenant_module["FakeJob"]
 
         tenant = "nfs-tenant"
-        # Create a temporary NFS directory
-        nfs_dir = tmp_path / "nfs_job"
-        nfs_dir.mkdir()
+        # Create the canonical NFS_ROOT/<job_id> layout required by the
+        # production deletion guard; arbitrary temp paths are intentionally
+        # rejected as untrusted database state.
+        nfs_root = tmp_path / "nfs-root"
+        nfs_dir = nfs_root / "job-1"
+        nfs_dir.mkdir(parents=True)
         (nfs_dir / "output.pdf").write_text("test")
+        purge_tenant_module["django_mocks"]["django.conf"].settings.NFS_ROOT = str(
+            nfs_root
+        )
 
         job = _make_job("job-1", tenant, nfs_job_path=str(nfs_dir))
         FakeJob.objects._store = [job]
@@ -755,8 +877,10 @@ class TestIncludeOutput:
         assert "NFS dirs removed" in output
         assert not nfs_dir.exists()
 
-    def test_without_include_output_keeps_nfs_dirs(self, purge_tenant_module, monkeypatch, tmp_path):
-        """Without --include-output, NFS directories should not be removed."""
+    def test_without_include_output_keeps_nfs_dirs(
+        self, purge_tenant_module, monkeypatch, tmp_path
+    ):
+        """--skip-output / include_output=False keeps NFS directories (opt-out)."""
         monkeypatch.delenv("LITIGATION_HOLD", raising=False)
 
         mod = purge_tenant_module["cmd_module"]
@@ -764,7 +888,7 @@ class TestIncludeOutput:
 
         tenant = "keep-nfs-tenant"
         nfs_dir = tmp_path / "nfs_job"
-        nfs_dir.mkdir()
+        nfs_dir.mkdir(parents=True)
         (nfs_dir / "output.pdf").write_text("test")
 
         job = _make_job("job-1", tenant, nfs_job_path=str(nfs_dir))
@@ -779,11 +903,51 @@ class TestIncludeOutput:
                 dry_run=False,
                 confirm=True,
                 include_custody=False,
-                include_output=False,
+                include_output=False,  # legacy opt-out
+                skip_output=True,
             )
 
         # NFS dir should still exist
         assert nfs_dir.exists()
+
+    def test_confirm_defaults_to_fs_wipe(
+        self, purge_tenant_module, monkeypatch, tmp_path
+    ):
+        """R4-RC-16: --confirm without --skip-output removes NFS job path."""
+        monkeypatch.delenv("LITIGATION_HOLD", raising=False)
+
+        mod = purge_tenant_module["cmd_module"]
+        FakeJob = purge_tenant_module["FakeJob"]
+
+        tenant = "default-fs-wipe"
+        nfs_root = tmp_path / "nfs-root"
+        nfs_dir = nfs_root / "job-1"
+        nfs_dir.mkdir(parents=True)
+        (nfs_dir / "output.pdf").write_text("pii")
+        purge_tenant_module["django_mocks"]["django.conf"].settings.NFS_ROOT = str(
+            nfs_root
+        )
+
+        job = _make_job("job-1", tenant, nfs_job_path=str(nfs_dir))
+        FakeJob.objects._store = [job]
+
+        cmd = mod.Command()
+        cmd.stdout = StringIO()
+
+        with patch.dict(sys.modules, {"cost_tracking": MagicMock()}):
+            cmd.handle(
+                tenant_id=tenant,
+                dry_run=False,
+                confirm=True,
+                include_custody=False,
+                include_output=None,
+                skip_output=False,
+            )
+
+        assert not nfs_dir.exists()
+        assert (
+            "shared-fs paths" in cmd.stdout.getvalue() or "NFS" in cmd.stdout.getvalue()
+        )
 
 
 # ===========================================================================
@@ -886,8 +1050,8 @@ class TestOperatorIdentity:
                 include_output=False,
             )
 
-        assert len(FakeCustodyEvent._created) == 1
-        event = FakeCustodyEvent._created[0]
+        assert len(FakeCustodyEvent._created) == 2
+        event = FakeCustodyEvent._created[-1]
         assert "operator" in event["data"]
         assert event["data"]["operator"] == getpass.getuser()
         assert isinstance(event["data"]["operator"], str)

@@ -19,7 +19,7 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
-describe("alerts-api", => {
+describe("alerts-api", () => {
   beforeEach(() => {
     setApiKey("admin-key");
   });
@@ -28,7 +28,7 @@ describe("alerts-api", => {
     vi.restoreAllMocks();
   });
 
-  it("listAlerts GETs /admin/alerts and returns the parsed body", async => {
+  it("listAlerts GETs /admin/alerts and returns the parsed body", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(jsonResponse(200, [{ id: "a1", rule_id: "r1" }]));
@@ -46,7 +46,7 @@ describe("alerts-api", => {
     expect(out[0]).toMatchObject({ id: "a1", rule_id: "r1" });
   });
 
-  it("listRules GETs /admin/alerts/rules", async => {
+  it("listRules GETs /admin/alerts/rules", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(jsonResponse(200, [{ id: "r1", name: "queue depth" }]));
@@ -57,7 +57,7 @@ describe("alerts-api", => {
     expect(url).toContain("/api/v1/admin/alerts/rules");
   });
 
-  it("getRule URL-encodes the rule id", async => {
+  it("getRule URL-encodes the rule id", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(jsonResponse(200, { id: "r 1", name: "x" }));
@@ -68,7 +68,7 @@ describe("alerts-api", => {
     expect(url).toContain("/api/v1/admin/alerts/rules/r%201");
   });
 
-  it("updateRuleThreshold PATCHes the operator-editable subset", async => {
+  it("updateRuleThreshold PATCHes the operator-editable subset", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(jsonResponse(200, { id: "r1", threshold_value: 200 }));
@@ -83,7 +83,7 @@ describe("alerts-api", => {
     expect(body).toEqual({ threshold_value: 200, enabled: false });
   });
 
-  it("muteAlert POSTs the reason payload to /mute", async => {
+  it("muteAlert POSTs the reason payload to /mute", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(jsonResponse(200, { id: "a1", state: "muted" }));
@@ -98,7 +98,7 @@ describe("alerts-api", => {
     expect(body).toEqual({ reason: "investigating" });
   });
 
-  it("unmuteAlert POSTs to /unmute", async => {
+  it("unmuteAlert POSTs to /unmute", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(jsonResponse(200, { id: "a1", state: "firing" }));
@@ -109,7 +109,7 @@ describe("alerts-api", => {
     expect(url).toContain("/api/v1/admin/alerts/a1/unmute");
   });
 
-  it("listChannels GETs /admin/alert-channels", async => {
+  it("listChannels GETs /admin/alert-channels", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(jsonResponse(200, []));
@@ -120,7 +120,7 @@ describe("alerts-api", => {
     expect(url).toContain("/api/v1/admin/alert-channels");
   });
 
-  it("testChannel POSTs to the channel-specific test endpoint", async => {
+  it("testChannel POSTs to the channel-specific test endpoint", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(
@@ -134,7 +134,7 @@ describe("alerts-api", => {
     expect(result.ok).toBe(true);
   });
 
-  it("does not mask 403 responses (page renders access-denied)", async => {
+  it("does not mask 403 responses (page renders access-denied)", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse(403, { detail: "platform admin required" })
     );
@@ -153,7 +153,7 @@ describe("alerts-api", => {
     expect(caught).not.toBeInstanceOf(UnauthorizedError);
   });
 
-  it("treats 404 like other non-OK responses (page handles it)", async => {
+  it("treats 404 like other non-OK responses (page handles it)", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse(404, { detail: "not provisioned" })
     );

@@ -47,7 +47,7 @@ export default function AuditPage() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return => {
+    return () => {
       cancelled = true;
     };
   }, []);

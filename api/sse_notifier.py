@@ -1,4 +1,4 @@
-"""In-process asyncio.Event notification for SSE streams.
+"""In-process asyncio.Event notification for SSE streams (maintenance review).
 
 Eliminates per-poll SQLite queries by signaling waiting SSE generators
 directly when job status changes.  Falls back to 30-second timeout polling

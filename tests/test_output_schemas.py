@@ -1,7 +1,7 @@
 """Tests for output contract schema definitions (X1-A).
 
 Validates schema loading, validation logic, and structural correctness
-for all 14 output types.
+for every registered output type.
 """
 
 import json
@@ -57,9 +57,7 @@ class TestSchemaStructure:
         """Each schema has $schema, type, properties, and required keys."""
         schema = load_schema(output_type)
         for key in self.REQUIRED_KEYS:
-            assert key in schema, (
-                f"Schema '{output_type}' missing top-level key: {key}"
-            )
+            assert key in schema, f"Schema '{output_type}' missing top-level key: {key}"
 
     @pytest.mark.parametrize("output_type", OUTPUT_TYPES)
     def test_schema_draft_07(self, output_type):
@@ -516,8 +514,8 @@ class TestOutputTypesCompleteness:
     """Tests for OUTPUT_TYPES tuple completeness."""
 
     def test_output_types_count(self):
-        """OUTPUT_TYPES has 14 entries."""
-        assert len(OUTPUT_TYPES) == 14
+        """OUTPUT_TYPES registers every pipeline-owned schema."""
+        assert len(OUTPUT_TYPES) == 18
 
     def test_all_schema_files_exist(self):
         """Every entry in OUTPUT_TYPES has a corresponding schema file."""
@@ -528,12 +526,9 @@ class TestOutputTypesCompleteness:
     def test_no_orphan_schema_files(self):
         """No unclassified schema files exist outside OUTPUT_TYPES."""
         schema_files = set(SCHEMA_DIR.glob("*.schema.json"))
-        expected_files = {
-            SCHEMA_DIR / f"{ot}.schema.json" for ot in OUTPUT_TYPES
-        }
+        expected_files = {SCHEMA_DIR / f"{ot}.schema.json" for ot in OUTPUT_TYPES}
         standalone_contract_files = {
             SCHEMA_DIR / "glossary.schema.json",
-            SCHEMA_DIR / "language.schema.json",
             SCHEMA_DIR / "translation.schema.json",
             SCHEMA_DIR / "document-bundle-v1.schema.json",
             SCHEMA_DIR / "translation-bundle-v1.schema.json",

@@ -13,9 +13,31 @@ from celery.signals import (
     worker_ready,
     worker_shutdown,
 )
+from django.db import close_old_connections
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+
+def _worker_queues(sender) -> list[str]:
+    """Return subscribed queues, falling back to the deployment contract."""
+    queues: list[str] = []
+    try:
+        consumer_queues = getattr(getattr(sender, "consumer", None), "queues", ())
+        queues = [
+            name for queue in consumer_queues if (name := getattr(queue, "name", ""))
+        ]
+    except Exception as exc:
+        logger.warning("Queue introspection failed; using WORKER_QUEUES: %s", exc)
+
+    # Celery can emit worker_ready before consumer.queues is populated.
+    if not queues:
+        queues = [
+            queue.strip()
+            for queue in os.environ.get("WORKER_QUEUES", "cpu_general").split(",")
+            if queue.strip()
+        ]
+    return queues
 
 
 def _detect_gpu():
@@ -31,6 +53,7 @@ def _detect_gpu():
 
     try:
         import paddle
+
         if paddle.device.is_compiled_with_cuda():
             gpu_count = paddle.device.cuda.device_count()
             if gpu_count > 0:
@@ -70,6 +93,7 @@ def _detect_cpu():
     ram_mb = 0
     try:
         import psutil
+
         ram_mb = psutil.virtual_memory().total // (1024 * 1024)
     except ImportError:
         pass
@@ -111,6 +135,7 @@ def recommended_cpu_concurrency() -> int:
     ram_based = 8  # default cap if psutil unavailable
     try:
         import psutil
+
         ram_gb = psutil.virtual_memory().total / (1024 * 1024 * 1024)
         ram_based = max(1, int(ram_gb // 2))
     except ImportError:
@@ -131,22 +156,15 @@ def on_worker_ready(sender=None, **kwargs):
         rec = recommended_concurrency(gpu_vram_mb)
         logger.info(
             "GPU VRAM: %dMB → recommended concurrency: %d (current: %s)",
-            gpu_vram_mb, rec,
+            gpu_vram_mb,
+            rec,
             os.environ.get("WORKER_CONCURRENCY", "not set"),
         )
     cpu_cores, ram_mb = _detect_cpu()
     gpu_index = _extract_gpu_index()
 
     # Get queue names from worker consumer
-    queues = []
-    try:
-        if hasattr(sender, "consumer") and hasattr(sender.consumer, "queues"):
-            queues = [q.name for q in sender.consumer.queues]
-    except Exception as exc:
-        # Keep registration resilient even if Celery internals or transport
-        # behavior changes and queue introspection fails at runtime.
-        logger.warning("Falling back to WORKER_QUEUES env var due to queue introspection failure: %s", exc)
-        queues = os.environ.get("WORKER_QUEUES", "cpu_general").split(",")
+    queues = _worker_queues(sender)
 
     # Log CPU OCR concurrency recommendation when worker subscribes to ocr_cpu
     if "ocr_cpu" in queues and not gpu_available:
@@ -168,6 +186,7 @@ def on_worker_ready(sender=None, **kwargs):
 
     try:
         from ocr_local.config.version import __version__
+
         pipeline_version = __version__
     except ImportError:
         pipeline_version = "unknown"
@@ -184,8 +203,9 @@ def on_worker_ready(sender=None, **kwargs):
         ram_mb=ram_mb,
         pipeline_version=pipeline_version,
     )
-    logger.info("Worker %s registered (GPU: %s, queues: %s)",
-                hostname, gpu_available, queues)
+    logger.info(
+        "Worker %s registered (GPU: %s, queues: %s)", hostname, gpu_available, queues
+    )
 
 
 @worker_shutdown.connect
@@ -204,6 +224,18 @@ def on_heartbeat(sender=None, **kwargs):
     from .models import Worker
 
     hostname = socket.gethostname()
-    Worker.objects.filter(hostname=hostname).update(
-        last_heartbeat=timezone.now(),
-    )
+    # Celery's heartbeat thread can outlive the Django connection it first
+    # borrowed.  Reusing that closed connection raises InterfaceError and can
+    # flood every worker log while leaving the worker looking stale.  Treat
+    # the signal as a short-lived DB operation: discard unusable connections
+    # before and after the update, and never let telemetry take down the
+    # heartbeat thread.
+    try:
+        close_old_connections()
+        Worker.objects.filter(hostname=hostname).update(
+            last_heartbeat=timezone.now(),
+        )
+    except Exception as exc:  # pragma: no cover - backend/network dependent
+        logger.debug("Worker heartbeat update skipped for %s: %s", hostname, exc)
+    finally:
+        close_old_connections()

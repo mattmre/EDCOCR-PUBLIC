@@ -1,7 +1,7 @@
 # =============================================================================
-#  -- C3 Federated Observability overlay
+# Plan C Phase 1 -- C3 Federated Observability overlay
 #
-# Cross-cluster Prometheus / Grafana federation for EDCOCR deployments.
+# Cross-cluster Prometheus / Grafana federation for OCR_LOCAL deployments.
 #
 # This overlay does NOT modify the main `values.yaml`. Compose with helm:
 #

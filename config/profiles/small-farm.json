@@ -1,0 +1,15 @@
+{
+  "name": "small-farm",
+  "num_extractors": 6,
+  "num_workers": 8,
+  "num_compressors": 4,
+  "image_queue_size": 80,
+  "chunk_queue_size": 30,
+  "dpi": 300,
+  "description": "Small multi-worker / small-site baseline knobs",
+  "topology_class": "farm",
+  "honest_limits": [
+    "Knob template only \u2014 does not prove multi-host farm (ES-9\u2026ES-12)."
+  ],
+  "extra": {}
+}

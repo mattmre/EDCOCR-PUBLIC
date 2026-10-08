@@ -24,9 +24,7 @@ from api.config import ENABLE_MULTITENANCY
 logger = logging.getLogger(__name__)
 
 # Validation regex for rate limit strings (e.g. "100/minute", "10/second")
-_RATE_LIMIT_RE = re.compile(
-    r"^\d+/(second|minute|hour|day|month|year)$"
-)
+_RATE_LIMIT_RE = re.compile(r"^\d+/(second|minute|hour|day|month|year)$")
 
 # In-memory cache of tenant_id -> rate_limit_string.
 # Refreshed periodically from the database.
@@ -68,17 +66,17 @@ def _load_tenant_rate_limits() -> None:
 
     session = get_session_factory()()
     try:
-        rows = session.query(TenantRateLimit).all()
         new_cache: dict[str, str] = {}
+        # Keep the cache complete while avoiding a second full ORM list when
+        # tenant cardinality is large.
+        rows = session.query(TenantRateLimit).yield_per(1_000)
         for row in rows:
             if row.rate_limit and validate_rate_limit_string(row.rate_limit):
                 new_cache[row.tenant_id] = row.rate_limit
         with _cache_lock:
             _tenant_rate_limits.clear()
             _tenant_rate_limits.update(new_cache)
-        logger.debug(
-            "Refreshed tenant rate limit cache: %d entries", len(new_cache)
-        )
+        logger.debug("Refreshed tenant rate limit cache: %d entries", len(new_cache))
     finally:
         session.close()
 
@@ -114,9 +112,7 @@ def set_tenant_rate_limit(
             row = TenantRateLimit(tenant_id=tenant_id, rate_limit=rate_limit)
             session.add(row)
         session.commit()
-        logger.info(
-            "Set rate limit for tenant %s: %s", tenant_id, rate_limit
-        )
+        logger.info("Set rate limit for tenant %s: %s", tenant_id, rate_limit)
     except Exception:
         session.rollback()
         raise
@@ -206,8 +202,14 @@ def _make_dynamic_limit_resolver(fallback_rate_func):
     """
 
     def _resolve(key: str) -> str:
-        if ENABLE_MULTITENANCY and key.startswith("tenant_"):
-            tenant_limit = get_tenant_rate_limit(key)
+        # S3-A10: tenant_key_func returns bare tenant_id (or tenant_* if that
+        # is the tenant's id). Always look up custom limits under MT — do not
+        # require a tenant_ prefix that bare IDs never had.
+        if ENABLE_MULTITENANCY and key:
+            tenant_id = key[len("tenant_") :] if key.startswith("tenant_") else key
+            tenant_limit = get_tenant_rate_limit(tenant_id) or get_tenant_rate_limit(
+                key
+            )
             if tenant_limit:
                 return tenant_limit
         return fallback_rate_func()

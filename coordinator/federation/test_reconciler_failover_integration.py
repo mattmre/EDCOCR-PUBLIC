@@ -48,8 +48,8 @@ class _FakeResponse:
             body = json.dumps(body).encode("utf-8")
         self._buf = io.BytesIO(body)
 
-    def read(self) -> bytes:
-        return self._buf.read()
+    def read(self, size: int = -1) -> bytes:
+        return self._buf.read(size)
 
     def getcode(self) -> int:
         return self.status
@@ -72,6 +72,7 @@ def metrics() -> Metrics:
         from prometheus_client import (
             CollectorRegistry,  # type: ignore[import-not-found]
         )
+
         return Metrics.build(registry=CollectorRegistry())
     except ImportError:  # pragma: no cover - no prom in env
         return Metrics.build()
@@ -156,8 +157,8 @@ def test_reconcile_calls_failover_after_policy_logic(
     call_order: list[str] = []
 
     api = MagicMock()
-    api.create_namespaced_custom_object.side_effect = (
-        lambda **_kw: call_order.append("policy_create")
+    api.create_namespaced_custom_object.side_effect = lambda **_kw: call_order.append(
+        "policy_create"
     )
 
     class _RecordingEngine:

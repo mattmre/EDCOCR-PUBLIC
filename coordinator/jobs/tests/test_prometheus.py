@@ -55,9 +55,7 @@ class TestPipelineCollector(TestCase):
             "ocr_tenant_processing_time_avg_ms",
             "ocr_processing_duration_seconds",
         ]
-        assert family_names == expected, (
-            f"Expected {expected}, got {family_names}"
-        )
+        assert family_names == expected, f"Expected {expected}, got {family_names}"
         assert len(families) == 22
 
     def test_collect_job_counts_by_status(self):
@@ -86,20 +84,27 @@ class TestPipelineCollector(TestCase):
     def test_collect_worker_counts(self):
         """Worker counts by status and GPU availability are correct."""
         Worker.objects.create(
-            hostname="w1", status=Worker.Status.ONLINE,
-            gpu_available=True, gpu_model="RTX 4090",
+            hostname="w1",
+            status=Worker.Status.ONLINE,
+            gpu_available=True,
+            gpu_model="RTX 4090",
         )
         Worker.objects.create(
-            hostname="w2", status=Worker.Status.BUSY,
-            gpu_available=True, gpu_model="RTX 3090",
+            hostname="w2",
+            status=Worker.Status.BUSY,
+            gpu_available=True,
+            gpu_model="RTX 3090",
         )
         Worker.objects.create(
-            hostname="w3", status=Worker.Status.OFFLINE,
+            hostname="w3",
+            status=Worker.Status.OFFLINE,
             gpu_available=False,
         )
         Worker.objects.create(
-            hostname="w4", status=Worker.Status.OFFLINE,
-            gpu_available=True, gpu_model="RTX 3080",
+            hostname="w4",
+            status=Worker.Status.OFFLINE,
+            gpu_available=True,
+            gpu_model="RTX 3080",
         )
 
         families = {f.name: f for f in self.collector.collect()}
@@ -120,25 +125,44 @@ class TestPipelineCollector(TestCase):
         """Page processed total and average time are computed correctly."""
         job = Job.objects.create(source_file="/test.pdf", total_pages=5)
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=1,
-            status="ok", processing_time_ms=100, ocr_method="paddle",
+            job=job,
+            document_id="d1",
+            page_num=1,
+            status="ok",
+            processing_time_ms=100,
+            ocr_method="paddle",
         )
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=2,
-            status="fallback", processing_time_ms=200, ocr_method="tesseract",
+            job=job,
+            document_id="d1",
+            page_num=2,
+            status="fallback",
+            processing_time_ms=200,
+            ocr_method="tesseract",
         )
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=3,
-            status="image_only", processing_time_ms=300, ocr_method="paddle",
+            job=job,
+            document_id="d1",
+            page_num=3,
+            status="image_only",
+            processing_time_ms=300,
+            ocr_method="paddle",
         )
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=4,
-            status="completed", processing_time_ms=400, ocr_method="paddle",
+            job=job,
+            document_id="d1",
+            page_num=4,
+            status="completed",
+            processing_time_ms=400,
+            ocr_method="paddle",
         )
         # "failed" status should be excluded from processed count
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=5,
-            status="failed", processing_time_ms=50,
+            job=job,
+            document_id="d1",
+            page_num=5,
+            status="failed",
+            processing_time_ms=50,
         )
 
         families = {f.name: f for f in self.collector.collect()}
@@ -251,21 +275,113 @@ class TestPipelineCollector(TestCase):
                 _json.dumps(event_dict, sort_keys=True, default=str).encode()
             ).hexdigest()
             CustodyEvent.objects.create(
-                document_id="doc1", job=job, event_type=etype,
-                timestamp=ts, prev_hash=prev_hash or "",
-                event_hash=event_hash, chain_finalized=True,
+                document_id="doc1",
+                job=job,
+                event_type=etype,
+                timestamp=ts,
+                prev_hash=prev_hash or "",
+                event_hash=event_hash,
+                chain_finalized=True,
             )
             prev_hash = event_hash
 
         families = {f.name: f for f in self.collector.collect()}
         assert families["ocr_custody_violations_total"].samples[0].value == 0
 
+    def test_collect_custody_uses_id_order_when_worker_timestamps_regress(self):
+        """A valid insertion-ordered chain survives backwards worker clocks."""
+        import hashlib as _hashlib
+        import json as _json
+
+        from django.utils import timezone as _tz
+
+        job = Job.objects.create(source_file="/clock-skew.pdf")
+        timestamps = (
+            _tz.now() - _tz.timedelta(minutes=1),
+            _tz.now() - _tz.timedelta(minutes=5),
+        )
+        prev_hash = None
+        events = []
+        for event_type, timestamp in zip(("ingest", "complete"), timestamps):
+            event_dict = {
+                "document_id": "clock-skew-doc",
+                "event_type": event_type,
+                "timestamp": timestamp.isoformat(timespec="milliseconds"),
+                "data": {},
+                "prev_hash": prev_hash,
+            }
+            event_hash = _hashlib.sha256(
+                _json.dumps(event_dict, sort_keys=True, default=str).encode()
+            ).hexdigest()
+            events.append(
+                CustodyEvent.objects.create(
+                    document_id="clock-skew-doc",
+                    job=job,
+                    event_type=event_type,
+                    timestamp=timestamp,
+                    prev_hash=prev_hash or "",
+                    event_hash=event_hash,
+                    chain_finalized=True,
+                )
+            )
+            prev_hash = event_hash
+
+        assert events[0].id < events[1].id
+        assert events[0].timestamp > events[1].timestamp
+        assert self.collector._collect_cold() == 0
+
+    def test_collect_custody_separates_jobs_sharing_document_id(self):
+        """Independent jobs with the same document ID are distinct chains."""
+        import hashlib as _hashlib
+        import json as _json
+
+        from django.utils import timezone as _tz
+
+        shared_document_id = "shared-document"
+        first_job = Job.objects.create(source_file="/first.pdf")
+        second_job = Job.objects.create(source_file="/second.pdf")
+        previous = {first_job.pk: None, second_job.pk: None}
+
+        for job, event_type in (
+            (first_job, "first-ingest"),
+            (second_job, "second-ingest"),
+            (first_job, "first-complete"),
+            (second_job, "second-complete"),
+        ):
+            timestamp = _tz.now() - _tz.timedelta(minutes=1)
+            prev_hash = previous[job.pk]
+            event_dict = {
+                "document_id": shared_document_id,
+                "event_type": event_type,
+                "timestamp": timestamp.isoformat(timespec="milliseconds"),
+                "data": {},
+                "prev_hash": prev_hash,
+            }
+            event_hash = _hashlib.sha256(
+                _json.dumps(event_dict, sort_keys=True, default=str).encode()
+            ).hexdigest()
+            CustodyEvent.objects.create(
+                document_id=shared_document_id,
+                job=job,
+                event_type=event_type,
+                timestamp=timestamp,
+                prev_hash=prev_hash or "",
+                event_hash=event_hash,
+                chain_finalized=True,
+            )
+            previous[job.pk] = event_hash
+
+        assert self.collector._collect_cold() == 0
+
     def test_collect_custody_violations_detected(self):
         """Detects a corrupted custody chain hash."""
         job = Job.objects.create(source_file="/test.pdf")
         CustodyEvent.objects.create(
-            document_id="doc1", job=job, event_type="ingest",
-            prev_hash="", event_hash="deliberately_wrong_hash",
+            document_id="doc1",
+            job=job,
+            event_type="ingest",
+            prev_hash="",
+            event_hash="deliberately_wrong_hash",
             chain_finalized=True,
         )
         families = {f.name: f for f in self.collector.collect()}
@@ -274,15 +390,18 @@ class TestPipelineCollector(TestCase):
     def test_collect_s3_error_rate(self):
         """S3 error rate is computed from S3-backed jobs only."""
         Job.objects.create(
-            source_file="/a.pdf", status=Job.Status.COMPLETED,
+            source_file="/a.pdf",
+            status=Job.Status.COMPLETED,
             storage_backend_used="s3",
         )
         Job.objects.create(
-            source_file="/b.pdf", status=Job.Status.FAILED,
+            source_file="/b.pdf",
+            status=Job.Status.FAILED,
             storage_backend_used="s3",
         )
         Job.objects.create(
-            source_file="/c.pdf", status=Job.Status.FAILED,
+            source_file="/c.pdf",
+            status=Job.Status.FAILED,
             storage_backend_used="nfs",
         )
         families = {f.name: f for f in self.collector.collect()}
@@ -328,11 +447,13 @@ class TestPipelineCollector(TestCase):
 
         two_hours_ago = _tz.now() - _tz.timedelta(hours=2)
         Job.objects.create(
-            source_file="/a.pdf", status=Job.Status.PROCESSING,
+            source_file="/a.pdf",
+            status=Job.Status.PROCESSING,
             started_at=two_hours_ago,
         )
         Job.objects.create(
-            source_file="/b.pdf", status=Job.Status.PROCESSING,
+            source_file="/b.pdf",
+            status=Job.Status.PROCESSING,
             started_at=_tz.now(),
         )
         families = {f.name: f for f in self.collector.collect()}
@@ -344,7 +465,8 @@ class TestPipelineCollector(TestCase):
         Job.objects.create(source_file="/a.pdf", status=Job.Status.COMPLETED)
         families1 = {f.name: f for f in self.collector.collect()}
         completed1 = next(
-            s.value for s in families1["ocr_jobs_total"].samples
+            s.value
+            for s in families1["ocr_jobs_total"].samples
             if s.labels["status"] == "completed"
         )
         assert completed1 == 1
@@ -353,7 +475,8 @@ class TestPipelineCollector(TestCase):
         Job.objects.create(source_file="/b.pdf", status=Job.Status.COMPLETED)
         families2 = {f.name: f for f in self.collector.collect()}
         completed2 = next(
-            s.value for s in families2["ocr_jobs_total"].samples
+            s.value
+            for s in families2["ocr_jobs_total"].samples
             if s.labels["status"] == "completed"
         )
         # Still 1 because warm cache has not expired
@@ -369,7 +492,8 @@ class TestPipelineCollector(TestCase):
 
         families = {f.name: f for f in self.collector.collect()}
         completed = next(
-            s.value for s in families["ocr_jobs_total"].samples
+            s.value
+            for s in families["ocr_jobs_total"].samples
             if s.labels["status"] == "completed"
         )
         assert completed == 2
@@ -402,6 +526,12 @@ class TestHasValidMetricsKey(TestCase):
         """When METRICS_API_KEY is empty, all requests are allowed."""
         request = self.factory.get("/api/v1/prometheus/")
         assert has_valid_metrics_key(request) is True
+
+    @patch.dict("os.environ", {"DEPLOYMENT_ENV": "prod"})
+    @patch("jobs.metrics_auth.METRICS_API_KEY", "")
+    def test_no_key_configured_is_closed_in_production(self):
+        request = self.factory.get("/api/v1/prometheus/")
+        assert has_valid_metrics_key(request) is False
 
     @patch("jobs.metrics_auth.METRICS_API_KEY", "secret-key-123")
     def test_valid_x_api_key_header(self):
@@ -476,7 +606,9 @@ class TestPrometheusEndpoint(TestCase):
         # Create some data so metrics have values
         Job.objects.create(source_file="/a.pdf", status=Job.Status.COMPLETED)
         Worker.objects.create(
-            hostname="w1", status=Worker.Status.ONLINE, gpu_available=True,
+            hostname="w1",
+            status=Worker.Status.ONLINE,
+            gpu_available=True,
         )
 
         response = self.client.get("/api/v1/prometheus/")
@@ -496,9 +628,9 @@ class TestPrometheusEndpoint(TestCase):
             "ocr_jobs_stuck_total",
         ]
         for metric_name in expected_metrics:
-            assert metric_name in body, (
-                f"Expected metric '{metric_name}' not found in response body"
-            )
+            assert (
+                metric_name in body
+            ), f"Expected metric '{metric_name}' not found in response body"
 
     def test_endpoint_only_get(self):
         """POST to /api/v1/prometheus/ returns 405 Method Not Allowed."""
@@ -545,8 +677,11 @@ class TestPrometheusEndpoint(TestCase):
         Job.objects.create(source_file="/b.pdf", status=Job.Status.FAILED)
         job = Job.objects.create(source_file="/c.pdf", status=Job.Status.PROCESSING)
         PageResult.objects.create(
-            job=job, document_id="d1", page_num=1,
-            status="ok", processing_time_ms=150,
+            job=job,
+            document_id="d1",
+            page_num=1,
+            status="ok",
+            processing_time_ms=150,
         )
 
         response = self.client.get("/api/v1/prometheus/")

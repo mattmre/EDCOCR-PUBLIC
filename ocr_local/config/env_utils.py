@@ -1,4 +1,4 @@
-"""Centralized environment variable schema and typed accessors.
+"""Centralized environment variable schema and typed accessors (maintenance review).
 
 This module provides:
 - Typed accessor helpers (get_env, get_env_int, get_env_float, get_env_bool)

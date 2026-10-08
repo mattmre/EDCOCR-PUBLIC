@@ -1,3 +1,5 @@
+> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](release-candidate.md) and the root installation guide.
+
 # 08: SDK Reference
 
 ## Overview
@@ -6,8 +8,8 @@ EDCOCR provides published SDK packages for Python and TypeScript. Both packages 
 
 | SDK | Location | Runtime Requirement |
 |---|---|---|
-| Python | `sdk/python/` (`edcocr-sdk`) | Python 3.9+, `httpx`, `pydantic` |
-| TypeScript | `sdk/typescript/` (`@edcocr/sdk`) | Node.js 18+ or modern browser with native `fetch` |
+| Python | `sdk/python/` (`edcocr-sdk`) | Python 3.9+ from wheel; 3.10+ source build, `httpx`, `pydantic` |
+| TypeScript | `sdk/typescript/` (`@edcocr/sdk`) | Node.js 20.19+ or 22.12+ or modern browser with native `fetch` |
 
 > [!NOTE]
 > Repository-local compatibility shims also exist at `sdk/python_client.py` and `sdk/typescript/ocr_client.ts`, but the package roots above are the supported SDK distribution surfaces.
@@ -75,7 +77,7 @@ client.close;
 
 ### Notes
 
-- Uses native `fetch` in Node.js 18+ and modern browsers.
+- Uses native `fetch` in Node.js 20.19+ or 22.12+ and modern browsers.
 - Uses `EDCOCRClient` as the public client export.
 - Method names align conceptually with the Python SDK, but follow TypeScript casing such as `submitJob` and `waitForCompletion`.
 

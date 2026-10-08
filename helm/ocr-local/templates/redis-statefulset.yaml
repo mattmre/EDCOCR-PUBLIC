@@ -12,10 +12,18 @@ metadata:
 spec:
   clusterIP: None
   ports:
+    {{- if not .Values.tls.enabled }}
     - name: redis
       port: 6379
       targetPort: redis
       protocol: TCP
+    {{- end }}
+    {{- if .Values.tls.enabled }}
+    - name: redis-tls
+      port: 6380
+      targetPort: redis-tls
+      protocol: TCP
+    {{- end }}
   selector:
     {{- include "ocr-local.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: redis
@@ -49,7 +57,7 @@ spec:
       {{- end }}
       containers:
         - name: redis
-          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          image: {{ include "ocr-local.imageRef" (dict "image" .Values.redis.image "defaultTag" "" "requireDigest" .Values.image.requireDigest "name" "redis") | quote }}
           imagePullPolicy: IfNotPresent
           command:
             - sh
@@ -61,6 +69,7 @@ spec:
               --maxmemory {{ .Values.redis.maxmemory }}
               --maxmemory-policy {{ .Values.redis.maxmemoryPolicy }}
               {{- if .Values.tls.enabled }}
+              --port 0
               --tls-port 6380
               --tls-cert-file /etc/tls/tls.crt
               --tls-key-file /etc/tls/tls.key
@@ -68,9 +77,11 @@ spec:
               --tls-auth-clients no
               {{- end }}
           ports:
+            {{- if not .Values.tls.enabled }}
             - name: redis
               containerPort: 6379
               protocol: TCP
+            {{- end }}
             {{- if .Values.tls.enabled }}
             - name: redis-tls
               containerPort: 6380
@@ -95,7 +106,12 @@ spec:
               command:
                 - sh
                 - -c
-                - REDISCLI_AUTH=$REDIS_PASSWORD redis-cli ping | grep -q PONG
+                - >-
+                  REDISCLI_AUTH=$REDIS_PASSWORD redis-cli
+                  {{- if .Values.tls.enabled }}
+                  --tls -p 6380 --cacert /etc/tls/ca.crt
+                  {{- end }}
+                  ping | grep -q PONG
             periodSeconds: 10
             initialDelaySeconds: 15
             failureThreshold: 3
@@ -104,7 +120,12 @@ spec:
               command:
                 - sh
                 - -c
-                - REDISCLI_AUTH=$REDIS_PASSWORD redis-cli ping | grep -q PONG
+                - >-
+                  REDISCLI_AUTH=$REDIS_PASSWORD redis-cli
+                  {{- if .Values.tls.enabled }}
+                  --tls -p 6380 --cacert /etc/tls/ca.crt
+                  {{- end }}
+                  ping | grep -q PONG
             periodSeconds: 10
             initialDelaySeconds: 5
             failureThreshold: 3

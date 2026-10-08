@@ -1,4 +1,4 @@
-"""Python SDK for EDCOCR API."""
+"""Python SDK for OCR_LOCAL API."""
 
 from sdk.python_client import (
     AuthenticationError,

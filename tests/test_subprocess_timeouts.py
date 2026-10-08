@@ -1,4 +1,4 @@
-"""Tests for subprocess timeout safety (, , ).
+"""Tests for subprocess timeout safety (maintenance review, maintenance review, maintenance review).
 
 Validates that Ghostscript, Tesseract, and Poppler calls have timeouts
 and handle subprocess.TimeoutExpired gracefully without crashing threads.
@@ -11,14 +11,13 @@ import os
 import subprocess
 from unittest.mock import MagicMock, patch
 
-import pytest
 from PIL import Image
 
 # Add project root to path
 
 
 # ---------------------------------------------------------------------------
-# Ghostscript timeout in optimize_pdfs.py
+# maintenance review: Ghostscript timeout in optimize_pdfs.py
 # ---------------------------------------------------------------------------
 
 
@@ -31,11 +30,23 @@ class TestGhostscriptTimeout:
         original_content = b"%PDF-1.0 " + b"x" * 10000
         pdf.write_bytes(original_content)
 
-        from optimize_pdfs import GHOSTSCRIPT_TIMEOUT, optimize_pdf
+        from optimize_pdfs import (
+            GHOSTSCRIPT_TIMEOUT,
+            OptimizationDisposition,
+            optimize_pdf,
+        )
 
-        with patch(
-            "optimize_pdfs.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd="gs", timeout=GHOSTSCRIPT_TIMEOUT),
+        with (
+            patch(
+                "optimize_pdfs._preflight_visual_budget",
+                return_value=(OptimizationDisposition.APPLIED, "", {}),
+            ),
+            patch(
+                "optimize_pdfs.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(
+                    cmd="gs", timeout=GHOSTSCRIPT_TIMEOUT
+                ),
+            ),
         ):
             with caplog.at_level(logging.WARNING):
                 optimize_pdf(str(pdf))
@@ -83,9 +94,22 @@ class TestGhostscriptTimeout:
         pdf = tmp_path / "doc.pdf"
         pdf.write_bytes(b"%PDF-1.0 " + b"x" * 1000)
 
-        from optimize_pdfs import GHOSTSCRIPT_TIMEOUT, optimize_pdf
+        from optimize_pdfs import (
+            GHOSTSCRIPT_TIMEOUT,
+            OptimizationDisposition,
+            optimize_pdf,
+        )
 
-        with patch("optimize_pdfs.subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
+        with (
+            patch(
+                "optimize_pdfs._preflight_visual_budget",
+                return_value=(OptimizationDisposition.APPLIED, "", {}),
+            ),
+            patch(
+                "optimize_pdfs.subprocess.run",
+                return_value=MagicMock(returncode=0),
+            ) as mock_run,
+        ):
             optimize_pdf(str(pdf))
 
         mock_run.assert_called_once()
@@ -94,7 +118,7 @@ class TestGhostscriptTimeout:
 
 
 # ---------------------------------------------------------------------------
-# Tesseract timeout in ocr_gpu_async.py
+# maintenance review: Tesseract timeout in ocr_gpu_async.py
 # ---------------------------------------------------------------------------
 
 
@@ -103,7 +127,12 @@ class TestTesseractTimeout:
 
     def test_tesseract_timeout_constant_exists(self):
         """TESSERACT_TIMEOUT should be importable and set to 120."""
-        with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "ocr_gpu_async.py"), encoding="utf-8") as f:
+        with open(
+            os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), "ocr_gpu_async.py"
+            ),
+            encoding="utf-8",
+        ) as f:
             source = f.read()
 
         # Verify the constant definition exists in source
@@ -114,21 +143,13 @@ class TestTesseractTimeout:
 
     def test_tesseract_timeout_default_value(self):
         """TESSERACT_TIMEOUT default should be 120 seconds."""
-        with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "ocr_gpu_async.py"), encoding="utf-8") as f:
-            source = f.read()
+        from ocr_gpu_async import TESSERACT_TIMEOUT
 
-        # Find the line defining TESSERACT_TIMEOUT
-        for line in source.splitlines():
-            if line.startswith("TESSERACT_TIMEOUT"):
-                # Should contain 120 as default
-                assert "120" in line
-                break
-        else:
-            pytest.fail("TESSERACT_TIMEOUT definition not found at module level")
+        assert TESSERACT_TIMEOUT == 120
 
 
 # ---------------------------------------------------------------------------
-# Poppler timeout in ocr_gpu_async.py and dpi_escalation.py
+# maintenance review: Poppler timeout in ocr_gpu_async.py and dpi_escalation.py
 # ---------------------------------------------------------------------------
 
 
@@ -137,14 +158,24 @@ class TestPopplerTimeoutOcrGpuAsync:
 
     def test_poppler_timeout_constant_exists(self):
         """POPPLER_TIMEOUT should be defined in ocr_gpu_async.py."""
-        with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "ocr_gpu_async.py"), encoding="utf-8") as f:
+        with open(
+            os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), "ocr_gpu_async.py"
+            ),
+            encoding="utf-8",
+        ) as f:
             source = f.read()
 
         assert "POPPLER_TIMEOUT" in source
 
     def test_convert_from_path_has_timeout(self):
         """All convert_from_path calls must include timeout=POPPLER_TIMEOUT."""
-        with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "ocr_gpu_async.py"), encoding="utf-8") as f:
+        with open(
+            os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), "ocr_gpu_async.py"
+            ),
+            encoding="utf-8",
+        ) as f:
             source = f.read()
 
         # Count occurrences of the actual function invocations vs timeout usage.
@@ -159,15 +190,9 @@ class TestPopplerTimeoutOcrGpuAsync:
 
     def test_poppler_timeout_default_value(self):
         """POPPLER_TIMEOUT default should be 300 seconds."""
-        with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "ocr_gpu_async.py"), encoding="utf-8") as f:
-            source = f.read()
+        from ocr_gpu_async import POPPLER_TIMEOUT
 
-        for line in source.splitlines():
-            if line.startswith("POPPLER_TIMEOUT"):
-                assert "300" in line
-                break
-        else:
-            pytest.fail("POPPLER_TIMEOUT definition not found at module level")
+        assert POPPLER_TIMEOUT == 300
 
 
 class TestPopplerTimeoutDpiEscalation:
@@ -190,8 +215,12 @@ class TestPopplerTimeoutDpiEscalation:
         re_extract_page_at_dpi("/fake/doc.pdf", 1, 450)
 
         mock_convert.assert_called_once_with(
-            "/fake/doc.pdf", first_page=1, last_page=1, dpi=450,
+            "/fake/doc.pdf",
+            first_page=1,
+            last_page=1,
+            dpi=450,
             timeout=POPPLER_TIMEOUT,
+            use_cropbox=True,
         )
 
     @patch("dpi_escalation._convert_from_path")

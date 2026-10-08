@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,20 +38,22 @@ logger = logging.getLogger(__name__)
 _LEVEL_ORDER = ("DEBUG", "INFO", "WARN", "WARNING", "ERROR")
 _LEVEL_PRIORITY = {"DEBUG": 0, "INFO": 1, "WARN": 2, "WARNING": 2, "ERROR": 3}
 
-# Per-job lock -- guards file open + write + flush so two threads writing for
-# the same job_id can't interleave a partial line on Windows where append-mode
-# atomicity is not guaranteed.
-_locks: dict[str, threading.Lock] = {}
-_locks_lock = threading.Lock()
-_write_counter: dict[str, int] = {}
+# One bounded process-local writer lock avoids both line interleaving on
+# Windows and an unbounded lock registry keyed by historical job ids.
+_write_lock = threading.Lock()
+_write_counter = 0
 _FSYNC_EVERY_N_WRITES = 25
+_MAX_LOG_RECORD_BYTES = 256 * 1024
+_JOB_ID_RE = re.compile(r"^job_[0-9a-f]{12}$")
 
 
 def _output_dir() -> str:
     """Resolve the OCR output directory at write time (env may change in tests)."""
-    return os.environ.get("OCR_OUTPUT_DIR", "").strip() or os.environ.get(
-        "OUTPUT_FOLDER", ""
-    ).strip() or "/app/ocr_output"
+    return (
+        os.environ.get("OUTPUT_FOLDER", "").strip()
+        or os.environ.get("OCR_OUTPUT_DIR", "").strip()
+        or "/app/ocr_output"
+    )
 
 
 def job_log_path(job_id: str, *, base_dir: Optional[str] = None) -> Path:
@@ -58,17 +61,10 @@ def job_log_path(job_id: str, *, base_dir: Optional[str] = None) -> Path:
 
     Public so the read endpoint can resolve the same path.
     """
+    if not isinstance(job_id, str) or not _JOB_ID_RE.fullmatch(job_id):
+        raise ValueError("job_id must match job_<12 lowercase hex characters>")
     root = Path(base_dir) if base_dir else Path(_output_dir())
     return root / "logs" / "jobs" / f"{job_id}.jsonl"
-
-
-def _get_lock(job_id: str) -> threading.Lock:
-    with _locks_lock:
-        lock = _locks.get(job_id)
-        if lock is None:
-            lock = threading.Lock()
-            _locks[job_id] = lock
-        return lock
 
 
 def _coerce_record(
@@ -109,15 +105,21 @@ def write_job_log(
         path.parent.mkdir(parents=True, exist_ok=True)
         coerced = _coerce_record(record, job_id=job_id)
         line = json.dumps(coerced, ensure_ascii=False, separators=(",", ":")) + "\n"
-        lock = _get_lock(job_id)
-        with lock:
+        if len(line.encode("utf-8")) > _MAX_LOG_RECORD_BYTES:
+            logger.warning(
+                "Skipping oversized job log record for %s (limit %d bytes)",
+                job_id,
+                _MAX_LOG_RECORD_BYTES,
+            )
+            return
+        global _write_counter
+        with _write_lock:
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write(line)
                 # Periodic fsync so the read endpoint sees recent writes
                 # promptly without paying the syscall cost on every event.
-                count = _write_counter.get(job_id, 0) + 1
-                _write_counter[job_id] = count
-                if count % _FSYNC_EVERY_N_WRITES == 0:
+                _write_counter += 1
+                if _write_counter % _FSYNC_EVERY_N_WRITES == 0:
                     try:
                         fh.flush()
                         os.fsync(fh.fileno())
@@ -125,6 +127,11 @@ def write_job_log(
                         pass
     except Exception:  # pragma: no cover - defensive
         logger.debug("write_job_log failed for %s", job_id, exc_info=True)
+
+
+def release_job_log_state(job_id: str) -> None:
+    """Compatibility no-op: writer state is now constant-size process state."""
+    del job_id
 
 
 def parse_log_line(raw: str) -> Optional[dict[str, Any]]:

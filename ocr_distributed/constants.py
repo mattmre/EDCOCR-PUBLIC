@@ -17,10 +17,13 @@ VIDEO_EXTENSIONS = {
 PHASE1_IMAGE_EXTENSIONS = {
     ".tif", ".tiff", ".jpg", ".jpeg", ".png", ".bmp", ".gif",
     ".webp", ".jp2", ".jpx", ".pnm", ".pbm", ".pgm", ".ppm",
-    ".pcx", ".ico", ".svg", ".svgz", ".wmf", ".emf",
+    ".pcx", ".ico", ".svg", ".svgz",
 }
 
-PHASE2_IMAGE_EXTENSIONS = {".heic", ".heif", ".avif", ".jxl", ".jxr", ".dcx", ".xps"}
+PHASE2_IMAGE_EXTENSIONS = {
+    ".heic", ".heif", ".avif", ".jxl", ".jxr", ".dcx", ".xps",
+    ".wmf", ".emf",
+}
 
 # --- Language Mapping (FastText code -> PaddleOCR model name) ---
 # Prefer the consolidated registry when available; keep inline fallback

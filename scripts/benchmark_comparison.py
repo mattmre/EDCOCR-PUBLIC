@@ -259,7 +259,7 @@ def generate_comparison_table(
     lines = [
         "# OCR Performance Benchmark Comparison",
         "",
-        "| Metric | EDCOCR |",
+        "| Metric | OCR_LOCAL |",
         "|--------|----------|",
     ]
 

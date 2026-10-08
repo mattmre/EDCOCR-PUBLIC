@@ -183,6 +183,8 @@ def _patch_django_settings_none():
     """Patch Django settings attrs to None so env var fallback is exercised."""
     from django.conf import settings as django_settings
     patches = []
+    if not django_settings.configured:
+        return patches
     for attr in ("CONTEXT_WINDOW_ENABLED", "CONTEXT_WINDOW_SIZE",
                  "CONTEXT_STORE_TTL", "CONTEXT_STORE_URL", "REDIS_URL"):
         if hasattr(django_settings, attr):

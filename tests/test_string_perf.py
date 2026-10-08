@@ -1,4 +1,4 @@
-"""Regression tests for O(n) string join replacing O(n^2) += concat.
+"""Regression tests for maintenance review: O(n) string join replacing O(n^2) += concat.
 
 Verifies that the list-accumulator + join pattern produces identical
 output to the old += concatenation for all three OCR text-building
@@ -24,7 +24,7 @@ def _old_paddle_concat(lines: list[tuple[str, list, float]]) -> str:
 
 
 def _new_paddle_join(lines: list[tuple[str, list, float]]) -> str:
-    """New O(n) list-accumulator pattern."""
+    """New O(n) list-accumulator pattern (maintenance review)."""
     _text_parts: list[str] = []
     for txt, _box, _conf in lines:
         _text_parts.append(txt)
@@ -43,7 +43,7 @@ def _old_tesseract_concat(words: list[str]) -> str:
 
 
 def _new_tesseract_join(words: list[str]) -> str:
-    """New O(n) list-accumulator pattern for Tesseract path."""
+    """New O(n) list-accumulator pattern for Tesseract path (maintenance review)."""
     _tess_parts: list[str] = []
     for word in words:
         _tess_parts.append(word)
@@ -62,7 +62,7 @@ def _old_assembler_concat(page_texts: dict[int, str], total_pages: int) -> str:
 
 
 def _new_assembler_join(page_texts: dict[int, str], total_pages: int) -> str:
-    """New O(n) list-accumulator pattern for assembler loop."""
+    """New O(n) list-accumulator pattern for assembler loop (maintenance review)."""
     _full_text_parts: list[str] = []
     for p in range(1, total_pages + 1):
         _full_text_parts.append(page_texts.get(p, "") + "\n\f")

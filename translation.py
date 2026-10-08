@@ -4,7 +4,7 @@ Importing this module redirects to the canonical location.  All existing
 import paths (``import translation``, ``from translation import X``)
 continue to work unchanged, including access to private symbols.
 
- Phase 2 sys.modules replacement pattern -- preserves underscore-
+maintenance review Phase 2 sys.modules replacement pattern -- preserves underscore-
 prefixed symbols by replacing the whole module entry rather than
 re-exporting via ``__all__`` or ``from X import Y``.
 """

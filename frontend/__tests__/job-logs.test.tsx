@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JobLogs } from "@/components/JobLogs";
-import { setApiKey } from "@/lib/auth";
+import { getApiKey, setApiKey } from "@/lib/auth";
 
 function ndjsonResponse(records: unknown[], status = 200): Response {
   const body = records.map((r) => JSON.stringify(r)).join("\n");
@@ -18,7 +18,13 @@ function notFoundResponse(): Response {
   );
 }
 
-describe("<JobLogs />", => {
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe("<JobLogs />", () => {
   beforeEach(() => {
     setApiKey("test-key");
   });
@@ -27,7 +33,7 @@ describe("<JobLogs />", => {
     vi.restoreAllMocks();
   });
 
-  it("renders log records returned from the NDJSON endpoint", async => {
+  it("renders log records returned from the NDJSON endpoint", async () => {
     const records = [
       {
         ts: "2026-04-27T12:00:00+00:00",
@@ -56,7 +62,7 @@ describe("<JobLogs />", => {
     expect(pre.textContent).toContain("JOB_FAILED");
   });
 
-  it("shows the missing state on 404", async => {
+  it("shows the missing state on 404", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(notFoundResponse());
 
     render(<JobLogs jobId="job_aaaaaaaa2222" pollingEnabled={false} />);
@@ -66,24 +72,34 @@ describe("<JobLogs />", => {
     });
   });
 
-  it("auto-tails by passing the last-seen ts as since=", async => {
+  it("clears a rejected credential on 401 but preserves it on capability denial", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock.mockResolvedValueOnce(ndjsonResponse([], 401));
+
+    const { unmount } = render(<JobLogs jobId="job_unauthorized" pollingEnabled={false} />);
+    await waitFor(() => expect(screen.getByTestId("job-logs-error")).toHaveTextContent("401"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    unmount();
+
+    setApiKey("test-key");
+    fetchMock.mockResolvedValueOnce(ndjsonResponse([], 403));
+    render(<JobLogs jobId="job_forbidden" pollingEnabled={false} />);
+    await waitFor(() => expect(screen.getByTestId("job-logs-error")).toHaveTextContent("403"));
+    expect(getApiKey()).toBe("test-key");
+  });
+
+  it("auto-tails by passing the last-seen ts as since=", async () => {
     const t0 = "2026-04-27T12:00:00+00:00";
     const t1 = "2026-04-27T12:00:05+00:00";
     const fetchMock = vi.spyOn(globalThis, "fetch");
     fetchMock.mockResolvedValueOnce(
-      ndjsonResponse([
-        { ts: t0, level: "INFO", code: "X", job_id: "job_t", message: "first" },
-      ])
+      ndjsonResponse([{ ts: t0, level: "INFO", code: "X", job_id: "job_t", message: "first" }])
     );
     fetchMock.mockResolvedValueOnce(
-      ndjsonResponse([
-        { ts: t1, level: "INFO", code: "X", job_id: "job_t", message: "second" },
-      ])
+      ndjsonResponse([{ ts: t1, level: "INFO", code: "X", job_id: "job_t", message: "second" }])
     );
 
-    render(
-      <JobLogs jobId="job_t" pollingEnabled={true} pollIntervalMs={50} />
-    );
+    render(<JobLogs jobId="job_t" pollingEnabled={true} pollIntervalMs={50} />);
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -93,20 +109,18 @@ describe("<JobLogs />", => {
     expect(secondCallUrl).toContain(`since=${encodeURIComponent(t0)}`);
   });
 
-  it("pauses polling when pause is clicked", async => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        ndjsonResponse([
-          {
-            ts: "2026-04-27T12:00:00+00:00",
-            level: "INFO",
-            code: "X",
-            job_id: "job_p",
-            message: "ok",
-          },
-        ])
-      );
+  it("pauses polling when pause is clicked", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      ndjsonResponse([
+        {
+          ts: "2026-04-27T12:00:00+00:00",
+          level: "INFO",
+          code: "X",
+          job_id: "job_p",
+          message: "ok",
+        },
+      ])
+    );
 
     render(<JobLogs jobId="job_p" pollingEnabled={true} pollIntervalMs={20} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -119,7 +133,7 @@ describe("<JobLogs />", => {
     expect(fetchMock.mock.calls.length).toBe(callsAfterPause);
   });
 
-  it("clears retained log records on Clear", async => {
+  it("clears retained log records on Clear", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       ndjsonResponse([
         {
@@ -134,13 +148,49 @@ describe("<JobLogs />", => {
 
     render(<JobLogs jobId="job_c" pollingEnabled={false} />);
     await waitFor(() => {
-      expect(screen.getByTestId("job-logs-pre").textContent).toContain(
-        "to be cleared"
-      );
+      expect(screen.getByTestId("job-logs-pre").textContent).toContain("to be cleared");
     });
 
     fireEvent.click(screen.getByTestId("job-logs-clear"));
     expect(screen.queryByTestId("job-logs-pre")).toBeNull();
     expect(screen.getByTestId("job-logs-empty")).toBeInTheDocument();
+  });
+
+  it("keeps polling after a missing file appears", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(notFoundResponse())
+      .mockResolvedValue(ndjsonResponse([{ ts: "t", level: "INFO", code: "READY", message: "now present" }]));
+    render(<JobLogs jobId="job_aaaaaaaa1111" pollIntervalMs={20} />);
+    await waitFor(() => expect(screen.getByTestId("job-logs-missing")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("job-logs-pre")).toHaveTextContent("now present"));
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("shows rejected fetches and recovers on the next poll", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(ndjsonResponse([{ ts: "t", level: "INFO", code: "READY", message: "recovered" }]));
+    render(<JobLogs jobId="job_aaaaaaaa1111" pollIntervalMs={20} />);
+    await waitFor(() => expect(screen.getByTestId("job-logs-error")).toHaveTextContent("offline"));
+    await waitFor(() => expect(screen.getByTestId("job-logs-pre")).toHaveTextContent("recovered"));
+  });
+
+  it("does not abort or replace a slow poll and continues from its cursor", async () => {
+    const slow = deferred<Response>();
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() => slow.promise)
+      .mockResolvedValue(ndjsonResponse([{ ts: "same", level: "INFO", code: "SECOND", message: "second" }]));
+    render(<JobLogs jobId="job_aaaaaaaa1111" pollIntervalMs={20} />);
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0][1]?.signal as AbortSignal).aborted).toBe(false);
+    slow.resolve(new Response(
+      JSON.stringify({ ts: "same", level: "INFO", code: "FIRST", message: "first" }) + "\n",
+      { status: 200, headers: { "X-Next-Cursor": "opaque-1" } }
+    ));
+    await waitFor(() => expect(screen.getByTestId("job-logs-pre")).toHaveTextContent("first"));
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(String(fetchMock.mock.calls[1][0])).toContain("cursor=opaque-1");
+    await waitFor(() => expect(screen.getByTestId("job-logs-pre")).toHaveTextContent("second"));
   });
 });

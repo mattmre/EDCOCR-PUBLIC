@@ -150,7 +150,7 @@ Feed the normalized Playwright summary into the staged release gate:
 
 ```bash
 python scripts/run_phase8_release_gate.py ^
-  --repo mattmre/EDCOCR-PUBLIC ^
+  --repo mattmre/OCR_LOCAL ^
   --pull-request 257 ^
   --playwright-summary-json playwright-artifacts/runs/<run-id>/summary.json ^
   --playwright-gate-policy require-executed ^

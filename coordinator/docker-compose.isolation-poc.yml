@@ -1,9 +1,9 @@
 # ------------------------------------------------------------------------------
 # Phase 9 Proof-of-Concept: Worker Isolation (OCR vs NLP)
 # ------------------------------------------------------------------------------
-# This compose file demonstrates the decoupled worker architecture proposed in
+# This compose file demonstrates the decoupled worker architecture proposed in 
 # docs/research-paddleocr-3x-upgrade-20260312.md.
-#
+# 
 # Usage:
 #   docker compose -f docker-compose.isolation-poc.yml build
 #   docker compose -f docker-compose.isolation-poc.yml up -d

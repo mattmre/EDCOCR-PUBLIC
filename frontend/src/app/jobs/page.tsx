@@ -10,7 +10,7 @@ export default function JobsPage() {
       <div>
         <h1 className="text-2xl font-semibold">Jobs</h1>
         <p className="text-sm text-muted-foreground">
-          Submitted documents. Status, progress, and creation timestamps refresh every 10 seconds.
+          Submitted documents. Pagination and refresh timing use your saved Display preferences.
         </p>
       </div>
       <JobsTable />

@@ -1,0 +1,14 @@
+# Optional legacy UIE extraction dependencies.
+#
+# Not part of the default OCR runtime install. The default extraction path
+# already degrades to regex-only behavior when PaddleNLP is unavailable.
+#
+# Current constraints:
+# - PaddleNLP 2.8.1 is tied to the Paddle 2.x UIE Taskflow lane.
+# - Windows/Python 3.11 resolver paths have failed on unavailable tool-helpers.
+# - Python 3.12 container resolver paths have failed in the paddle2onnx /
+#   onnxoptimizer build chain without supplemental build tooling.
+# - Do not install this file in root/worker Docker images until UIE is
+#   revalidated in its own legacy lane.
+
+paddlenlp==2.8.1; platform_system != "Windows" and python_version < "3.12"

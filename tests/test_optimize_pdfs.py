@@ -244,7 +244,7 @@ class TestOptimizePdfGhostscriptArgs:
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "gs"
-        assert "-dSAFER" in cmd, "Ghostscript must run with -dSAFER sandbox (maintenance review)"
+        assert "-dSAFER" in cmd, "Ghostscript must run with -dSAFER sandbox"
         assert cmd.index("-dSAFER") < cmd.index("-sDEVICE=pdfwrite")
         for flag in (
             "-sDEVICE=pdfwrite",

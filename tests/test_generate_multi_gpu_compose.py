@@ -239,11 +239,11 @@ class TestPerGpuQueues:
             )
 
     def test_cutover_runbook_command_executes_from_coordinator(self, tmp_path):
-        runbook = (
-            ROOT / "docs" / "operations" / "production-cutover-runbook.md"
-        ).read_text(encoding="utf-8")
-        assert "python ../scripts/generate_multi_gpu_compose.py" in runbook
-        assert "--gpus 4 --per-gpu-queues" in runbook
+        """Generator runs from the coordinator directory.
+
+        Runbook wording is not pinned; export sanitization must not resurrect
+        a source-text check here.
+        """
         output = tmp_path / "docker-compose.multi-gpu.generated.yml"
         result = subprocess.run(
             [

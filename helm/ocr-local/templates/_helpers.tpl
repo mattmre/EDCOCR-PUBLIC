@@ -832,3 +832,78 @@ containers cannot read their referenced trust roots.
   mountPath: {{ .Values.workerSecurity.stagingVolume.mountPath | quote }}
 {{- end }}
 {{- end }}
+
+{{/*
+True when host is a chart Service DNS alias: short name, namespace, cluster
+FQDN, or StatefulSet pod DNS. Release-qualified names only; unrelated hosts
+that share a prefix are not aliases.
+*/}}
+{{- define "ocr-local.hostnameTargetsBundledService" -}}
+{{- $root := .root -}}
+{{- $host := lower (trimSuffix "." (trim (default "" .host))) -}}
+{{- $svc := lower (printf "%s-%s" $root.Release.Name .service) -}}
+{{- $ns := lower $root.Release.Namespace -}}
+{{- $domain := lower (trimSuffix "." (default "cluster.local" $root.Values.clusterDomain)) -}}
+{{- $suffixes := list "" (printf ".%s" $ns) (printf ".%s.svc" $ns) (printf ".%s.svc.%s" $ns $domain) -}}
+{{- $matched := false -}}
+{{- range $suffix := $suffixes -}}
+{{- if eq $host (printf "%s%s" $svc $suffix) -}}
+{{- $matched = true -}}
+{{- end -}}
+{{- end -}}
+{{- $parts := splitn "." 2 $host -}}
+{{- $left := $parts._0 -}}
+{{- $right := default "" $parts._1 -}}
+{{- if and (not $matched) $right (hasPrefix (printf "%s-" $svc) $left) -}}
+{{- $ordinal := trimPrefix (printf "%s-" $svc) $left -}}
+{{- if regexMatch "^[0-9]+$" $ordinal -}}
+{{- range $suffix := $suffixes -}}
+{{- if eq $right (printf "%s%s" $svc $suffix) -}}
+{{- $matched = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $matched }}true{{- else }}false{{- end -}}
+{{- end -}}
+
+{{/* True when any semicolon-delimited URL targets bundled Redis, replica, or Sentinel. */}}
+{{- define "ocr-local.redisUrlTargetsBundled" -}}
+{{- $root := .root -}}
+{{- $matched := false -}}
+{{- range splitList ";" (default "" .url) -}}
+{{- $part := trim . -}}
+{{- if $part -}}
+{{- $host := (urlParse $part).hostname -}}
+{{- range list "redis" "redis-sentinel" "redis-replica" -}}
+{{- if eq (include "ocr-local.hostnameTargetsBundledService" (dict "root" $root "host" $host "service" .)) "true" -}}
+{{- $matched = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $matched }}true{{- else }}false{{- end -}}
+{{- end -}}
+
+{{/* True when every URL segment has a host and an allowed TLS scheme. */}}
+{{- define "ocr-local.redisEndpointUsable" -}}
+{{- $ok := true -}}
+{{- $saw := false -}}
+{{- $allowSentinel := .allowSentinel -}}
+{{- range splitList ";" (default "" .url) -}}
+{{- $part := trim . -}}
+{{- if $part -}}
+{{- $saw = true -}}
+{{- $parsed := urlParse $part -}}
+{{- $scheme := lower $parsed.scheme -}}
+{{- $allowed := eq $scheme "rediss" -}}
+{{- if and $allowSentinel (eq $scheme "sentinel") -}}
+{{- $allowed = true -}}
+{{- end -}}
+{{- if or (not $allowed) (eq (trim $parsed.hostname) "") -}}
+{{- $ok = false -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and $ok $saw }}true{{- else }}false{{- end -}}
+{{- end -}}

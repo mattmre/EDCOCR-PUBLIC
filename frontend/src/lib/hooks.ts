@@ -433,6 +433,11 @@ type DeepPartial<T> = {
 
 export interface UseSettingsResult {
   settings: Settings;
+  /**
+   * False during SSR and the first client render so markup matches defaults.
+   * Becomes true in the same mount update that applies stored settings.
+   */
+  hydrated: boolean;
   /** Merge a partial patch into `settings` (per-section shallow merge). */
   update: (patch: DeepPartial<Settings>) => void;
   /** Persist the current `settings` to localStorage. Returns success. */
@@ -455,8 +460,11 @@ function mergeSettings(base: Settings, patch: DeepPartial<Settings>): Settings {
 
 export function useSettings(): UseSettingsResult {
   // Initialize with defaults so SSR has a stable shape, then hydrate from
-  // localStorage on mount.
+  // localStorage on mount. Consumers that issue requests must wait for
+  // `hydrated`: this effect cannot update a sibling effect's closure in the
+  // same flush, so a mount fetch would otherwise use the default page size.
   const [settings, setSettings] = useState<Settings>(() => getDefaultSettings());
+  const [hydrated, setHydrated] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
 
   // Mirror `settings` into a ref so `save()` can read the latest value
@@ -470,6 +478,7 @@ export function useSettings(): UseSettingsResult {
     setSettings(stored);
     settingsRef.current = stored;
     applyTheme(stored.general.theme);
+    setHydrated(true);
   }, []);
 
   const update = useCallback((patch: DeepPartial<Settings>) => {
@@ -502,7 +511,7 @@ export function useSettings(): UseSettingsResult {
     applyTheme(defaults.general.theme);
   }, []);
 
-  return { settings, update, save, reset, lastSavedAt };
+  return { settings, hydrated, update, save, reset, lastSavedAt };
 }
 
 // ---------------------------------------------------------------------------

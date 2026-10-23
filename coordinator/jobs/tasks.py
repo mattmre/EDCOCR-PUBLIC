@@ -6464,10 +6464,13 @@ def _recover_staged_pages(*, limit=100):
     pending_before = now - timedelta(seconds=30)
     recovered = 0
     cleanup_ids = []
+    recoverable_statuses = ("pending", "rendering", "rendered", "infering", "inferred")
+    if not is_litigation_hold_active():
+        recoverable_statuses += ("cleanup",)
     with control_plane_rls_context():
         candidates = list(
             PageOCRStage.objects.filter(
-                status__in=("pending", "rendering", "rendered", "infering", "inferred", "cleanup"),
+                status__in=recoverable_statuses,
             ).filter(
                 Q(status="cleanup")
                 | Q(status="pending", updated_at__lt=pending_before)
@@ -7361,6 +7364,8 @@ def _stage_complete(stage_id, backend):
 
 
 def _stage_cleanup_artifact(stage_id, backend):
+    if is_litigation_hold_active():
+        return
     stage = PageOCRStage.objects.get(pk=stage_id)
     if stage.status != "cleanup":
         return
@@ -7458,6 +7463,8 @@ def _stage_cleanup_artifact(stage_id, backend):
 
 def _sweep_retired_stage_rasters(*, limit=100):
     """Repeatedly delete exact old keys, including after reservation release."""
+    if is_litigation_hold_active():
+        return 0
     from .rls import control_plane_rls_context
 
     now = timezone.now()
@@ -7519,7 +7526,13 @@ def recover_page_stages():
     """Beat repair for staged worker loss and uncertain retired raster PUTs."""
     from .artifact_retirement import sweep_retired_job_artifacts
 
-    retired_jobs = sweep_retired_job_artifacts()
+    try:
+        retired_jobs = sweep_retired_job_artifacts()
+    except Exception as exc:
+        logger.error(
+            "Retired job artifact sweep failed: %s", type(exc).__name__,
+        )
+        retired_jobs = {"swept": 0, "failed": 0, "error": type(exc).__name__}
     recovered = _recover_staged_pages()
     swept = _sweep_retired_stage_rasters()
     return {"recovered": recovered, "retired_swept": swept, "retired_jobs": retired_jobs}

@@ -50,7 +50,7 @@ from ocr_local.config.version import __version__ as _sdk_version
 logger = logging.getLogger(__name__)
 
 warnings.warn(
-    "sdk.python_client is the legacy in-tree SDK (maintenance review) and is deprecated. "
+    "sdk.python_client is the legacy in-tree SDK and is deprecated. "
     "Use the canonical SDK: `from edcocr_sdk import EDCOCRClient` "
     "(see sdk/python/src/edcocr_sdk). This module will be removed in a "
     "future major release.",

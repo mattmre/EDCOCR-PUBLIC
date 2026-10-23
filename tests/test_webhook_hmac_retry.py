@@ -32,6 +32,14 @@ def _reset_database_engine():
     yield
     reset_engine()
 
+@pytest.fixture(autouse=True)
+def _public_dns_for_webhook_pin():
+    """Keep retry/signature tests on the real pin path without network DNS."""
+    from tests.webhook_public_dns import public_webhook_dns
+
+    with public_webhook_dns():
+        yield
+
 
 def _make_session_factory(tmp_path):
     """Build a sessionmaker bound to the test database."""
@@ -126,8 +134,8 @@ class TestJobWebhookTimestampRefresh:
         with (
             patch("api.webhooks.time.sleep"),  # skip retry delays
             patch("api.webhooks._safe_opener", mock_opener),
-            patch("api.config.WEBHOOK_ALLOW_HTTP", True),
-            patch("api.config.WEBHOOK_ALLOW_PRIVATE", True),
+            patch("api.config.WEBHOOK_ALLOW_HTTP", False),
+            patch("api.config.WEBHOOK_ALLOW_PRIVATE", False),
             patch("api.config.WEBHOOK_ENRICH_ENTITIES", False),
             patch("api.config.decrypt_webhook_secret", return_value="test-secret"),
         ):
@@ -178,8 +186,8 @@ class TestJobWebhookTimestampRefresh:
         with (
             patch("api.webhooks.time.sleep"),
             patch("api.webhooks._safe_opener", mock_opener),
-            patch("api.config.WEBHOOK_ALLOW_HTTP", True),
-            patch("api.config.WEBHOOK_ALLOW_PRIVATE", True),
+            patch("api.config.WEBHOOK_ALLOW_HTTP", False),
+            patch("api.config.WEBHOOK_ALLOW_PRIVATE", False),
             patch("api.config.WEBHOOK_ENRICH_ENTITIES", False),
             patch("api.config.decrypt_webhook_secret", return_value="sig-secret"),
         ):
@@ -215,8 +223,8 @@ class TestJobWebhookTimestampRefresh:
         with (
             patch("api.webhooks.time.sleep"),
             patch("api.webhooks._safe_opener", mock_opener),
-            patch("api.config.WEBHOOK_ALLOW_HTTP", True),
-            patch("api.config.WEBHOOK_ALLOW_PRIVATE", True),
+            patch("api.config.WEBHOOK_ALLOW_HTTP", False),
+            patch("api.config.WEBHOOK_ALLOW_PRIVATE", False),
             patch("api.config.WEBHOOK_ENRICH_ENTITIES", False),
         ):
             from api.webhooks import deliver_webhook
@@ -246,8 +254,8 @@ class TestJobWebhookTimestampRefresh:
         with (
             patch("api.webhooks.time.sleep"),
             patch("api.webhooks._safe_opener", mock_opener),
-            patch("api.config.WEBHOOK_ALLOW_HTTP", True),
-            patch("api.config.WEBHOOK_ALLOW_PRIVATE", True),
+            patch("api.config.WEBHOOK_ALLOW_HTTP", False),
+            patch("api.config.WEBHOOK_ALLOW_PRIVATE", False),
             patch("api.config.WEBHOOK_ENRICH_ENTITIES", False),
             patch("api.config.decrypt_webhook_secret", return_value="verify-secret"),
         ):
@@ -289,8 +297,8 @@ class TestBatchWebhookTimestampRefresh:
         with (
             patch("api.webhooks.time.sleep"),
             patch("api.webhooks._safe_opener", mock_opener),
-            patch("api.config.WEBHOOK_ALLOW_HTTP", True),
-            patch("api.config.WEBHOOK_ALLOW_PRIVATE", True),
+            patch("api.config.WEBHOOK_ALLOW_HTTP", False),
+            patch("api.config.WEBHOOK_ALLOW_PRIVATE", False),
             patch("api.config.decrypt_webhook_secret", return_value="batch-secret"),
         ):
             from api.webhooks import deliver_batch_webhook
@@ -327,8 +335,8 @@ class TestBatchWebhookTimestampRefresh:
         with (
             patch("api.webhooks.time.sleep"),
             patch("api.webhooks._safe_opener", mock_opener),
-            patch("api.config.WEBHOOK_ALLOW_HTTP", True),
-            patch("api.config.WEBHOOK_ALLOW_PRIVATE", True),
+            patch("api.config.WEBHOOK_ALLOW_HTTP", False),
+            patch("api.config.WEBHOOK_ALLOW_PRIVATE", False),
             patch("api.config.decrypt_webhook_secret", return_value="batch-sig"),
         ):
             from api.webhooks import deliver_batch_webhook
@@ -372,8 +380,8 @@ class TestDefaultSecretRefresh:
         with (
             patch("api.webhooks.time.sleep"),
             patch("api.webhooks._safe_opener", mock_opener),
-            patch("api.config.WEBHOOK_ALLOW_HTTP", True),
-            patch("api.config.WEBHOOK_ALLOW_PRIVATE", True),
+            patch("api.config.WEBHOOK_ALLOW_HTTP", False),
+            patch("api.config.WEBHOOK_ALLOW_PRIVATE", False),
             patch("api.config.WEBHOOK_ENRICH_ENTITIES", False),
         ):
             from api.webhooks import deliver_webhook

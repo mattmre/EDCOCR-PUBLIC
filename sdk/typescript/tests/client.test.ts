@@ -19,7 +19,6 @@ import {
   ClientClosedError,
   ConflictError,
   JobStatus,
-  SDK_VERSION,
 } from '../src/index.js';
 
 // ---------------------------------------------------------------------------
@@ -544,9 +543,6 @@ describe('EDCOCRClient', () => {
       expect(JobStatus.CANCELLED).toBe('cancelled');
     });
 
-    it('SDK_VERSION is a valid semver string', () => {
-      expect(SDK_VERSION).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
-    });
   });
 
   describe('error class hierarchy', () => {

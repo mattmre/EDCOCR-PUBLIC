@@ -213,9 +213,12 @@ class TestWebhookDlqIntegration:
 
             import urllib.error
 
+            from tests.webhook_public_dns import public_webhook_dns
+
             with (
-                patch("api.config.WEBHOOK_ALLOW_HTTP", True),
-                patch("api.config.WEBHOOK_ALLOW_PRIVATE", True),
+                public_webhook_dns(),
+                patch("api.config.WEBHOOK_ALLOW_HTTP", False),
+                patch("api.config.WEBHOOK_ALLOW_PRIVATE", False),
                 patch("api.config.WEBHOOK_DLQ_ENABLED", True),
                 patch("api.config.WEBHOOK_DLQ_PATH", str(dlq_file)),
                 patch("api.webhook_dlq._dlq_path", return_value=dlq_file),

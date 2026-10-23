@@ -1,11 +1,8 @@
 """Tests for Items 26-30: Strategic & Competitive tier.
 
 Tests cover:
-- Item 26: PaddleOCR 3.x quarterly review document structure
-- Item 27: Compliance documentation (SOC2, HIPAA, FedRAMP)
-- Item 28: Presigned URL benchmark logic (mock boto3)
-- Item 29: OKE Terraform validation rules
-
+- Presigned URL benchmark logic
+- OKE Terraform validation rules on synthetic input
 Target: 60+ tests
 """
 
@@ -16,10 +13,6 @@ from unittest.mock import patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Ensure project root is on sys.path
-# ---------------------------------------------------------------------------
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Import benchmark and validation modules
 from scripts.benchmark_presigned_urls import (
@@ -49,214 +42,7 @@ from scripts.validate_terraform_oke import (
     validate_placeholder_ocids,
 )
 
-# ---------------------------------------------------------------------------
-# Paths to doc files
-# ---------------------------------------------------------------------------
-_DOCS_DIR = _PROJECT_ROOT / "docs"
-_STRATEGY_DIR = _DOCS_DIR / "strategy"
-_ARCH_DIR = _DOCS_DIR / "architecture"
-_COMPLIANCE_DIR = _DOCS_DIR / "compliance"
-_TERRAFORM_DIR = _PROJECT_ROOT / "terraform"
 
-
-# ===========================================================================
-# Item 26: PaddleOCR 3.x Quarterly Review
-# ===========================================================================
-
-
-
-
-# ===========================================================================
-# Item 26B: Forensic-Core vs AI-Adjacent Boundary
-# ===========================================================================
-
-
-class TestForensicAIBoundaryDoc:
-    """Tests for docs/architecture/forensic-ai-boundary-contract.md."""
-
-    @pytest.fixture
-    def boundary_content(self):
-        path = _ARCH_DIR / "forensic-ai-boundary-contract.md"
-        assert path.exists(), f"Missing: {path}"
-        return path.read_text(encoding="utf-8")
-
-    def test_file_exists(self):
-        path = _ARCH_DIR / "forensic-ai-boundary-contract.md"
-        assert path.exists()
-
-    def test_has_boundary_definition(self, boundary_content):
-        assert "Boundary Definition" in boundary_content
-        assert "Forensic-Core" in boundary_content
-        assert "AI-Adjacent" in boundary_content
-
-    def test_has_contract_rules(self, boundary_content):
-        assert "Contract Rules" in boundary_content
-        assert "feature" in boundary_content.lower()
-        assert "additive" in boundary_content.lower()
-
-    def test_references_docintel(self, boundary_content):
-        assert "DocIntel" in boundary_content
-        assert "enable_docintel" in boundary_content
-
-    def test_references_layoutlm_and_vlm(self, boundary_content):
-        assert "LayoutLMv3" in boundary_content
-        assert "VLM" in boundary_content
-
-    def test_references_custody_and_validation(self, boundary_content):
-        assert "custody" in boundary_content.lower()
-        assert "validation" in boundary_content.lower()
-
-    def test_has_current_capability_map(self, boundary_content):
-        assert "Current Capability Map" in boundary_content
-        assert "Signature verification" in boundary_content
-
-    def test_references_key_implementation_anchors(self, boundary_content):
-        assert "api/job_manager.py" in boundary_content
-        assert "coordinator/coordinator/celery.py" in boundary_content
-        assert "api/routers/semantic.py" in boundary_content
-
-
-# ===========================================================================
-# Item 27: Compliance Documentation
-# ===========================================================================
-
-
-class TestComplianceReadme:
-    """Tests for docs/compliance/README.md."""
-
-    @pytest.fixture
-    def readme_content(self):
-        path = _COMPLIANCE_DIR / "README.md"
-        assert path.exists(), f"Missing: {path}"
-        return path.read_text(encoding="utf-8")
-
-    def test_file_exists(self):
-        assert (_COMPLIANCE_DIR / "README.md").exists()
-
-    def test_links_to_soc2(self, readme_content):
-        assert "soc2-readiness.md" in readme_content
-
-    def test_links_to_hipaa(self, readme_content):
-        assert "hipaa-readiness.md" in readme_content
-
-    def test_links_to_fedramp(self, readme_content):
-        assert "fedramp-readiness.md" in readme_content
-
-    def test_references_custody(self, readme_content):
-        assert "custody" in readme_content.lower()
-
-    def test_references_api_auth(self, readme_content):
-        assert "API" in readme_content
-        assert "auth" in readme_content.lower()
-
-
-class TestSOC2Readiness:
-    """Tests for docs/compliance/soc2-readiness.md."""
-
-    @pytest.fixture
-    def soc2_content(self):
-        path = _COMPLIANCE_DIR / "soc2-readiness.md"
-        assert path.exists(), f"Missing: {path}"
-        return path.read_text(encoding="utf-8")
-
-    def test_file_exists(self):
-        assert (_COMPLIANCE_DIR / "soc2-readiness.md").exists()
-
-    def test_has_control_environment_cc1(self, soc2_content):
-        assert "CC1" in soc2_content
-
-    def test_has_monitoring_cc4(self, soc2_content):
-        assert "CC4" in soc2_content
-
-    def test_has_access_controls_cc6(self, soc2_content):
-        assert "CC6" in soc2_content
-
-    def test_references_chain_of_custody(self, soc2_content):
-        assert "chain of custody" in soc2_content.lower() or "hash-chained" in soc2_content.lower()
-
-    def test_references_prometheus(self, soc2_content):
-        assert "Prometheus" in soc2_content
-
-    def test_has_readiness_summary(self, soc2_content):
-        assert "Readiness" in soc2_content
-
-    def test_has_gap_analysis(self, soc2_content):
-        assert "Gap" in soc2_content
-
-
-class TestHIPAAReadiness:
-    """Tests for docs/compliance/hipaa-readiness.md."""
-
-    @pytest.fixture
-    def hipaa_content(self):
-        path = _COMPLIANCE_DIR / "hipaa-readiness.md"
-        assert path.exists(), f"Missing: {path}"
-        return path.read_text(encoding="utf-8")
-
-    def test_file_exists(self):
-        assert (_COMPLIANCE_DIR / "hipaa-readiness.md").exists()
-
-    def test_references_hipaa_rule(self, hipaa_content):
-        assert "164" in hipaa_content
-
-    def test_has_access_control(self, hipaa_content):
-        assert "Access Control" in hipaa_content
-
-    def test_has_audit_controls(self, hipaa_content):
-        assert "Audit" in hipaa_content
-
-    def test_has_transmission_security(self, hipaa_content):
-        assert "Transmission" in hipaa_content
-
-    def test_references_phi(self, hipaa_content):
-        assert "PHI" in hipaa_content
-
-    def test_references_baa(self, hipaa_content):
-        assert "BAA" in hipaa_content or "Business Associate" in hipaa_content
-
-    def test_references_encryption(self, hipaa_content):
-        assert "encryption" in hipaa_content.lower()
-
-    def test_has_gap_analysis(self, hipaa_content):
-        assert "Gap" in hipaa_content
-
-
-class TestFedRAMPReadiness:
-    """Tests for docs/compliance/fedramp-readiness.md."""
-
-    @pytest.fixture
-    def fedramp_content(self):
-        path = _COMPLIANCE_DIR / "fedramp-readiness.md"
-        assert path.exists(), f"Missing: {path}"
-        return path.read_text(encoding="utf-8")
-
-    def test_file_exists(self):
-        assert (_COMPLIANCE_DIR / "fedramp-readiness.md").exists()
-
-    def test_references_nist_800_53(self, fedramp_content):
-        assert "800-53" in fedramp_content
-
-    def test_has_ac_access_control(self, fedramp_content):
-        assert "AC" in fedramp_content
-        assert "Access Control" in fedramp_content
-
-    def test_has_au_audit(self, fedramp_content):
-        assert "AU" in fedramp_content
-
-    def test_has_sc_system_communications(self, fedramp_content):
-        assert "SC" in fedramp_content
-
-    def test_references_network_policies(self, fedramp_content):
-        assert "NetworkPolicy" in fedramp_content or "network" in fedramp_content.lower()
-
-    def test_references_prometheus_monitoring(self, fedramp_content):
-        assert "Prometheus" in fedramp_content
-
-    def test_has_gap_analysis(self, fedramp_content):
-        assert "Gap" in fedramp_content
-
-    def test_has_authorization_path(self, fedramp_content):
-        assert "Authorization" in fedramp_content
 
 
 # ===========================================================================
@@ -698,25 +484,6 @@ class TestOKEValidationRules:
 
 class TestOKEValidationIntegration:
     """Integration tests for OKE Terraform validation against real project files."""
-
-    def test_validate_project_oke_module(self):
-        """Validate the actual OKE module in the project."""
-        oke_dir = _TERRAFORM_DIR / "modules" / "oke"
-        if not oke_dir.exists():
-            pytest.skip("OKE Terraform module not found")
-
-        report = validate_oke_terraform(str(oke_dir))
-        assert report.files_scanned > 0
-        # The project OKE module has known placeholder OCIDs
-        assert report.files_scanned >= 1
-
-    def test_validate_full_terraform_dir(self):
-        """Validate the full terraform directory."""
-        if not _TERRAFORM_DIR.exists():
-            pytest.skip("Terraform directory not found")
-
-        report = validate_oke_terraform(str(_TERRAFORM_DIR))
-        assert report.files_scanned > 0
 
     def test_validate_nonexistent_dir(self):
         report = validate_oke_terraform("/nonexistent/path")

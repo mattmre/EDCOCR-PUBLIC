@@ -12,6 +12,10 @@ Security (R2-RC-01 residual / kwargs trust):
   deployment mode.
 - When ``job_id`` is provided, the URL path must contain ``jobs/{job_id}/``
   so a broker-forged URL cannot target another job's objects.
+- When ``expected_key`` is provided, the path must be that key under the
+  configured ``S3_BUCKET``: path-style ``/{endpoint-prefix}/{bucket}/{key}``,
+  or virtual-hosted ``{bucket}.<host>/{key}``. A bare key on the shared
+  endpoint host is a different bucket, not a virtual-hosted URL.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ import os
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlsplit
 
 from ocr_distributed.ssrf import NoRedirectHandler
 from ocr_distributed.ssrf import pinned_url_for_request as _pinned_url_for_request
@@ -91,7 +95,7 @@ def _allowed_presigned_hosts() -> set[str]:
     if endpoint:
         try:
             ep = endpoint if "://" in endpoint else f"https://{endpoint}"
-            parsed = urlparse(ep)
+            parsed = urlsplit(ep)
             if parsed.hostname:
                 hosts.add(parsed.hostname.lower())
                 if parsed.port:
@@ -123,6 +127,55 @@ def _host_matches_allowlist(host: str, parsed, allowed: set[str]) -> bool:
     return host in allowed or _hostport(host, default_port) in allowed
 
 
+def _configured_s3_value(name: str) -> str:
+    """Read one S3 setting from the process env, then Django settings."""
+    raw = os.environ.get(name, "").strip()
+    if raw:
+        return raw
+    try:
+        from django.conf import settings
+
+        return str(getattr(settings, name, "") or "").strip()
+    except Exception:
+        return ""
+
+
+def _endpoint_identity() -> tuple[str, list[str]]:
+    """Return the configured endpoint host and any base-path segments."""
+    endpoint = _configured_s3_value("S3_ENDPOINT")
+    if not endpoint:
+        return "", []
+    parsed = urlsplit(endpoint if "://" in endpoint else f"https://{endpoint}")
+    host = (parsed.hostname or "").lower().rstrip(".")
+    prefix = unquote(parsed.path).removeprefix("/").rstrip("/")
+    parts = prefix.split("/") if prefix else []
+    return host, parts
+
+
+def _artifact_path_bound(host: str, path_parts: list[str], key_parts: list[str]) -> bool:
+    """Bind a presigned path to the configured bucket, not a suffix match.
+
+    Path-style servers treat the first segment as the bucket, so a bare
+    ``/jobs/...`` key on the shared endpoint is bucket ``jobs``. Virtual-hosted
+    URLs keep the key in the path and the bucket as the host's leading labels.
+    An endpoint base path, when configured, must precede either form.
+    """
+    bucket = _configured_s3_value("S3_BUCKET")
+    if not bucket or "/" in bucket or bucket in {".", ".."}:
+        return False
+    endpoint_host, endpoint_parts = _endpoint_identity()
+    relative = path_parts
+    if endpoint_parts:
+        if path_parts[: len(endpoint_parts)] != endpoint_parts:
+            return False
+        relative = path_parts[len(endpoint_parts) :]
+    virtual_host = host.startswith(f"{bucket.lower()}.") and host != endpoint_host
+    if virtual_host:
+        return relative == key_parts
+    return relative == [bucket, *key_parts]
+
+
+
 def _validate_presigned_url(
     url: str,
     *,
@@ -132,7 +185,7 @@ def _validate_presigned_url(
     """Validate URL policy plus its exact job/artifact path binding."""
     if not isinstance(url, str) or not url.strip():
         raise ValueError("Presigned URL must be a non-empty string")
-    parsed = urlparse(url)
+    parsed = urlsplit(url)
     if parsed.scheme not in ("https", "http"):
         raise ValueError(f"Presigned URL must use HTTP(S), got: {parsed.scheme!r}")
     if parsed.username is not None or parsed.password is not None:
@@ -164,7 +217,7 @@ def _validate_presigned_url(
             "Private/loopback presigned egress requires S3_PRESIGNED_ALLOW_PRIVATE=true"
         )
 
-    path_parts = [unquote(part) for part in (parsed.path or "").split("/") if part]
+    path_parts = unquote(parsed.path).removeprefix("/").split("/")
     if ".." in path_parts:
         raise ValueError("Presigned URL path must not contain '..' segments")
     if "." in path_parts:
@@ -188,12 +241,10 @@ def _validate_presigned_url(
     if expected_key is not None:
         if not isinstance(expected_key, str) or not expected_key.strip():
             raise ValueError("expected_key for presigned bind must be non-empty")
-        key_parts = [
-            unquote(part) for part in expected_key.replace("\\", "/").split("/") if part
-        ]
+        key_parts = expected_key.split("/")
         if any(part in {".", ".."} for part in key_parts):
             raise ValueError("expected_key must not contain dot segments")
-        if not key_parts or path_parts[-len(key_parts) :] != key_parts:
+        if not key_parts or not _artifact_path_bound(host, path_parts, key_parts):
             raise ValueError("Presigned URL path is not bound to the expected artifact")
 
 

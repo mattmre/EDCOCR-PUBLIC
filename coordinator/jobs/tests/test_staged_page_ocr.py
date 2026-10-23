@@ -5,6 +5,7 @@ import os
 import tempfile
 import types
 from contextlib import nullcontext
+from datetime import timedelta
 from unittest.mock import patch
 
 import fitz
@@ -275,3 +276,46 @@ class StagedPageTests(TestCase):
             assert tasks._run_paddle_ocr(
                 "en", "gpu:0", "raster", lambda lang, device: Engine()
             ) == "raster"
+
+    def test_held_cleanup_does_not_starve_active_stage_recovery(self):
+        from jobs.tasks import _recover_staged_pages
+
+        held_raster = os.path.join(self.root, "held-raster.png")
+        with open(held_raster, "wb") as handle:
+            handle.write(b"HELD-RASTER")
+        self.stage.status = "cleanup"
+        self.stage.raster_locator = held_raster
+        self.stage.reserved_bytes = 11
+        self.stage.save()
+        self.job.total_pages = 2
+        self.job.save(update_fields=["total_pages"])
+        active = PageOCRStage.objects.create(
+            job=self.job, page_num=2, generation=1,
+            tenant_id=self.job.tenant_id, source_sha256=self.job.source_hash,
+            status="inferred", reserved_bytes=11,
+        )
+        PageOCRStage.objects.filter(pk=self.stage.pk).update(
+            updated_at=timezone.now() - timedelta(hours=3),
+        )
+        PageOCRStage.objects.filter(pk=active.pk).update(
+            updated_at=timezone.now() - timedelta(hours=2),
+        )
+        PageOCRByteBudget.objects.update_or_create(
+            pk=1, defaults={"reserved_bytes": 22},
+        )
+        with patch.dict(os.environ, {
+            "OCR_STAGED_PAGE_OCR_ENABLED": "true", "LITIGATION_HOLD": "1",
+        }):
+            assert _recover_staged_pages(limit=1) == 1
+            assert _recover_staged_pages(limit=1) == 0
+        active.refresh_from_db()
+        self.stage.refresh_from_db()
+        assert active.redrive_count == 1
+        assert TaskDispatchOutbox.objects.filter(
+            job=self.job, task_name="jobs.tasks.finalize_page",
+        ).count() == 1
+        assert self.stage.status == "cleanup"
+        assert self.stage.reserved_bytes == 11
+        assert PageOCRByteBudget.objects.get(pk=1).reserved_bytes == 22
+        with open(held_raster, "rb") as handle:
+            assert handle.read() == b"HELD-RASTER"

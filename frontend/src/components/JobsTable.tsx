@@ -57,7 +57,7 @@ export function JobsTable({
   refresh = true,
   initialFilters = EMPTY_FILTER_STATE,
 }: JobsTableProps) {
-  const { settings } = useSettings();
+  const { settings, hydrated } = useSettings();
   const pageSize = pageSizeOverride ?? settings.display.pageSize;
   const refreshIntervalMs = settings.display.autoRefreshSeconds * 1000;
   const advanced = settings.display.showAdvancedColumns;
@@ -76,6 +76,8 @@ export function JobsTable({
   const offset = (page - 1) * pageSize;
 
   useEffect(() => {
+    // Wait for saved display preferences instead of issuing a default request.
+    if (!hydrated) return;
     let active = true;
     let inFlight = false;
     setState({ jobs: [], total: 0, loading: true, error: null });
@@ -113,7 +115,7 @@ export function JobsTable({
       void load();
     }, refreshIntervalMs);
     return () => { active = false; clearInterval(id); };
-  }, [refresh, filters, page, pageSize, offset, retrySequence, refreshIntervalMs]);
+  }, [hydrated, refresh, filters, page, pageSize, offset, retrySequence, refreshIntervalMs]);
 
   function handleFiltersChange(next: JobsFilterState) {
     setFilters(next);

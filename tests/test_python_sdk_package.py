@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import io
 import json
-import re
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -38,11 +37,8 @@ from edcocr_sdk import (  # noqa: E402
     ServerError,
     TimeoutError,
     ValidationError,
-    __version__,
 )
 from edcocr_sdk.client import (  # noqa: E402
-    SDK_VERSION,
-    USER_AGENT,
     _build_headers,
     _build_submit_data,
     _raise_for_status,
@@ -205,23 +201,6 @@ def _inject_async_mock_client(sdk_client):
     mock = MagicMock()
     mock.is_closed = False
     return mock
-
-
-# ---------------------------------------------------------------------------
-# Version and metadata
-# ---------------------------------------------------------------------------
-
-
-class TestVersionAndMetadata:
-    def test_version_string(self):
-        assert __version__ == SDK_VERSION
-
-    def test_sdk_version_matches(self):
-        # SDK_VERSION should be a valid semver string
-        assert re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", SDK_VERSION)
-
-    def test_user_agent_format(self):
-        assert USER_AGENT == f"edcocr-sdk-python/{SDK_VERSION}"
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,8 @@ zzz/
 !requirements-language-id.txt
 !requirements-translation.txt
 !requirements-vlm.txt
+!requirements-uie.txt
+!coordinator/requirements-api.txt
 !tests/fixtures/corpus/**/*.txt
 !tests/fixtures/v33-validator-baseline-output.txt
 !v3.5/tests/fixtures/v33-validator-baseline-output.txt
@@ -79,7 +81,3 @@ coordinator/failover_drill_results/
 
 # Standalone API uploads are separate from the watched-folder input.
 ocr_api_source/
-
-# Locally built release artifacts
-sdk/python/dist/
-sdk/typescript/*.tgz

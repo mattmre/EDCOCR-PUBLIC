@@ -7,6 +7,16 @@ Plan roughly 16–32 GB RAM and at least 50 GB free build space for local CPU
 acceptance; actual workload capacity must be measured. The default model set
 can take substantial time and disk space to download.
 
+## Git-free source archives
+
+The source bundle does not contain `.git`. Run build/Compose commands from its
+extracted root. `scripts/with_runtime_source.sh` fingerprints that root even if
+invoked from another checkout. Without Git, `SOURCE_REVISION` defaults to the
+selected runtime-content SHA-256, not a commit or an enclosing repository's HEAD.
+An explicitly supplied `SOURCE_REVISION` is preserved for a Git-free export.
+In a checkout, the wrapper continues to use that checkout's actual HEAD plus
+the fingerprint of its current source, including dirty edits.
+
 ## Single-host API
 
 Run one API process against each persistent API database. The process lock

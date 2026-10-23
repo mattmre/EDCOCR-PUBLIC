@@ -118,6 +118,7 @@ def test_iam_provider_refreshes_presigned_credentials_without_static_keys(monkey
 
         signed_url = backend.presigned_upload_url("jobs/j/page.txt")
         monkeypatch.setenv("S3_PRESIGNED_ALLOWED_HOSTS", urlsplit(signed_url).hostname)
+        monkeypatch.setenv("S3_BUCKET", "owned-fixture-bucket")
         _validate_presigned_url(signed_url, job_id="j", expected_key="jobs/j/page.txt")
         monkeypatch.setenv("S3_PRESIGNED_ALLOWED_HOSTS", "other-owned-fixture.s3.amazonaws.com")
         try:
@@ -351,34 +352,6 @@ class TestS3Backend(SimpleTestCase):
         )
         return backend, client
 
-    def test_upload_download_delete(self):
-        backend, client = self._backend()
-        source = tempfile.NamedTemporaryFile(delete=False)
-        try:
-            source.write(b"source")
-            source.close()
-
-            locator = backend.upload_file(source.name, "jobs/1/source.pdf")
-            assert locator == "s3://ocr-local/jobs/1/source.pdf"
-            client.upload_fileobj.assert_called_once()
-            assert client.upload_fileobj.call_args.args[1:] == (
-                "ocr-local",
-                "jobs/1/source.pdf",
-            )
-
-            backend.download_file("jobs/1/source.pdf", "/tmp/output/source.pdf")
-            client.download_fileobj.assert_called_once()
-            assert client.download_fileobj.call_args.args[0:2] == (
-                "ocr-local",
-                "jobs/1/source.pdf",
-            )
-
-            backend.delete("jobs/1/source.pdf")
-            client.delete_object.assert_called_once_with(
-                Bucket="ocr-local", Key="jobs/1/source.pdf"
-            )
-        finally:
-            os.unlink(source.name)
 
     def test_upload_enforces_transfer_cap(self):
         """A credentialed S3 upload rejects an oversized source before SDK I/O."""

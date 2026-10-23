@@ -183,16 +183,8 @@ All response models are Pydantic v2 `BaseModel` instances with full type hints:
 
 - Python 3.9+
 - httpx >= 0.24.0
-- pydantic >= 2.0.0
+- pydantic >= 2.13.5,<2.14 on Python 3.9; pydantic >= 2.14.0 on Python 3.10+
 
 ## License
 
 MIT
-
-The original `edcocr` and `edcocr-mcp` console commands are retained.
-`edc-ocr` and `edc-ocr-mcp` are also available as aliases.
-
-Python runtime support is 3.9+ when installing a prebuilt wheel. Building or
-installing from an sdist/source checkout requires Python 3.10+ because the
-reviewed Hatchling build backend requires it. The OCR application itself uses
-Python 3.12.

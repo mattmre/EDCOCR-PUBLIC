@@ -68,7 +68,8 @@ describe("<JobsTable />", () => {
     const interval = vi.spyOn(globalThis, "setInterval");
     render(<JobsTable />);
     await waitFor(() => expect(screen.getByTestId("job-link-job_abcdef012345")).toBeInTheDocument());
-    expect(fetch.mock.calls.some(([url]) => String(url).includes("limit=10"))).toBe(true);
+    expect(String(fetch.mock.calls[0]?.[0])).toContain("limit=10");
+    expect(String(fetch.mock.calls[0]?.[0])).toContain("offset=0");
     expect(interval).toHaveBeenCalledWith(expect.any(Function), 45_000);
     expect(screen.getByRole("columnheader", { name: "Priority" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Webhook" })).toBeInTheDocument();

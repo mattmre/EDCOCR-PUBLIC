@@ -760,8 +760,9 @@ class S3Backend(StorageBackend):
         self.client = boto3.client(
             "s3",
             endpoint_url=self.endpoint or None,
-            # Omit credential arguments for IAM so botocore can resolve and
-            # refresh its role/container/web-identity credential provider.
+            # Omit credential arguments for IAM so botocore uses its provider
+            # chain. Ambient AWS keys are EnvProvider and win over role, SSO,
+            # container, and IMDS providers; do not replace that chain.
             **credentials,
             region_name=self.region or None,
             # Keep SDK and presigned clients on the same modern signing

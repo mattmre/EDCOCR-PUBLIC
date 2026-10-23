@@ -569,7 +569,7 @@ export class OcrClient {
    */
   private buildHeaders(extra: Record<string, string> = {}): Record<string, string> {
     const headers: Record<string, string> = {
-      'User-Agent': 'edcocr-typescript-sdk/4.2.0-rc.1',
+      'User-Agent': 'ocr-local-typescript-sdk/4.2.0-rc.1',
       ...extra,
     };
     if (this.apiKey) {
@@ -596,7 +596,7 @@ export class OcrClient {
       form.append('file', blob, fname);
     } else if (options.fileBuffer) {
       const fname = options.filename ?? 'upload';
-      const blob = new Blob([options.fileBuffer]);
+      const blob = new Blob([options.fileBuffer as BlobPart]);
       form.append('file', blob, fname);
     }
 

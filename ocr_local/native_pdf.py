@@ -5,7 +5,9 @@ incomplete coverage must use the normal forensic OCR path.
 """
 
 import math
+from dataclasses import replace
 
+import numpy as np
 from PIL import Image
 
 from ocr_local.visual_coverage import (
@@ -56,7 +58,45 @@ def assess_native_pdf_page(page) -> CoverageAssessment:
                 box.x0 - pix.x, box.y0 - pix.y,
                 box.x1 - pix.x, box.y1 - pix.y,
             ], 1.0))
-        return assess_candidate_coverage(evidence, spans)
+        assessment = assess_candidate_coverage(evidence, spans)
+        if assessment.status != "measured" or assessment.needs_retry or assessment.needs_review:
+            return assessment
+        # Generic OCR coverage intentionally ignores tiny/isolated components.
+        # Native completeness is character-level: a word box can span glyphs
+        # mapped to spaces or invisible Unicode and conceal missing source ink.
+        ink = np.asarray(pix.samples_mv, dtype=np.uint8).reshape(
+            pix.height, pix.width, pix.n
+        ).min(axis=2) < 250
+        total_ink = int(np.count_nonzero(ink))
+        characters = (
+            char
+            for block in page.get_text("rawdict")["blocks"]
+            for line in block.get("lines", ())
+            for span in line["spans"]
+            for char in span["chars"]
+        )
+        for count, char in enumerate(characters, 1):
+            if count > 128_000:
+                return unknown("native_preflight_character_limit")
+            if not char["c"].isprintable() or char["c"].isspace():
+                continue
+            box = fitz.Rect(char["bbox"]) * page.rotation_matrix * matrix
+            # Two raster pixels cover antialiasing/font-box rounding.
+            x0 = max(0, min(pix.width, math.floor(box.x0 - pix.x) - 2))
+            y0 = max(0, min(pix.height, math.floor(box.y0 - pix.y) - 2))
+            x1 = max(0, min(pix.width, math.ceil(box.x1 - pix.x) + 2))
+            y1 = max(0, min(pix.height, math.ceil(box.y1 - pix.y) + 2))
+            ink[y0:y1, x0:x1] = False
+        uncovered = int(np.count_nonzero(ink))
+        if uncovered:
+            return replace(
+                assessment,
+                coverage=round(min(assessment.coverage, 1 - uncovered / total_ink), 6),
+                needs_retry=True,
+                needs_review=True,
+                reason="native_uncovered_visible_ink",
+            )
+        return assessment
     except Exception:
         # Render/text extraction errors cannot establish completeness. The
         # worker records this decision and durably dispatches ordinary OCR.

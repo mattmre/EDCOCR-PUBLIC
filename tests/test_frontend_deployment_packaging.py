@@ -11,10 +11,14 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def test_frontend_dockerfile_builds_next_app():
     dockerfile = (ROOT / "Dockerfile.frontend").read_text(encoding="utf-8")
-    assert "FROM node:26-alpine AS deps" in dockerfile
+    donor = "node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80"
+    assert f"FROM {donor} AS deps" in dockerfile
     assert "npm ci" in dockerfile
     assert "npm run build" in dockerfile
-    assert 'CMD ["npm", "run", "start", "--", "-H", "0.0.0.0"]' in dockerfile
+    assert "FROM scratch AS runtime" in dockerfile
+    assert "rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx" in dockerfile
+    assert 'CMD ["node", "node_modules/next/dist/bin/next", "start", "-H", "0.0.0.0"]' in dockerfile
+    assert 'CMD ["npm", "run", "start"' not in dockerfile
 
 
 def test_helm_values_define_frontend_image_and_runtime():

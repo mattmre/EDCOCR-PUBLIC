@@ -343,17 +343,21 @@ class TestWebhookPayload:
 
 class TestWebhookDelivery:
     @pytest.fixture(autouse=True)
-    def _allow_test_urls(self):
-        """Bypass SSRF validation in delivery tests.
+    def _public_dns_for_delivery_pin(self):
+        """Resolve example.com at the DNS boundary without skipping SSRF policy.
 
-        Delivery tests call deliver_webhook() directly (not via the API client),
-        so the client fixture patches for WEBHOOK_ALLOW_* are not active.
-        Mock validate_webhook_url to a no-op since URL validation is covered
-        by TestWebhookURLValidation.
+        Delivery calls pinned_url_for_request, which resolves through
+        getaddrinfo / _ORIG_GETADDRINFO and refuses an unpinned or reserved
+        address before the mocked opener runs. Documentation ranges are
+        reserved, so the fixture answers with a globally routable address.
+        Allow-private/http stay at production defaults.
         """
-        with patch(
-            "api.webhooks.validate_webhook_url",
-            side_effect=lambda url, **kw: url,
+        from tests.webhook_public_dns import public_webhook_dns
+
+        with (
+            public_webhook_dns(),
+            patch("api.config.WEBHOOK_ALLOW_HTTP", False),
+            patch("api.config.WEBHOOK_ALLOW_PRIVATE", False),
         ):
             yield
 

@@ -51,6 +51,8 @@ redis:
     # context store, API cache) through Sentinel discovery.  Production keeps
     # the incomplete HA scaffold disabled; an operator-managed Sentinel
     # overlay must supply sentinel-aware URLs/options before enabling it.
+    # Bundled Sentinel monitors plaintext port 6379 and cannot be combined
+    # with tls.enabled, which moves Redis to 6380.
     enabled: false
     replicas: 3
 

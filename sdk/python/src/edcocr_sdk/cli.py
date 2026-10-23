@@ -172,7 +172,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return int(args.func(args))
     except (FileNotFoundError, ValueError, OCRLocalError) as exc:
-        print(f"edc-ocr: {exc}", file=sys.stderr)
+        print(f"edcocr: {exc}", file=sys.stderr)
         return 1
 
 

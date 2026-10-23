@@ -121,7 +121,7 @@ function ReviewQueueContent() {
       <div>
         <h1 className="text-2xl font-semibold">Review</h1>
         <p className="text-sm text-muted-foreground">
-          Human review queue. Auto-refreshes every 30 seconds.
+          Human review queue. Auto-refreshes every 30 seconds. Page size is fixed at 25 and does not follow saved Display preferences.
         </p>
       </div>
 
@@ -275,7 +275,7 @@ export default function ReviewQueuePage() {
           <div>
             <h1 className="text-2xl font-semibold">Review</h1>
             <p className="text-sm text-muted-foreground">
-              Human review queue. Auto-refreshes every 30 seconds.
+              Human review queue. Auto-refreshes every 30 seconds. Page size is fixed at 25 and does not follow saved Display preferences.
             </p>
           </div>
           <div

@@ -9,9 +9,49 @@
 {{- if and (not .Values.tls.enabled) (not .Values.secrets.celeryBrokerUrl) }}
 {{- fail "rabbitmq.clientTls.enabled requires tls.enabled=true for the bundled broker, or an explicit external TLS secrets.celeryBrokerUrl; client TLS alone does not configure a broker TLS listener" }}
 {{- end }}
+{{- if and (not .Values.tls.enabled) .Values.secrets.celeryBrokerUrl }}
+{{- $broker := urlParse .Values.secrets.celeryBrokerUrl }}
+{{- if ne (lower $broker.scheme) "amqps" }}
+{{- fail "rabbitmq.clientTls.enabled requires an explicit external amqps secrets.celeryBrokerUrl; client TLS rewrites plaintext URLs onto port 5671, which the bundled broker does not listen on" }}
+{{- end }}
+{{- if eq (include "ocr-local.hostnameTargetsBundledService" (dict "root" . "host" $broker.hostname "service" "rabbitmq")) "true" }}
+{{- fail "secrets.celeryBrokerUrl targets a bundled RabbitMQ alias, which has no TLS listener unless tls.enabled=true; use an external amqps endpoint" }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if and .Values.rabbitmq.enabled (not .Values.tls.enabled) (not .Values.rabbitmq.clientTls.enabled) .Values.secrets.celeryBrokerUrl }}
+{{- $broker := urlParse .Values.secrets.celeryBrokerUrl }}
+{{- if and (eq (lower $broker.scheme) "amqps") (eq (include "ocr-local.hostnameTargetsBundledService" (dict "root" . "host" $broker.hostname "service" "rabbitmq")) "true") }}
+{{- fail "explicit amqps secrets.celeryBrokerUrl targets the bundled broker, which has no SSL listener unless tls.enabled=true; use a plaintext amqp override or an external amqps endpoint" }}
+{{- end }}
 {{- end }}
 {{- if .Values.redis.clientTls.enabled }}
 {{- $_ := required "redis.clientTls.caSecretName is required when client TLS is enabled" .Values.redis.clientTls.caSecretName }}
+{{- if not .Values.tls.enabled }}
+{{- if or (not .Values.secrets.redisUrl) (not .Values.secrets.celeryResultBackend) }}
+{{- fail "redis.clientTls.enabled requires both explicit external secrets.redisUrl and secrets.celeryResultBackend; a partial override or generated endpoint targets port 6380 without a bundled TLS listener" }}
+{{- end }}
+{{- if or (ne (include "ocr-local.redisEndpointUsable" (dict "url" .Values.secrets.redisUrl "allowSentinel" false)) "true") (ne (include "ocr-local.redisEndpointUsable" (dict "url" .Values.secrets.celeryResultBackend "allowSentinel" true)) "true") }}
+{{- fail "redis.clientTls.enabled requires secrets.redisUrl to use rediss and secrets.celeryResultBackend to use rediss or an external sentinel scheme" }}
+{{- end }}
+{{- if or (eq (include "ocr-local.redisUrlTargetsBundled" (dict "root" . "url" .Values.secrets.redisUrl)) "true") (eq (include "ocr-local.redisUrlTargetsBundled" (dict "root" . "url" .Values.secrets.celeryResultBackend)) "true") }}
+{{- fail "secrets.redisUrl and secrets.celeryResultBackend must not target bundled Redis or Sentinel; those Services have no TLS listener unless tls.enabled=true" }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if and .Values.redis.enabled .Values.redis.sentinel.enabled .Values.tls.enabled }}
+{{- fail "redis.sentinel.enabled cannot be combined with tls.enabled: bundled Sentinel has no TLS listener and monitors plaintext port 6379, while TLS Redis listens only on 6380" }}
+{{- end }}
+{{- $pgServerTLS := and .Values.postgresql.enabled .Values.tls.enabled }}
+{{- if and (or .Values.tls.enabled .Values.postgresql.clientTls.enabled) (not $pgServerTLS) }}
+{{- $dbURL := .Values.secrets.databaseUrl }}
+{{- if not $dbURL }}
+{{- $dbURL = printf "postgres://ocr@%s-postgres:5432/ocr_coordinator" .Release.Name }}
+{{- end }}
+{{- $dbHost := (urlParse $dbURL).hostname }}
+{{- if or (eq (trim $dbHost) "") (eq (include "ocr-local.hostnameTargetsBundledService" (dict "root" . "host" $dbHost "service" "postgres")) "true") }}
+{{- fail "PostgreSQL client TLS sets DATABASE_SSLMODE=verify-full, but the bundled server has no ssl=on listener unless tls.enabled=true; set secrets.databaseUrl to an external TLS host that is not a bundled chart alias" }}
+{{- end }}
 {{- end }}
 {{- if .Values.ocrCapabilitySeparation.enabled }}
 {{- if not .Values.cpuOcrWorker.enabled }}

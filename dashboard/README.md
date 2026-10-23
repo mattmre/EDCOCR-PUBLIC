@@ -1,7 +1,11 @@
 # EDCOCR Operations Dashboard
 
-Production deployment configuration for the EDCOCR operations dashboard.
-Serves a React SPA via nginx with API proxying to the coordinator backend.
+Historical deployment configuration, **not a working dashboard bundle**.
+This directory lacks `package.json` and application sources; its npm/Docker
+commands below are historical and cannot build the supplied source archive.
+The qualified candidate UI is under [`frontend/`](../frontend/). That UI does
+not establish this legacy dashboard's coordinator-proxy behavior. Restoring
+or including this separate application requires an explicit scope decision.
 
 ## Quick Start
 

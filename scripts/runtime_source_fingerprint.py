@@ -31,23 +31,21 @@ NON_RUNTIME_DIRECTORY_NAMES = frozenset(
         ".github",
         ".venv",
         "venv",
-        "docs",
-        "legacy",
-        "helm",
-        "terraform",
-        "playwright",
         "playwright-artifacts",
         "benchmark_results",
         "ocr_output",
         "ocr_temp",
         "ocr_source",
-        "models",
-        "sdk",
-        "dashboard",
         "out",
         "tmp",
         ".hypothesis",
     }
+)
+
+# Application directory names are non-runtime only at the repository root.
+# A nested route/module named "dashboard", "docs", or "models" is source.
+NON_RUNTIME_ROOT_DIRECTORY_NAMES = frozenset(
+    {"docs", "legacy", "helm", "terraform", "playwright", "models", "sdk", "dashboard"}
 )
 
 PROFILE_INPUTS = {
@@ -133,7 +131,8 @@ def _included_files(root: Path, profile: str) -> list[Path]:
             if not (path.is_file() or path.is_symlink() or path.is_dir()):
                 continue
             if (
-                any(
+                path.relative_to(root).parts[0] in NON_RUNTIME_ROOT_DIRECTORY_NAMES
+                or any(
                     part in NON_RUNTIME_DIRECTORY_NAMES
                     for part in path.relative_to(root).parts
                 )

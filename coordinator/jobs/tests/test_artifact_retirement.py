@@ -1,10 +1,11 @@
 """Owned delayed-publication fixtures retain cleanup after Job deletion."""
 
+import uuid
 from io import StringIO
 from unittest.mock import patch
 
 from django.core.management import call_command
-from django.db import transaction
+from django.db import IntegrityError, OperationalError, transaction
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
@@ -12,8 +13,20 @@ from jobs.artifact_retirement import (
     retain_cleanup_authority,
     sweep_retired_job_artifacts,
 )
-from jobs.models import Job, JobArtifactRetirement, PageOCRByteBudget, PageOCRStage
-from jobs.tasks import _storage_binding_fingerprint, cleanup_completed_jobs
+from jobs.models import (
+    Job,
+    JobArtifactRetirement,
+    PageOCRByteBudget,
+    PageOCRRasterRetirement,
+    PageOCRStage,
+)
+from jobs.tasks import (
+    _stage_cleanup_artifact,
+    _storage_binding_fingerprint,
+    _sweep_retired_stage_rasters,
+    cleanup_completed_jobs,
+    recover_page_stages,
+)
 
 
 class OwnedObjectStore:
@@ -32,6 +45,9 @@ class OwnedObjectStore:
         for key in keys:
             del self.objects[key]
         return len(keys)
+
+    def delete(self, key):
+        self.objects.pop(key, None)
 
 
 @override_settings(S3_ENDPOINT="https://owned.invalid", S3_BUCKET="owned", S3_REGION="us-east-1")
@@ -136,3 +152,99 @@ class TestArtifactRetirement(TestCase):
         with patch("jobs.tasks.is_litigation_hold_active", return_value=True):
             assert sweep_retired_job_artifacts()["litigation_hold"] is True
         assert self.backend.objects[self.prefix + "output.txt"] == b"held"
+
+    def test_bookkeeping_failure_keeps_authority_and_sweeps_other_prefix(self):
+        retain_cleanup_authority(self.job, self.backend)
+        self.job.delete()
+        other_id = uuid.uuid4()
+        other_key = f"jobs/{other_id}/output/late-final.pdf"
+        self.backend.objects[other_key] = b"late"
+        JobArtifactRetirement.objects.create(
+            job_uuid=other_id,
+            tenant_id=self.job.tenant_id,
+            backend_binding=_storage_binding_fingerprint("s3"),
+            next_sweep_at=timezone.now(),
+        )
+        JobArtifactRetirement.objects.filter(pk=self.job_id).update(
+            next_sweep_at=timezone.now() - timezone.timedelta(minutes=5),
+        )
+        real_filter = JobArtifactRetirement.objects.filter
+
+        def filter_with_poison(*args, **kwargs):
+            qs = real_filter(*args, **kwargs)
+            if kwargs.get("pk") == self.job_id:
+                real_update = qs.update
+
+                def update(**fields):
+                    if "sweep_count" in fields:
+                        raise IntegrityError("sweep_count_bookkeeping_failed")
+                    return real_update(**fields)
+
+                qs.update = update
+            return qs
+
+        with patch(
+            "jobs.artifact_retirement.JobArtifactRetirement.objects.filter",
+            side_effect=filter_with_poison,
+        ):
+            result = sweep_retired_job_artifacts()
+        assert result == {"swept": 1, "failed": 1}
+        assert other_key not in self.backend.objects
+        poisoned = JobArtifactRetirement.objects.get(pk=self.job_id)
+        assert poisoned.last_error == "IntegrityError"
+        assert poisoned.sweep_count == 0
+
+    def test_sweep_relation_error_retains_authority_and_late_bytes(self):
+        retain_cleanup_authority(self.job, self.backend)
+        self.job.delete()
+        late_key = self.prefix + "output/late-final.pdf"
+        self.backend.objects[late_key] = b"late"
+        with patch(
+            "jobs.artifact_retirement.JobArtifactRetirement.objects.filter",
+            side_effect=OperationalError("owned relation unavailable"),
+        ):
+            result = sweep_retired_job_artifacts()
+        assert result["error"] == "OperationalError"
+        assert result["swept"] == 0
+        assert JobArtifactRetirement.objects.filter(pk=self.job_id).exists()
+        assert self.backend.objects[late_key] == b"late"
+        self.due()
+        assert sweep_retired_job_artifacts() == {"swept": 1, "failed": 0}
+        assert late_key not in self.backend.objects
+
+    def test_sweep_exception_cannot_skip_stage_recovery(self):
+        with patch(
+            "jobs.artifact_retirement.sweep_retired_job_artifacts",
+            side_effect=RuntimeError("owned sweep failure"),
+        ):
+            with patch("jobs.tasks._recover_staged_pages", return_value=1) as recovered:
+                result = recover_page_stages()
+        assert recovered.called
+        assert result["recovered"] == 1
+        assert result["retired_jobs"]["error"] == "RuntimeError"
+
+    def test_litigation_hold_preserves_raster_retirement_and_stage_bytes(self):
+        raster = self.prefix + "raster/old.png"
+        self.backend.objects[raster] = b"held-raster"
+        PageOCRRasterRetirement.objects.create(
+            job_uuid=self.job_id,
+            tenant_id=self.job.tenant_id,
+            generation=1,
+            page_num=1,
+            locator=raster,
+            backend_binding=_storage_binding_fingerprint("s3"),
+            reserved_bytes=0,
+            safe_to_release_after=timezone.now() - timezone.timedelta(minutes=1),
+            next_sweep_at=timezone.now() - timezone.timedelta(minutes=1),
+        )
+        stage = PageOCRStage.objects.create(
+            job=self.job, tenant_id=self.job.tenant_id, page_num=1, generation=1,
+            source_sha256="a" * 64, status="cleanup", raster_locator=raster,
+        )
+        with patch("jobs.tasks.is_litigation_hold_active", return_value=True):
+            assert _sweep_retired_stage_rasters() == 0
+            _stage_cleanup_artifact(stage.pk, self.backend)
+            assert recover_page_stages()["retired_jobs"]["litigation_hold"] is True
+        assert self.backend.objects[raster] == b"held-raster"
+        assert PageOCRStage.objects.get(pk=stage.pk).status == "cleanup"
+        assert PageOCRRasterRetirement.objects.filter(locator=raster).exists()

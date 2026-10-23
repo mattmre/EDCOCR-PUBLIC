@@ -103,7 +103,7 @@ workerSecurity:
   # Mandates encrypted storage classes or in-memory emptyDir for staging.
   stagingVolume:
     # "emptyDir" (medium: Memory) or "pvc" (must use encrypted storageClass)
-    type: "emptyDir"
+    type: "emptyDir" 
     emptyDir:
       medium: Memory
       sizeLimit: "2Gi"
@@ -778,7 +778,11 @@ storage:
 postgresql:
   enabled: true
   # Client transport can be configured independently for an external
-  # PostgreSQL service. tls.enabled remains the bundled all-services default.
+  # PostgreSQL service. tls.enabled is the only switch that sets ssl=on on
+  # the bundled server. clientTls sets DATABASE_SSLMODE=verify-full and is
+  # rejected when the effective database host is a bundled chart alias
+  # unless that server is actually serving TLS. Set secrets.databaseUrl to
+  # the external host.
   clientTls:
     enabled: false
     caSecretName: ""
@@ -827,8 +831,11 @@ postgresql:
 rabbitmq:
   enabled: true
   # Independent client TLS is for an external TLS broker with an explicit
-  # secrets.celeryBrokerUrl. The bundled broker requires
+  # amqps secrets.celeryBrokerUrl. The bundled broker requires
   # tls.enabled=true to configure its matching listener and certificates.
+  # amqps URLs for this release's RabbitMQ Service, including namespace,
+  # cluster, and pod DNS aliases, are not external. A plaintext amqp
+  # override of the bundled broker remains valid when tls.enabled=false.
   clientTls:
     enabled: false
     caSecretName: ""
@@ -867,6 +874,12 @@ rabbitmq:
 # ---------------------------------------------------------------------------
 redis:
   enabled: true
+  # Independent client TLS does not open port 6380. It requires both
+  # secrets.redisUrl (rediss) and secrets.celeryResultBackend (rediss, or
+  # an external sentinel:// URL) to name hosts outside this chart's Redis,
+  # replica, and Sentinel Services. A partial override is rejected because
+  # the generated endpoint would not match a listener. Bundled Sentinel is
+  # plaintext, monitors port 6379, and cannot be combined with tls.enabled.
   clientTls:
     enabled: false
     caSecretName: ""
@@ -901,6 +914,8 @@ redis:
     # Sentinel manifests are opt-in lab scaffolding only.  The chart's
     # application clients use direct redis:// URLs unless an external,
     # Sentinel-aware client overlay is supplied; keep this false by default.
+    # Bundled Sentinel has no TLS listener and always monitors plaintext
+    # port 6379, so it cannot be combined with tls.enabled.
     enabled: false
     masterName: ocr-master
     replicas: 1                  # Number of read replicas

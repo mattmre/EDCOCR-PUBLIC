@@ -1,4 +1,4 @@
-> Historical v4.1.0 reference. For current install commands and verified scope, use [candidate scope](../release-candidate.md) and the root installation guide.
+> Historical v4.1.0 walkthrough: dependency versions, image examples and production/GPU labels below are not current qualification. Current root/coordinator images use Python3.12. For install commands and bounded CPython3.10 CPU/SDK3.9 support, use [candidate scope](../release-candidate.md) and the root installation guide.
 
 # Docker Deployment Guide
 

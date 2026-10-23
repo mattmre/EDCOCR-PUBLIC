@@ -184,8 +184,8 @@ KNOWN_INCOMPATIBILITIES: list[dict[str, str]] = [
         "condition_b": "<3.0.0",
         "severity": "blocker",
         "explanation": (
-            "numpy 2.x breaks PaddlePaddle ABI. Pin numpy<2.0.0 until "
-            "PaddlePaddle 3.x is adopted."
+            "numpy 2.x breaks PaddlePaddle<3 ABI. Pin numpy<2.0.0 for "
+            "those releases; newer stacks require separate runtime qualification."
         ),
     },
     {
@@ -197,17 +197,6 @@ KNOWN_INCOMPATIBILITIES: list[dict[str, str]] = [
         "explanation": (
             "opencv-python-headless 4.12+ requires numpy>=2 on Python 3.9+. "
             "Pin opencv-python-headless<4.12 with numpy<2."
-        ),
-    },
-    {
-        "package_a": "paddlepaddle",
-        "condition_a": ">=3.0.0",
-        "package_b": "paddleocr",
-        "condition_b": "<3.0.0",
-        "severity": "blocker",
-        "explanation": (
-            "PaddlePaddle 3.x requires PaddleOCR 3.x. Do not upgrade "
-            "PaddlePaddle without upgrading PaddleOCR."
         ),
     },
     {

@@ -1,7 +1,7 @@
 {
-  "name": "edcocr-playwright",
+  "name": "ocr-local-playwright",
   "private": true,
-  "description": "Playwright browser and request testing scaffold for EDCOCR.",
+  "description": "Playwright browser and request testing scaffold for OCR_LOCAL.",
   "scripts": {
     "pw:install": "npx playwright install --with-deps chromium firefox",
     "pw:test": "npx playwright test",

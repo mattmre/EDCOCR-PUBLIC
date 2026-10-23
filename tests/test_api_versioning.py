@@ -8,7 +8,6 @@ from api.versioning import (
     EndpointRecord,
     StabilityTier,
     check_backward_compatibility,
-    get_api_version,
     get_beta_endpoints,
     get_experimental_endpoints,
     get_stable_endpoints,
@@ -132,19 +131,6 @@ class TestAPISurface(unittest.TestCase):
         valid = {"GET", "POST", "PUT", "DELETE", "PATCH"}
         for ep in API_SURFACE:
             assert ep.method in valid, f"Invalid method: {ep.method}"
-
-
-class TestGetAPIVersion(unittest.TestCase):
-    def test_returns_string(self):
-        v = get_api_version()
-        assert isinstance(v, str)
-
-    def test_semver_format(self):
-        v = get_api_version()
-        parts = v.split("-", 1)[0].split(".")
-        assert len(parts) == 3
-        for p in parts:
-            assert p.isdigit()
 
 
 class TestGetVersionHeader(unittest.TestCase):

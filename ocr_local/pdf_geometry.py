@@ -222,3 +222,4 @@ class RasterTransform:
     def map_lines(self, lines: Iterable[tuple[str, Any, float]]) -> list[tuple[str, Any, float]]:
         """Map placeable OCR text; use ``map_lines_with_review`` for issues."""
         return self.map_lines_with_review(lines)[0]
+

@@ -72,6 +72,7 @@ describe("BatchesTable", () => {
     expect(screen.getByText("50%")).toBeInTheDocument();
   });
 
+
   it("shows an empty state", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ batches: [], total: 0, limit: 25, offset: 0 })

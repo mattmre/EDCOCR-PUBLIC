@@ -200,7 +200,7 @@ def handle_jsonrpc(server: OCRToolServer, request: dict[str, Any]) -> dict[str, 
     method = request.get("method")
     try:
         if method == "initialize":
-            return _success(request_id, {"serverInfo": {"name": "edc-ocr-tools"}})
+            return _success(request_id, {"serverInfo": {"name": "edcocr-tools"}})
         if method == "tools/list":
             return _success(request_id, {"tools": server.list_tools()})
         if method == "tools/call":

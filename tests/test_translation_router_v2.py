@@ -665,30 +665,39 @@ def test_rest_legacy_path_when_use_tenant_router_false(api_client):
 
 
 def test_rest_tenant_router_v2_returns_selected_engine(api_client):
-    """``use_tenant_router=True`` invokes router_v2 and surfaces the engine."""
-    engine_cls = _make_fake_engine(engine_id="rest_v2_engine")
-    fake_policy = TenantPolicy(tenant_id="acme")
-
+    """Routing diagnostics respect language eligibility even before job support."""
+    japanese = _make_fake_engine(
+        engine_id="rest_v2_engine", supports_pairs=[("en", "ja")],
+    )
+    french = _make_fake_engine(
+        engine_id="rest_v2_french", supports_pairs=[("en", "fr")], quality="legal",
+    )
     with (
-        _registered(engine_cls),
-        _stubbed_cache([("rest_v2_engine", "rest_v2_engine")]),
-    ):
-        with patch(
+        _registered(japanese, french),
+        _stubbed_cache([
+            ("rest_v2_engine", "rest_v2_engine"),
+            ("rest_v2_french", "rest_v2_french"),
+        ]),
+        patch(
             "ocr_local.translation.router.get_tenant_policy",
-            return_value=fake_policy,
-        ):
-            payload = {
-                "source_text": "Hello world",
-                "source_language": "en",
-                "target_languages": ["ja"],
-                "tenant_id": "acme",
-                "use_tenant_router": True,
-            }
-            response = api_client.post("/api/v1/translation/jobs", json=payload)
-
+            return_value=TenantPolicy(tenant_id="acme"),
+        ),
+        patch(
+            "ocr_local.translation.router.prepare_translation_input",
+            return_value=("Hello world", []),
+        ),
+    ):
+        response = api_client.post("/api/v1/translation/jobs", json={
+            "source_text": "Hello world",
+            "source_language": "en",
+            "target_languages": ["ja", "fr"],
+            "tenant_id": "acme",
+            "use_tenant_router": True,
+        })
     assert response.status_code == 501
-    body = response.json()
-    assert body["detail"]["selected_engines"] == {"ja": "rest_v2_engine"}
+    assert response.json()["detail"]["selected_engines"] == {
+        "ja": "rest_v2_engine", "fr": "rest_v2_french",
+    }
 
 
 def test_rest_tenant_router_no_eligible_engine_records_failure(api_client):

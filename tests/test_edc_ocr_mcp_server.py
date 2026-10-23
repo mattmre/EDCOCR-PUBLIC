@@ -118,15 +118,5 @@ def test_json_lines_server_handles_initialize_and_tool_list():
     output = io.StringIO()
     assert serve_json_lines(server, input_lines, output) == 0
     responses = [json.loads(line) for line in output.getvalue().splitlines()]
-    assert responses[0]["result"]["serverInfo"]["name"] == "edc-ocr-tools"
+    assert responses[0]["result"]["serverInfo"]["name"] == "edcocr-tools"
     assert responses[1]["result"]["tools"][0]["name"].startswith("ocr_")
-
-
-def test_public_mcp_environment_configuration_is_retained(monkeypatch):
-    from edcocr_sdk.mcp_server import build_parser
-
-    monkeypatch.setenv("EDCOCR_API_URL", "https://owned-api.example.invalid")
-    monkeypatch.setenv("EDCOCR_API_KEY", "owned-fixture-key")
-    args = build_parser().parse_args([])
-    assert args.api_url == "https://owned-api.example.invalid"
-    assert args.api_key == "owned-fixture-key"

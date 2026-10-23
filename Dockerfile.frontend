@@ -1,16 +1,19 @@
 # syntax=docker/dockerfile:1.6
+# Donor is the already-qualified local node:26-alpine, not a version upgrade.
+# Image id sha256:3955137134fdd029f39664031e7dc0a09ba2687346672051534ca52a245f0bc2
+# Manifest sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80
 
-FROM node:26-alpine AS deps
+FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS deps
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
-FROM node:26-alpine AS runtime-deps
+FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS runtime-deps
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-FROM node:26-alpine AS builder
+FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS builder
 WORKDIR /app/frontend
 ARG NEXT_PUBLIC_API_BASE_URL=/
 ARG NEXT_PUBLIC_OCR_HTTPONLY_SESSION=false
@@ -21,9 +24,19 @@ COPY --from=deps /app/frontend/node_modules ./node_modules
 COPY frontend/ ./
 RUN npm run build
 
-FROM node:26-alpine AS runtime
+# Delete only global npm/npx, then copy the merged donor snapshot. The
+# exported runtime image is not a child of the donor layers, so those layers'
+# npm bytes are not part of the shipping rootfs. Build-cache stages and the
+# local donor image still contain npm. This is not an OS or Node advisory clearance.
+FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS runtime-donor
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
+FROM scratch AS runtime
+COPY --from=runtime-donor / /
 ARG SOURCE_REVISION
 ARG SOURCE_TREE_SHA256
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV NODE_VERSION=26.10.0
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app/frontend
@@ -39,8 +52,11 @@ RUN if [ -z "${SOURCE_REVISION}" ] || [ "${SOURCE_REVISION}" = "unknown" ] || \
     fi
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
       io.ocr_local.runtime-source-sha256="${SOURCE_TREE_SHA256}" \
-      io.ocr_local.runtime-profile="frontend"
+      io.ocr_local.runtime-profile="frontend" \
+      io.ocr_local.node-donor-image="sha256:3955137134fdd029f39664031e7dc0a09ba2687346672051534ca52a245f0bc2" \
+      io.ocr_local.node-donor-manifest="sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80"
 RUN addgroup -S nextjs && adduser -S nextjs -G nextjs
 USER nextjs
 EXPOSE 3000
-CMD ["npm", "run", "start", "--", "-H", "0.0.0.0"]
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["node", "node_modules/next/dist/bin/next", "start", "-H", "0.0.0.0"]

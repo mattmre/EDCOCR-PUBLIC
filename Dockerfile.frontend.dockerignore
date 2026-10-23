@@ -1,5 +1,6 @@
 **
 !frontend/
+frontend/**
 !frontend/src/
 !frontend/src/**
 !frontend/public/
@@ -11,5 +12,17 @@
 !frontend/postcss.config.mjs
 !frontend/tailwind.config.ts
 !frontend/.eslintrc.json
+frontend/**/.next
+frontend/**/.next/**
+frontend/**/node_modules
+frontend/**/node_modules/**
+frontend/**/__tests__
+frontend/**/__tests__/**
+frontend/**/tests
+frontend/**/tests/**
+frontend/**/.cache
+frontend/**/.cache/**
+frontend/**/cache
+frontend/**/cache/**
 frontend/**/.env*
 frontend/**/.npmrc

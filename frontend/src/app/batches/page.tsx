@@ -10,7 +10,7 @@ export default function BatchesPage() {
       <div>
         <h1 className="text-2xl font-semibold">Batches</h1>
         <p className="text-sm text-muted-foreground">
-          Submit multiple documents and monitor grouped OCR progress.
+          Submit multiple documents and monitor grouped OCR progress. This list uses a fixed page size of 25 and loads when opened or when the page changes; it does not use saved Display page size or auto-refresh.
         </p>
       </div>
       <BatchesTable />

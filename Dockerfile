@@ -1,6 +1,6 @@
 # PaddlePaddle 2.6.2 aborts on Debian 13 and its predictor SIGILLs on qualified
 # AMD/virtualized CPU hosts. Keep Debian 12 and use Python 3.12, required by
-# Django 6.0.7 in coordinator/requirements.txt.
+# Django 6.0.x in coordinator/requirements.txt.
 ARG BASE_IMAGE=python:3.12-slim-bookworm
 
 FROM ${BASE_IMAGE} AS runtime-base

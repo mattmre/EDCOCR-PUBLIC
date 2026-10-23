@@ -32,13 +32,29 @@ def retain_cleanup_authority(job, backend):
     return True
 
 
+def _defer_retired_job(row, exc, now):
+    JobArtifactRetirement.objects.filter(pk=row.pk).update(
+        last_error=type(exc).__name__[:256],
+        next_sweep_at=now + timedelta(minutes=5),
+    )
+
+
 def sweep_retired_job_artifacts(*, limit=100):
     """Sweep exact UUID prefixes forever; empty passes cannot exclude late PUTs.
 
     Credentials may rotate, but endpoint/bucket/region must stay bound. This
     covers current objects, not historical versions or object-lock copies.
     UUIDs must never be reused; any live Job prevents deletion of its prefix.
+    A sweep failure is returned, not raised, so unrelated Beat stage recovery
+    can continue. Empty passes retain cleanup authority.
     """
+    try:
+        return _sweep_retired_job_artifacts(limit=limit)
+    except Exception as exc:
+        return {"swept": 0, "failed": 0, "error": type(exc).__name__}
+
+
+def _sweep_retired_job_artifacts(*, limit=100):
     from .tasks import (
         _get_storage_backend,
         _storage_binding_fingerprint,
@@ -69,17 +85,18 @@ def sweep_retired_job_artifacts(*, limit=100):
                     raise RuntimeError("retired_job_partial_delete")
                 if backend.list_objects(prefix):
                     raise RuntimeError("retired_job_objects_remain")
-            except Exception as exc:
-                # Provider errors may contain customer paths or credentials.
-                JobArtifactRetirement.objects.filter(pk=row.pk).update(
-                    last_error=type(exc).__name__, next_sweep_at=now + timedelta(minutes=5),
-                )
-                failed += 1
-            else:
                 JobArtifactRetirement.objects.filter(pk=row.pk).update(
                     last_error="", last_swept_at=now,
                     sweep_count=models.F("sweep_count") + 1,
                     next_sweep_at=now + timedelta(hours=1),
                 )
+            except Exception as exc:
+                # Provider errors may contain customer paths or credentials.
+                try:
+                    _defer_retired_job(row, exc, now)
+                except Exception:
+                    pass
+                failed += 1
+            else:
                 swept += 1
     return {"swept": swept, "failed": failed}

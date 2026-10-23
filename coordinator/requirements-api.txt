@@ -1,0 +1,3 @@
+# Public document-bundle validation in the lightweight coordinator image.
+# The full CPU worker already includes this in root requirements.txt.
+jsonschema>=4.0

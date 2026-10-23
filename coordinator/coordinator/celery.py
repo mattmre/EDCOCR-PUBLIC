@@ -292,7 +292,7 @@ app.conf.task_routes = (_route_task,)
 _PRIORITY_QUEUE_ARGS = {"x-max-priority": 10}
 
 # Optional quorum queues for HA (RabbitMQ quorum does not support classic
-# x-max-priority on the same queue declaration — queue declaration compatibility).
+# x-max-priority on the same queue declaration — maintenance review / maintenance review).
 _QUORUM_QUEUE_ARGS = {"x-queue-type": "quorum"}
 if os.environ.get("CELERY_USE_QUORUM_QUEUES", "false").lower() in ("1", "true", "yes"):
     _quorum_queues = [

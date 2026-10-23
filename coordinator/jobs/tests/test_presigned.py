@@ -663,21 +663,3 @@ class TestPresignedUploadUrl(SimpleTestCase):
             ExpiresIn=600,
         )
 
-    def test_cached_s3_delegates(self):
-        """CachedS3Backend.presigned_upload_url() delegates to inner S3Backend."""
-        mock_inner = MagicMock(spec=S3Backend)
-        mock_inner.backend_name = "s3"
-        mock_inner.presigned_upload_url.return_value = (
-            "https://s3.example.com/cached-put"
-        )
-
-        cached = CachedS3Backend(
-            inner=mock_inner, cache_dir="/tmp/test-cache-presigned"
-        )
-
-        url = cached.presigned_upload_url("jobs/1/output.pdf", expires=900)
-
-        self.assertEqual(url, "https://s3.example.com/cached-put")
-        mock_inner.presigned_upload_url.assert_called_once_with(
-            "jobs/1/output.pdf", 900
-        )

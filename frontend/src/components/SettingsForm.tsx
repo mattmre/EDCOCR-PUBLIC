@@ -416,6 +416,9 @@ function DisplayPanel({ settings, onUpdate, onSubmit, saveError, justSaved, last
           }
           className="block w-full max-w-md"
         />
+        <p className="text-xs text-muted-foreground">
+          The Jobs list uses this interval. Dashboard, fleet, review, alerts, and job detail keep their own refresh intervals.
+        </p>
       </div>
 
       <div className="space-y-2">
@@ -439,6 +442,9 @@ function DisplayPanel({ settings, onUpdate, onSubmit, saveError, justSaved, last
             </option>
           ))}
         </select>
+        <p className="text-xs text-muted-foreground">
+          Page size applies to the Jobs list. Batches and Review each use a fixed page size of 25 and do not follow this setting.
+        </p>
       </div>
 
       <ToggleRow

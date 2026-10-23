@@ -31,12 +31,18 @@ from jobs.presigned_io import (
 def test_http_error_never_exposes_bearer_query_in_exception_or_worker_log(
     operation, tmp_path, caplog
 ):
-    url = "https://s3.example.com/jobs/job-1/a.pdf?X-Amz-Signature=SECRET"
+    url = "https://s3.example.com/owned-bucket/jobs/job-1/a.pdf?X-Amz-Signature=SECRET"
     failure = HTTPError(url, 403, "Forbidden", None, BytesIO(b"denied"))
     local = tmp_path / "a.pdf"
     local.write_bytes(b"payload")
     with (
-        patch.dict(os.environ, {"S3_PRESIGNED_ALLOWED_HOSTS": "s3.example.com"}),
+        patch.dict(
+            os.environ,
+            {
+                "S3_PRESIGNED_ALLOWED_HOSTS": "s3.example.com",
+                "S3_BUCKET": "owned-bucket",
+            },
+        ),
         patch("jobs.presigned_io._pinned_presigned_url", return_value=nullcontext(url)),
         patch("jobs.presigned_io._no_redirect_opener.open", side_effect=failure),
     ):
@@ -54,11 +60,35 @@ def test_http_error_never_exposes_bearer_query_in_exception_or_worker_log(
     assert "SECRET" not in caplog.text
 
 
+@pytest.mark.parametrize(
+    "endpoint,url",
+    (
+        ("https://s3.example.com", "https://bucket.s3.example.com/bucket/jobs/j/a.pdf"),
+        ("https://s3.example.com/s3", "https://s3.example.com/bucket/jobs/j/a.pdf"),
+        ("https://s3.example.com/s3", "https://bucket.s3.example.com/jobs/j/a.pdf"),
+        ("https://s3.example.com", "https://s3.example.com/bucket/jobs/j//a.pdf"),
+    ),
+)
+def test_rejects_addressing_style_and_endpoint_prefix_confusion(endpoint, url, tmp_path):
+    destination = tmp_path / "artifact.pdf"
+    with patch.dict(
+        os.environ,
+        {
+            "S3_BUCKET": "bucket",
+            "S3_ENDPOINT": endpoint,
+            "S3_PRESIGNED_ALLOWED_HOSTS": "s3.example.com,bucket.s3.example.com",
+        },
+    ):
+        with pytest.raises(ValueError, match="expected artifact"):
+            download_presigned(url, str(destination), job_id="j", expected_key="jobs/j/a.pdf")
+    assert not destination.exists()
+
+
 class TestDeletePresigned(SimpleTestCase):
     @patch("jobs.presigned_io._pinned_presigned_url")
     @patch("jobs.presigned_io._no_redirect_opener.open")
     def test_deletes_exact_job_bound_key(self, mock_open, mock_pin):
-        url = "https://s3.example.com/jobs/job-1/output/result.json?delete"
+        url = "https://s3.example.com/owned-bucket/jobs/job-1/output/result.json?delete"
         mock_pin.return_value = nullcontext(url)
         response = MagicMock()
         response.__enter__ = MagicMock(return_value=response)
@@ -66,7 +96,10 @@ class TestDeletePresigned(SimpleTestCase):
         mock_open.return_value = response
         with patch.dict(
             os.environ,
-            {"S3_PRESIGNED_ALLOWED_HOSTS": "s3.example.com"},
+            {
+                "S3_PRESIGNED_ALLOWED_HOSTS": "s3.example.com",
+                "S3_BUCKET": "owned-bucket",
+            },
             clear=False,
         ):
             delete_presigned(

@@ -100,8 +100,7 @@ class TestQuorumQueues(TestCase):
                     ), f"Queue '{q.name}' must have x-queue-type: quorum"
                     # Quorum + classic x-max-priority is invalid on RabbitMQ
                     assert "x-max-priority" not in queue_args, (
-                        f"Queue '{q.name}' must NOT set x-max-priority with quorum "
-                        f"(queue declaration compatibility)"
+                        f"Queue '{q.name}' must NOT set x-max-priority with quorum"
                     )
             finally:
                 importlib.reload(celery_mod)

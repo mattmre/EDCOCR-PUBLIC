@@ -33,7 +33,7 @@ ENV PYTHONPATH=/app:/app/coordinator \
 RUN python -m pip install --no-cache-dir --upgrade "pip==26.2.1"
 RUN python -m pip install --no-cache-dir \
       attrs==26.1.0 \
-      jsonschema==4.25.1 \
+      jsonschema==4.26.0 \
       jsonschema-specifications==2025.9.1 \
       referencing==0.37.0 \
       rfc3339-validator==0.1.4 \
@@ -58,9 +58,9 @@ FROM provider-source AS test
 
 USER root
 RUN python -m pip install --no-cache-dir \
-      pytest==9.0.2 \
+      pytest==9.1.1 \
       pytest-django==4.14.0 \
-      pytest-cov==7.0.0
+      pytest-cov==7.1.0
 USER 1000:1000
 
 FROM provider-source AS runtime

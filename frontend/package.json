@@ -1,8 +1,8 @@
 {
-  "name": "edcocr-frontend",
+  "name": "ocr-local-frontend",
   "version": "0.1.0",
   "private": true,
-  "description": "EDCOCR operator management UI",
+  "description": "OCR_LOCAL operator management UI (Plan D Wave 1)",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
